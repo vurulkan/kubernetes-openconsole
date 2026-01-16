@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubernetes-openconsole
+  namespace: kubernetes-openconsole
+spec:
+  selector:
+    app: kubernetes-openconsole
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+  type: ClusterIP
