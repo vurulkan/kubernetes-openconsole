@@ -648,6 +648,7 @@ func (s *Server) handlePodYAML(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
+	pod.ManagedFields = nil
 	data, err := yaml.Marshal(pod)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to render yaml")
@@ -666,6 +667,7 @@ func (s *Server) handleDeploymentYAML(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
+	item.ManagedFields = nil
 	data, err := yaml.Marshal(item)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to render yaml")
@@ -684,6 +686,7 @@ func (s *Server) handleServiceYAML(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
+	item.ManagedFields = nil
 	data, err := yaml.Marshal(item)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to render yaml")
@@ -702,6 +705,7 @@ func (s *Server) handleConfigMapYAML(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
+	item.ManagedFields = nil
 	data, err := yaml.Marshal(item)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to render yaml")
@@ -761,6 +765,7 @@ func (s *Server) handleCronJobYAML(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
+	item.ManagedFields = nil
 	data, err := yaml.Marshal(item)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to render yaml")
@@ -780,6 +785,7 @@ func (s *Server) handleIngressYAML(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
+	item.ManagedFields = nil
 	data, err := yaml.Marshal(item)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to render yaml")

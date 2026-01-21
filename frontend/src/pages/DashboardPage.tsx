@@ -177,12 +177,17 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
     }
     if (autoScroll) {
       logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+    }
+  }, [modalContent, autoScroll]);
+
+  useEffect(() => {
+    if (!modalOpen || !logContainerRef.current) {
       return;
     }
-    if (modalOpen) {
-      logContainerRef.current.scrollTop = 0;
+    if (modalTitle.startsWith('Pod Logs')) {
+      logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
     }
-  }, [modalContent, autoScroll, modalOpen]);
+  }, [modalOpen, modalTitle]);
 
   useEffect(() => {
     logPausedRef.current = logPaused;
@@ -307,6 +312,24 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
     }
   };
 
+  const handleModalSelectAll = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'a') {
+      return;
+    }
+    if (!logContainerRef.current) {
+      return;
+    }
+    event.preventDefault();
+    const selection = window.getSelection();
+    if (!selection) {
+      return;
+    }
+    const range = document.createRange();
+    range.selectNodeContents(logContainerRef.current);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  };
+
   const refreshModal = async () => {
     if (!selectedNamespace || !modalTitle) {
       return;
@@ -317,6 +340,10 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
     }
     if (modalTitle.startsWith('ConfigMap Data')) {
       await openConfigMapDataModal(selectedNamespace, name);
+    } else if (modalTitle.startsWith('PODS Events')) {
+      await openEventsModal('pods', selectedNamespace, name);
+    } else if (modalTitle.startsWith('DEPLOYMENTS Events')) {
+      await openEventsModal('deployments', selectedNamespace, name);
     } else if (
       modalTitle.startsWith('DEPLOYMENTS') ||
       modalTitle.startsWith('SERVICES') ||
@@ -574,7 +601,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
         PaperProps={{ sx: { width: '95vw', height: '95vh', maxWidth: '95vw', maxHeight: '95vh' } }}
       >
         <DialogTitle>{modalTitle}</DialogTitle>
-        <DialogContent dividers>
+        <DialogContent dividers onKeyDown={handleModalSelectAll} tabIndex={0}>
           {modalLoading ? (
             <CircularProgress size={20} />
           ) : (
@@ -603,7 +630,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                   overflow: 'auto',
                   whiteSpace: wordWrap ? 'pre-wrap' : 'pre',
                   fontFamily: 'monospace',
-                  fontSize: '1.0em'
+                  fontSize: '0.75em'
                 }}
               >
                 {modalContent || 'No data'}
