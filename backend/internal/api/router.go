@@ -4,17 +4,19 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
-	"encoding/csv"
 	"encoding/base64"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -41,10 +43,11 @@ type Server struct {
 	logLimiters map[int]*rate.Limiter
 	logLimiterMu sync.Mutex
 	staticDir  string
+	dataDir    string
 	timezone   *time.Location
 }
 
-func NewServer(store *store.Store, auditLogger *audit.Logger, kubeManager *kube.Manager, staticDir string, timeZone string) *Server {
+func NewServer(store *store.Store, auditLogger *audit.Logger, kubeManager *kube.Manager, staticDir string, dataDir string, timeZone string) *Server {
 	location, err := time.LoadLocation(timeZone)
 	if err != nil {
 		location = time.UTC
@@ -57,6 +60,7 @@ func NewServer(store *store.Store, auditLogger *audit.Logger, kubeManager *kube.
 		jwtKey:     store.SigningKey(),
 		logLimiters: make(map[int]*rate.Limiter),
 		staticDir:  staticDir,
+		dataDir:    dataDir,
 		timezone:   location,
 	}
 }
@@ -77,6 +81,8 @@ func (s *Server) Router() http.Handler {
 		r.With(auth.AuthMiddleware(s.jwtKey)).Post("/change-password", s.handleChangePassword)
 	})
 
+	r.Get("/api/customization/logo", s.handleGetLogo)
+
 	r.Group(func(r chi.Router) {
 		r.Use(auth.AuthMiddleware(s.jwtKey))
 		r.Get("/api/namespaces", s.handleNamespaces)
@@ -96,6 +102,10 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/namespaces/{namespace}/configmaps/{name}", s.handleConfigMap)
 		r.Get("/api/namespaces/{namespace}/configmaps/{name}/yaml", s.handleConfigMapYAML)
 		r.Get("/api/namespaces/{namespace}/configmaps/{name}/data", s.handleConfigMapData)
+		r.Get("/api/namespaces/{namespace}/ingresses", s.handleIngresses)
+		r.Get("/api/namespaces/{namespace}/ingresses/{name}/yaml", s.handleIngressYAML)
+		r.Get("/api/namespaces/{namespace}/cronjobs", s.handleCronJobs)
+		r.Get("/api/namespaces/{namespace}/cronjobs/{name}/yaml", s.handleCronJobYAML)
 		r.Get("/ws/namespaces/{namespace}/pods/{name}/logs", s.handlePodLogsWS)
 	})
 
@@ -140,6 +150,9 @@ func (s *Server) Router() http.Handler {
 
 		r.Get("/api/admin/audit-logs", s.handleAuditLogs)
 		r.Get("/api/admin/audit-logs/export", s.handleAuditLogsExport)
+
+		r.Post("/api/admin/customization/logo", s.handleUploadLogo)
+		r.Delete("/api/admin/customization/logo", s.handleDeleteLogo)
 	})
 
 	if s.staticDir != "" {
@@ -428,6 +441,8 @@ func (s *Server) handleNamespacePermissions(w http.ResponseWriter, r *http.Reque
 				"deployments": {"list", "get"},
 				"services":    {"list", "get"},
 				"configmaps":  {"list", "get"},
+				"ingresses":   {"list", "get"},
+				"cronjobs":    {"list", "get"},
 			},
 		})
 		return
@@ -706,6 +721,72 @@ func (s *Server) handleConfigMapData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"data": item.Data})
+}
+
+func (s *Server) handleIngresses(w http.ResponseWriter, r *http.Request) {
+	namespace, ok := s.requirePermission(w, r, "ingresses", "list")
+	if !ok {
+		return
+	}
+	items, err := s.resources.ListIngresses(r.Context(), namespace)
+	if err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	s.recordAudit(r, "list", namespace, "ingresses", "*")
+	writeJSON(w, http.StatusOK, map[string]interface{}{"items": items})
+}
+
+func (s *Server) handleCronJobs(w http.ResponseWriter, r *http.Request) {
+	namespace, ok := s.requirePermission(w, r, "cronjobs", "list")
+	if !ok {
+		return
+	}
+	items, err := s.resources.ListCronJobs(r.Context(), namespace)
+	if err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	s.recordAudit(r, "list", namespace, "cronjobs", "*")
+	writeJSON(w, http.StatusOK, map[string]interface{}{"items": items})
+}
+
+func (s *Server) handleCronJobYAML(w http.ResponseWriter, r *http.Request) {
+	namespace, ok := s.requirePermission(w, r, "cronjobs", "get")
+	if !ok {
+		return
+	}
+	item, err := s.resources.GetCronJob(r.Context(), namespace, chi.URLParam(r, "name"))
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	data, err := yaml.Marshal(item)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to render yaml")
+		return
+	}
+	s.recordAudit(r, "get", namespace, "cronjobs", item.Name)
+	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(data)})
+}
+
+func (s *Server) handleIngressYAML(w http.ResponseWriter, r *http.Request) {
+	namespace, ok := s.requirePermission(w, r, "ingresses", "get")
+	if !ok {
+		return
+	}
+	item, err := s.resources.GetIngress(r.Context(), namespace, chi.URLParam(r, "name"))
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	data, err := yaml.Marshal(item)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to render yaml")
+		return
+	}
+	s.recordAudit(r, "get", namespace, "ingresses", item.Name)
+	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(data)})
 }
 
 func (s *Server) handlePodEvents(w http.ResponseWriter, r *http.Request) {
@@ -1399,6 +1480,84 @@ func (s *Server) handleAuditLogsExport(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writer.Flush()
+}
+
+const (
+	logoFileName     = "custom_logo"
+	logoMetaFileName = "custom_logo.meta"
+	maxLogoSize      = 5 << 20
+)
+
+func (s *Server) logoPath() string {
+	return filepath.Join(s.dataDir, logoFileName)
+}
+
+func (s *Server) logoMetaPath() string {
+	return filepath.Join(s.dataDir, logoMetaFileName)
+}
+
+func (s *Server) handleGetLogo(w http.ResponseWriter, r *http.Request) {
+	data, err := os.ReadFile(s.logoPath())
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	contentType := http.DetectContentType(data)
+	if meta, err := os.ReadFile(s.logoMetaPath()); err == nil && len(meta) > 0 {
+		contentType = strings.TrimSpace(string(meta))
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+func (s *Server) handleUploadLogo(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(maxLogoSize); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid upload")
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "missing file")
+		return
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(io.LimitReader(file, maxLogoSize+1))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read file")
+		return
+	}
+	if len(data) == 0 || len(data) > maxLogoSize {
+		writeError(w, http.StatusBadRequest, "invalid file size")
+		return
+	}
+
+	ext := strings.ToLower(filepath.Ext(header.Filename))
+	contentType := http.DetectContentType(data)
+	if ext == ".svg" {
+		contentType = "image/svg+xml"
+	}
+	if !strings.HasPrefix(contentType, "image/") {
+		writeError(w, http.StatusBadRequest, "unsupported file type")
+		return
+	}
+
+	if err := os.WriteFile(s.logoPath(), data, 0o600); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to store logo")
+		return
+	}
+	_ = os.WriteFile(s.logoMetaPath(), []byte(contentType), 0o600)
+	s.recordAudit(r, "admin.update", "-", "customization", "logo")
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+func (s *Server) handleDeleteLogo(w http.ResponseWriter, r *http.Request) {
+	_ = os.Remove(s.logoPath())
+	_ = os.Remove(s.logoMetaPath())
+	s.recordAudit(r, "admin.update", "-", "customization", "logo_removed")
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func parseTimeParam(value string) *time.Time {

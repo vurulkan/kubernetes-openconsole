@@ -97,6 +97,52 @@ const apiRequest = async <T>(path: string, options: RequestInit = {}): Promise<T
   return response.json() as Promise<T>;
 };
 
+const formRequest = async <T>(path: string, formData: FormData): Promise<T> => {
+  let response: Response;
+  try {
+    response = await fetch(`${BASE_URL}${path}`, {
+      method: 'POST',
+      body: formData,
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: {
+        ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {})
+      }
+    });
+  } catch (error) {
+    const target = `${window.location.origin}${path}`;
+    throw new Error(`Network error while contacting the server: ${target}`);
+  }
+
+  if (!response.ok) {
+    const contentType = response.headers.get('content-type') || '';
+    const messageText = await response.text();
+    if (contentType.includes('application/json')) {
+      try {
+        const parsed = JSON.parse(messageText) as { error?: string };
+        throw new Error(parsed.error || response.statusText);
+      } catch (error) {
+        throw new Error(messageText || response.statusText);
+      }
+    }
+    if (messageText.startsWith('{') && messageText.includes('"error"')) {
+      try {
+        const parsed = JSON.parse(messageText) as { error?: string };
+        throw new Error(parsed.error || response.statusText);
+      } catch (error) {
+        throw new Error(messageText || response.statusText);
+      }
+    }
+    throw new Error(messageText || response.statusText);
+  }
+
+  if (response.status === 204) {
+    return {} as T;
+  }
+
+  return response.json() as Promise<T>;
+};
+
 const xhrRequest = async <T>(path: string, payload: unknown): Promise<T> => {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
@@ -162,6 +208,12 @@ export const listServices = (namespace: string) =>
 export const listConfigMaps = (namespace: string) =>
   apiRequest<{ items: Array<Record<string, unknown>> }>(`/api/namespaces/${namespace}/configmaps`);
 
+export const listIngresses = (namespace: string) =>
+  apiRequest<{ items: Array<Record<string, unknown>> }>(`/api/namespaces/${namespace}/ingresses`);
+
+export const listCronJobs = (namespace: string) =>
+  apiRequest<{ items: Array<Record<string, unknown>> }>(`/api/namespaces/${namespace}/cronjobs`);
+
 export const getDeploymentYaml = (namespace: string, name: string) =>
   apiRequest<{ yaml: string }>(`/api/namespaces/${namespace}/deployments/${name}/yaml`);
 
@@ -170,6 +222,12 @@ export const getServiceYaml = (namespace: string, name: string) =>
 
 export const getConfigMapYaml = (namespace: string, name: string) =>
   apiRequest<{ yaml: string }>(`/api/namespaces/${namespace}/configmaps/${name}/yaml`);
+
+export const getIngressYaml = (namespace: string, name: string) =>
+  apiRequest<{ yaml: string }>(`/api/namespaces/${namespace}/ingresses/${name}/yaml`);
+
+export const getCronJobYaml = (namespace: string, name: string) =>
+  apiRequest<{ yaml: string }>(`/api/namespaces/${namespace}/cronjobs/${name}/yaml`);
 
 export const getConfigMapData = (namespace: string, name: string) =>
   apiRequest<{ data: Record<string, string> }>(`/api/namespaces/${namespace}/configmaps/${name}/data`);
@@ -268,6 +326,14 @@ export const updateLDAP = (payload: LDAPConfig) =>
     method: 'PUT',
     body: JSON.stringify(payload)
   });
+
+export const uploadLogo = (file: File) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  return formRequest<{ status: string }>('/api/admin/customization/logo', formData);
+};
+
+export const deleteLogo = () => apiRequest('/api/admin/customization/logo', { method: 'DELETE' });
 
 export const testLdapConnection = () =>
   apiRequest<{ status: string }>('/api/admin/ldap/test', {

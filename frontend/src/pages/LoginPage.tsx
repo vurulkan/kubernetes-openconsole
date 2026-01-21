@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Box, Button, Card, CardContent, TextField, Typography, Alert } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import { login } from '../services/api';
@@ -13,6 +13,11 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLogoUrl('/api/customization/logo');
+  }, []);
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -36,13 +41,24 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
 
   return (
     <Box display="flex" alignItems="center" justifyContent="center" minHeight="100vh">
-      <Card sx={{ minWidth: 380, boxShadow: 4 }}>
+      <Card sx={{ width: '90vw', maxWidth: 380, boxShadow: 4 }}>
         <CardContent>
+          {logoUrl && (
+            <Box display="flex" justifyContent="center" mb={2} sx={{ width: '100%', overflow: 'hidden' }}>
+              <Box
+                component="img"
+                src={logoUrl}
+                alt="Organization logo"
+                onError={() => setLogoUrl(null)}
+                sx={{ width: '100%', maxWidth: '100%', height: 'auto', objectFit: 'contain', display: 'block' }}
+              />
+            </Box>
+          )}
           <Typography variant="h5" fontWeight={600} gutterBottom>
             Kubernetes OpenConsole
           </Typography>
           <Typography variant="body2" color="text.secondary" gutterBottom>
-            Sign in with your internal account.
+            Sign in with your account.
           </Typography>
           {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
           <Box component="form" onSubmit={handleSubmit} display="flex" flexDirection="column" gap={2}>

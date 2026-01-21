@@ -28,16 +28,20 @@ import {
   listDeployments,
   listServices,
   listConfigMaps,
+  listIngresses,
+  listCronJobs,
   getDeploymentYaml,
   getServiceYaml,
   getConfigMapYaml,
+  getIngressYaml,
+  getCronJobYaml,
   getConfigMapData,
   getPodEvents,
   getDeploymentEvents
 } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 
-const resourceOrder = ['pods', 'deployments', 'services', 'configmaps'];
+const resourceOrder = ['pods', 'deployments', 'services', 'configmaps', 'ingresses', 'cronjobs'];
 
 const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   const navigate = useNavigate();
@@ -47,6 +51,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   const [activeTab, setActiveTab] = useState<string>('');
   const [items, setItems] = useState<Array<Record<string, unknown>>>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [namespaceSearch, setNamespaceSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -135,6 +140,10 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
         result = await listServices(selectedNamespace);
       } else if (activeTab === 'configmaps') {
         result = await listConfigMaps(selectedNamespace);
+      } else if (activeTab === 'ingresses') {
+        result = await listIngresses(selectedNamespace);
+      } else if (activeTab === 'cronjobs') {
+        result = await listCronJobs(selectedNamespace);
       }
       setItems(result?.items ?? []);
     } catch (err) {
@@ -206,6 +215,10 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
         result = await getServiceYaml(namespace, name);
       } else if (type === 'configmaps') {
         result = await getConfigMapYaml(namespace, name);
+      } else if (type === 'ingresses') {
+        result = await getIngressYaml(namespace, name);
+      } else if (type === 'cronjobs') {
+        result = await getCronJobYaml(namespace, name);
       }
       setModalContent(result.yaml);
     } catch (err) {
@@ -273,7 +286,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
     setModalOpen(true);
     setModalTitle(`Pod Logs - ${name}`);
     setModalContent('');
-    setAutoScroll(false);
+    setAutoScroll(true);
     setLogPaused(false);
     connectLogs(namespace, name);
   };
@@ -304,7 +317,13 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
     }
     if (modalTitle.startsWith('ConfigMap Data')) {
       await openConfigMapDataModal(selectedNamespace, name);
-    } else if (modalTitle.startsWith('DEPLOYMENTS') || modalTitle.startsWith('SERVICES') || modalTitle.startsWith('CONFIGMAPS')) {
+    } else if (
+      modalTitle.startsWith('DEPLOYMENTS') ||
+      modalTitle.startsWith('SERVICES') ||
+      modalTitle.startsWith('CONFIGMAPS') ||
+      modalTitle.startsWith('INGRESSES') ||
+      modalTitle.startsWith('CRONJOBS')
+    ) {
       const type = modalTitle.split(' ')[0].toLowerCase();
       await fetchYaml(type, selectedNamespace, name);
     }
@@ -316,6 +335,8 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
       namespaces={namespaces}
       activeNamespace={selectedNamespace}
       onNamespaceChange={(ns) => setSelectedNamespace(ns)}
+      namespaceSearch={namespaceSearch}
+      onNamespaceSearchChange={setNamespaceSearch}
     >
       <Typography variant="h5" fontWeight={600} gutterBottom>
         Cluster Overview
@@ -377,6 +398,16 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
               const desiredReplicas = (item.spec as { replicas?: number })?.replicas ?? 0;
               const readyReplicas = (item.status as { readyReplicas?: number })?.readyReplicas ?? 0;
               const allReplicasReady = desiredReplicas > 0 && readyReplicas >= desiredReplicas;
+              const cronSchedule = (item.spec as { schedule?: string })?.schedule ?? 'N/A';
+              const lastSchedule = (item.status as { lastScheduleTime?: string })?.lastScheduleTime ?? 'Never';
+              const isSuspended = (item.spec as { suspend?: boolean })?.suspend ?? false;
+              const ingressRules = (item.spec as { rules?: Array<{ host?: string; http?: { paths?: Array<{ path?: string }> } }> })
+                ?.rules ?? [];
+              const ingressHosts = ingressRules.map((rule) => rule.host).filter(Boolean) as string[];
+              const ingressPaths = ingressRules
+                .flatMap((rule) => rule.http?.paths ?? [])
+                .map((path) => path.path)
+                .filter(Boolean) as string[];
               return (
               <Box
                 key={index}
@@ -423,10 +454,28 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                     </Typography>
                   </Box>
                 )}
-                {(activeTab !== 'pods' && activeTab !== 'deployments') && (
+                {(activeTab !== 'pods' && activeTab !== 'deployments' && activeTab !== 'cronjobs') && (
                   <Typography variant="subtitle2" fontWeight={600}>
                     {name}
                   </Typography>
+                )}
+                {activeTab === 'cronjobs' && (
+                  <Box display="flex" alignItems="center" gap={1}>
+                    <Box
+                      sx={{
+                        width: 12,
+                        height: 12,
+                        borderRadius: '50%',
+                        backgroundColor: isSuspended ? warningColor : healthyColor,
+                        border: `1px solid ${isSuspended ? warningColor : healthyColor}`,
+                        boxSizing: 'border-box',
+                        flexShrink: 0
+                      }}
+                    />
+                    <Typography variant="subtitle2" fontWeight={600}>
+                      {name}
+                    </Typography>
+                  </Box>
                 )}
                 <Typography variant="body2" color="text.secondary">
                   {(item.metadata as { creationTimestamp?: string })?.creationTimestamp ?? 'N/A'}
@@ -441,6 +490,29 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                     Replicas: {desiredReplicas} | Ready: {readyReplicas} | Available:{' '}
                     {(item.status as { availableReplicas?: number })?.availableReplicas ?? 0}
                   </Typography>
+                )}
+                {activeTab === 'ingresses' && (
+                  <>
+                    <Typography variant="body2" color="text.secondary">
+                      Hosts: {ingressHosts.length > 0 ? ingressHosts.join(', ') : 'N/A'}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Paths: {ingressPaths.length > 0 ? ingressPaths.join(', ') : 'N/A'}
+                    </Typography>
+                  </>
+                )}
+                {activeTab === 'cronjobs' && (
+                  <>
+                    <Typography variant="body2" color="text.secondary">
+                      Schedule: {cronSchedule}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Last schedule: {lastSchedule}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Status: {isSuspended ? 'Disabled' : 'Enabled'}
+                    </Typography>
+                  </>
                 )}
                 <Box mt={2} display="flex" gap={1} flexWrap="wrap">
                   {activeTab === 'pods' && (
@@ -468,6 +540,11 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                       YAML
                     </Button>
                   )}
+                  {activeTab === 'ingresses' && (
+                    <Button size="small" variant="outlined" onClick={() => openYamlModal('ingresses', selectedNamespace ?? '', name)}>
+                      YAML
+                    </Button>
+                  )}
                   {activeTab === 'configmaps' && (
                     <>
                       <Button size="small" variant="outlined" onClick={() => openConfigMapDataModal(selectedNamespace ?? '', name)}>
@@ -478,13 +555,24 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                       </Button>
                     </>
                   )}
+                  {activeTab === 'cronjobs' && (
+                    <Button size="small" variant="outlined" onClick={() => openYamlModal('cronjobs', selectedNamespace ?? '', name)}>
+                      YAML
+                    </Button>
+                  )}
                 </Box>
               </Box>
             )})}
           </Box>
         </CardContent>
       </Card>
-      <Dialog open={modalOpen} onClose={closeModal} fullWidth maxWidth="lg">
+      <Dialog
+        open={modalOpen}
+        onClose={closeModal}
+        fullWidth
+        maxWidth={false}
+        PaperProps={{ sx: { width: '95vw', height: '95vh', maxWidth: '95vw', maxHeight: '95vh' } }}
+      >
         <DialogTitle>{modalTitle}</DialogTitle>
         <DialogContent dividers>
           {modalLoading ? (
@@ -510,10 +598,12 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
               <pre
                 ref={logContainerRef}
                 style={{
-                  maxHeight: '60vh',
+                  maxHeight: '90%',
+                  height: '90%',
                   overflow: 'auto',
                   whiteSpace: wordWrap ? 'pre-wrap' : 'pre',
-                  fontFamily: 'monospace'
+                  fontFamily: 'monospace',
+                  fontSize: '1.0em'
                 }}
               >
                 {modalContent || 'No data'}

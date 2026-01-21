@@ -42,6 +42,8 @@ import {
   deletePermission,
   getLDAP,
   updateLDAP,
+  uploadLogo,
+  deleteLogo,
   testLdapConnection,
   searchLdapUsers,
   importLdapUsers,
@@ -73,12 +75,14 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
   const [authTokenPresent, setAuthTokenPresent] = useState(hasToken());
   const [selectedRoleId, setSelectedRoleId] = useState<number | null>(null);
   const [rolePermissions, setRolePermissions] = useState<NamespacePermission[]>([]);
-  const [newPermissionNamespace, setNewPermissionNamespace] = useState('');
+  const [newPermissionNamespaces, setNewPermissionNamespaces] = useState<string[]>([]);
   const [permissionMatrix, setPermissionMatrix] = useState({
     pods: { list: true, get: true, logs: false },
     deployments: { list: true, get: true },
     services: { list: true, get: true },
-    configmaps: { list: true, get: true }
+    configmaps: { list: true, get: true },
+    ingresses: { list: true, get: true },
+    cronjobs: { list: true, get: true }
   });
   const [ldapConfig, setLdapConfig] = useState({
     enabled: false,
@@ -116,6 +120,9 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
   const [clusterValidation, setClusterValidation] = useState<{ status: 'success' | 'error'; message: string } | null>(null);
   const [kubeconfigFileName, setKubeconfigFileName] = useState('');
   const [caCertFileName, setCaCertFileName] = useState('');
+  const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [logoPreviewUrl, setLogoPreviewUrl] = useState('/api/customization/logo');
+  const [logoStatus, setLogoStatus] = useState<{ status: 'success' | 'error'; message: string } | null>(null);
   const [lastAppliedCluster, setLastAppliedCluster] = useState(() => {
     const stored = localStorage.getItem('lastAppliedCluster');
     if (stored) {
@@ -170,6 +177,10 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
       navigate('/');
     }
   }, [user, navigate]);
+
+  useEffect(() => {
+    setLogoPreviewUrl('/api/customization/logo');
+  }, []);
 
   useEffect(() => {
     const run = async () => {
@@ -359,7 +370,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
   };
 
   const handleAddPermission = async () => {
-    if (!selectedRoleId || !newPermissionNamespace) {
+    if (!selectedRoleId || newPermissionNamespaces.length === 0) {
       return;
     }
     const existing = new Set(
@@ -373,24 +384,31 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
         }
       });
     });
-    for (const item of requests) {
-      const key = `${newPermissionNamespace}:${item.resource}:${item.action}`;
-      if (existing.has(key)) {
+    for (const namespace of newPermissionNamespaces) {
+      if (!namespace) {
         continue;
       }
-      await addRolePermission(selectedRoleId, {
-        namespace: newPermissionNamespace,
-        resource: item.resource,
-        action: item.action
-      });
+      for (const item of requests) {
+        const key = `${namespace}:${item.resource}:${item.action}`;
+        if (existing.has(key)) {
+          continue;
+        }
+        await addRolePermission(selectedRoleId, {
+          namespace,
+          resource: item.resource,
+          action: item.action
+        });
+      }
     }
     await handleLoadRolePermissions(selectedRoleId);
-    setNewPermissionNamespace('');
+    setNewPermissionNamespaces([]);
     setPermissionMatrix({
       pods: { list: true, get: true, logs: false },
       deployments: { list: true, get: true },
       services: { list: true, get: true },
-      configmaps: { list: true, get: true }
+      configmaps: { list: true, get: true },
+      ingresses: { list: true, get: true },
+      cronjobs: { list: true, get: true }
     });
   };
 
@@ -569,6 +587,34 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     }
   };
 
+  const handleUploadLogo = async () => {
+    if (!logoFile) {
+      setLogoStatus({ status: 'error', message: 'Please select a logo file to upload.' });
+      return;
+    }
+    setLogoStatus(null);
+    try {
+      await uploadLogo(logoFile);
+      setLogoStatus({ status: 'success', message: 'Logo uploaded successfully.' });
+      setLogoPreviewUrl(`/api/customization/logo?ts=${Date.now()}`);
+      setLogoFile(null);
+    } catch (err) {
+      setLogoStatus({ status: 'error', message: (err as Error).message || 'Logo upload failed.' });
+    }
+  };
+
+  const handleRemoveLogo = async () => {
+    setLogoStatus(null);
+    try {
+      await deleteLogo();
+      setLogoStatus({ status: 'success', message: 'Logo removed successfully.' });
+      setLogoPreviewUrl('');
+      setLogoFile(null);
+    } catch (err) {
+      setLogoStatus({ status: 'error', message: (err as Error).message || 'Failed to remove logo.' });
+    }
+  };
+
   return (
     <Layout user={user} namespaces={[]} activeNamespace={null} onNamespaceChange={() => undefined}>
       <Typography variant="h5" fontWeight={600} gutterBottom>
@@ -588,6 +634,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
             <Tab label="LDAP" value="ldap" />
             <Tab label="Session" value="session" />
             <Tab label="Cluster" value="cluster" />
+            <Tab label="Customization" value="customization" />
             <Tab label="Audit Logs" value="audit" />
           </Tabs>
           <Divider sx={{ my: 2 }} />
@@ -735,11 +782,12 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                       renderInput={(params) => <TextField {...params} label="Role" />}
                     />
                     <Autocomplete
+                      multiple
                       freeSolo
                       options={namespaceOptions}
-                      value={newPermissionNamespace}
-                      onInputChange={(_, value) => setNewPermissionNamespace(value)}
-                      renderInput={(params) => <TextField {...params} label="Namespace" />}
+                      value={newPermissionNamespaces}
+                      onChange={(_, value) => setNewPermissionNamespaces(value as string[])}
+                      renderInput={(params) => <TextField {...params} label="Namespaces" />}
                     />
                   </Box>
                   <Box mt={2} display="grid" gap={2} gridTemplateColumns="repeat(auto-fit, minmax(220px, 1fr))">
@@ -1019,6 +1067,51 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   <Button variant="contained" onClick={handleSaveCluster} disabled={!isClusterConfigValid()}>
                     Apply Cluster Connection
                   </Button>
+                </Box>
+              </CardContent>
+            </Card>
+          )}
+
+          {tab === 'customization' && (
+            <Card variant="outlined">
+              <CardContent>
+                <Typography variant="subtitle1" fontWeight={600} gutterBottom>Login Logo</Typography>
+                <Typography variant="body2" color="text.secondary" gutterBottom>
+                  Upload a logo to display on the login screen. Recommended PNG/SVG with transparent background.
+                </Typography>
+                <Box mt={2} display="flex" flexDirection="column" gap={2}>
+                  <Box
+                    component="img"
+                    src={logoPreviewUrl}
+                    alt="Current logo"
+                    onError={() => setLogoPreviewUrl('')}
+                    sx={{ width: '100%', maxWidth: 320, height: 'auto', borderRadius: 1, border: '1px solid #e0e5f2' }}
+                  />
+                  <Box display="flex" flexWrap="wrap" gap={2} alignItems="center">
+                    <Button variant="outlined" component="label">
+                      Select Logo
+                      <input
+                        type="file"
+                        hidden
+                        accept="image/*,.svg"
+                        onChange={(e) => setLogoFile(e.target.files?.[0] ?? null)}
+                      />
+                    </Button>
+                    <Typography variant="body2" color="text.secondary">
+                      {logoFile ? logoFile.name : 'No file selected'}
+                    </Typography>
+                    <Button variant="contained" onClick={handleUploadLogo} disabled={!logoFile}>
+                      Upload
+                    </Button>
+                    <Button variant="text" color="error" onClick={handleRemoveLogo}>
+                      Remove Logo
+                    </Button>
+                  </Box>
+                  {logoStatus && (
+                    <Alert severity={logoStatus.status}>
+                      {logoStatus.message}
+                    </Alert>
+                  )}
                 </Box>
               </CardContent>
             </Card>

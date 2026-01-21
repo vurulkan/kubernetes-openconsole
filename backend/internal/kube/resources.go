@@ -5,7 +5,9 @@ import (
 	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -107,4 +109,44 @@ func (c *ResourceClient) GetConfigMap(ctx context.Context, namespace, name strin
 		return nil, fmt.Errorf("kubernetes client not ready")
 	}
 	return client.CoreV1().ConfigMaps(namespace).Get(ctx, name, metav1.GetOptions{})
+}
+
+func (c *ResourceClient) ListIngresses(ctx context.Context, namespace string) ([]networkingv1.Ingress, error) {
+	client, ok := c.manager.Client()
+	if !ok || !c.manager.Ready() {
+		return nil, fmt.Errorf("kubernetes client not ready")
+	}
+	result, err := client.NetworkingV1().Ingresses(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return result.Items, nil
+}
+
+func (c *ResourceClient) GetIngress(ctx context.Context, namespace, name string) (*networkingv1.Ingress, error) {
+	client, ok := c.manager.Client()
+	if !ok || !c.manager.Ready() {
+		return nil, fmt.Errorf("kubernetes client not ready")
+	}
+	return client.NetworkingV1().Ingresses(namespace).Get(ctx, name, metav1.GetOptions{})
+}
+
+func (c *ResourceClient) ListCronJobs(ctx context.Context, namespace string) ([]batchv1.CronJob, error) {
+	client, ok := c.manager.Client()
+	if !ok || !c.manager.Ready() {
+		return nil, fmt.Errorf("kubernetes client not ready")
+	}
+	result, err := client.BatchV1().CronJobs(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return result.Items, nil
+}
+
+func (c *ResourceClient) GetCronJob(ctx context.Context, namespace, name string) (*batchv1.CronJob, error) {
+	client, ok := c.manager.Client()
+	if !ok || !c.manager.Ready() {
+		return nil, fmt.Errorf("kubernetes client not ready")
+	}
+	return client.BatchV1().CronJobs(namespace).Get(ctx, name, metav1.GetOptions{})
 }

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -53,7 +54,8 @@ func main() {
 	if value := os.Getenv("STATIC_DIR"); value != "" {
 		staticDir = value
 	}
-	server := api.NewServer(store, auditLogger, kubeManager, staticDir, cfg.TimeZone)
+	dataDir := filepath.Dir(cfg.DataPath)
+	server := api.NewServer(store, auditLogger, kubeManager, staticDir, dataDir, cfg.TimeZone)
 	httpServer := &http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      server.Router(),
