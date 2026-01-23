@@ -7,17 +7,26 @@ import {
   Card,
   CardContent,
   Checkbox,
+  Chip,
   Divider,
   FormControl,
   FormControlLabel,
   InputLabel,
   MenuItem,
+  Paper,
   Select,
   Tab,
   Tabs,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
   TextField,
   Typography
 } from '@mui/material';
+import CloseIcon from '@mui/icons-material/Close';
 import Layout from '../components/Layout';
 import {
   User,
@@ -198,6 +207,25 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     localStorage.setItem('lastAppliedCluster', JSON.stringify(lastAppliedCluster));
   }, [lastAppliedCluster]);
 
+  useEffect(() => {
+    if (tab === 'roles') {
+      setSelectedRoleId(null);
+      setRolePermissions([]);
+    }
+  }, [tab]);
+
+  const loadRolePermissions = async (roleId: number) => {
+    if (Number.isNaN(roleId)) {
+      return;
+    }
+    try {
+      const result = await listRolePermissions(roleId);
+      setRolePermissions(result.items ?? []);
+    } catch (err) {
+      setRolePermissions([]);
+    }
+  };
+
   const refresh = async () => {
     setError(null);
     const results = await Promise.allSettled([
@@ -234,7 +262,8 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     }
     if (rolesResult.status === 'fulfilled') {
       setRoles(rolesItems);
-      setSelectedRoleId((prev) => prev ?? rolesItems?.[0]?.id ?? null);
+      setSelectedRoleId(null);
+      setRolePermissions([]);
     }
     if (ldapResult.status === 'fulfilled') {
       setLdapConfig({
@@ -361,13 +390,38 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
       return;
     }
     setSelectedRoleId(roleId);
-    try {
-      const result = await listRolePermissions(roleId);
-      setRolePermissions(result.items ?? []);
-    } catch (err) {
-      setRolePermissions([]);
+    await loadRolePermissions(roleId);
+  };
+
+  const handleRemovePermission = async (permissionId: number) => {
+    await deletePermission(permissionId);
+    if (selectedRoleId) {
+      await loadRolePermissions(selectedRoleId);
     }
   };
+
+  const handleRemoveNamespacePermissions = async (namespace: string) => {
+    const ids = rolePermissions.filter((perm) => perm.namespace === namespace).map((perm) => perm.id);
+    for (const id of ids) {
+      await deletePermission(id);
+    }
+    if (selectedRoleId) {
+      await loadRolePermissions(selectedRoleId);
+    }
+  };
+
+  const groupedPermissions = React.useMemo(() => {
+    const map = new Map<string, NamespacePermission[]>();
+    rolePermissions.forEach((perm) => {
+      const list = map.get(perm.namespace) ?? [];
+      list.push(perm);
+      map.set(perm.namespace, list);
+    });
+    return Array.from(map.entries()).map(([namespace, permissions]) => ({
+      namespace,
+      permissions
+    }));
+  }, [rolePermissions]);
 
   const handleAddPermission = async () => {
     if (!selectedRoleId || newPermissionNamespaces.length === 0) {
@@ -400,7 +454,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
         });
       }
     }
-    await handleLoadRolePermissions(selectedRoleId);
+    await loadRolePermissions(selectedRoleId);
     setNewPermissionNamespaces([]);
     setPermissionMatrix({
       pods: { list: true, get: true, logs: false },
@@ -777,7 +831,14 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                       options={roles}
                       getOptionLabel={(option) => option.name}
                       value={roles.find((role) => role.id === selectedRoleId) ?? null}
-                      onChange={(_, value) => handleLoadRolePermissions(value?.id ?? Number.NaN)}
+                      onChange={(_, value) => {
+                        if (!value) {
+                          setSelectedRoleId(null);
+                          setRolePermissions([]);
+                          return;
+                        }
+                        void handleLoadRolePermissions(value.id);
+                      }}
                       noOptionsText="No roles found"
                       renderInput={(params) => <TextField {...params} label="Role" />}
                     />
@@ -819,17 +880,69 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   <Box mt={2}>
                     <Button variant="contained" onClick={handleAddPermission}>Add Selected Permissions</Button>
                   </Box>
-                  <Box mt={2} display="grid" gap={1}>
-                    {rolePermissions.map((perm) => (
-                      <Box key={perm.id} display="flex" gap={2} alignItems="center">
-                        <Typography variant="body2">
-                          {perm.namespace} - {perm.resource}:{perm.action}
-                        </Typography>
-                        <Button variant="text" color="error" onClick={async () => { await deletePermission(perm.id); if (selectedRoleId) { await handleLoadRolePermissions(selectedRoleId); } }}>
-                          Remove
-                        </Button>
-                      </Box>
-                    ))}
+                  <Box mt={2}>
+                    {!selectedRoleId && (
+                      <Typography variant="body2" color="text.secondary">
+                        Select a role to view its permissions.
+                      </Typography>
+                    )}
+                    {selectedRoleId && groupedPermissions.length === 0 && (
+                      <Typography variant="body2" color="text.secondary">
+                        No permissions assigned yet.
+                      </Typography>
+                    )}
+                    {selectedRoleId && groupedPermissions.length > 0 && (
+                      <TableContainer component={Paper} variant="outlined">
+                        <Table size="small">
+                          <TableHead>
+                            <TableRow>
+                              <TableCell>Namespace</TableCell>
+                              <TableCell>Permissions</TableCell>
+                              <TableCell align="right">Actions</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {groupedPermissions.map((group) => (
+                              <TableRow key={group.namespace}>
+                                <TableCell sx={{ fontWeight: 600 }}>{group.namespace}</TableCell>
+                                <TableCell>
+                                  <Box display="flex" flexWrap="wrap" gap={1}>
+                                    {group.permissions.map((perm) => (
+                                      <Chip
+                                        key={perm.id}
+                                        label={`${perm.resource}:${perm.action}`}
+                                        onDelete={() => handleRemovePermission(perm.id)}
+                                        deleteIcon={<CloseIcon />}
+                                        variant="outlined"
+                                        sx={{
+                                          fontSize: '0.85rem',
+                                          '& .MuiChip-deleteIcon': {
+                                            opacity: 0,
+                                            transition: 'opacity 150ms ease-in-out'
+                                          },
+                                          '&:hover .MuiChip-deleteIcon': {
+                                            opacity: 1
+                                          }
+                                        }}
+                                      />
+                                    ))}
+                                  </Box>
+                                </TableCell>
+                                <TableCell align="right">
+                                  <Button
+                                    variant="text"
+                                    color="error"
+                                    onClick={() => handleRemoveNamespacePermissions(group.namespace)}
+                                  >
+                                    Remove Namespace
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    )}
                   </Box>
                 </CardContent>
               </Card>
