@@ -192,7 +192,7 @@ kind: Config
 clusters:
 - name: target-cluster
   cluster:
-    server: https://YOUR_API_SERVER
+    server: https://YOUR_API_SERVER # from your kubeconfig
     certificate-authority-data: YOUR_CA_DATA # from your kubeconfig
 users:
 - name: openconsole-reader
