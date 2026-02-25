@@ -1,6 +1,6 @@
 # Kubernetes OpenConsole
 
-Modern, production-ready Kubernetes visibility dashboard with strict application-level authorization. Runs inside Kubernetes, reads cluster data with a single high-privilege identity, and enforces access strictly in the app layer (no Kubernetes RBAC for end users).
+Modern, production-ready Kubernetes visibility dashboard with strict application-level authorization. Runs inside Kubernetes, reads cluster data using a single ServiceAccount identity per cluster, and enforces access strictly in the app layer (no Kubernetes RBAC for end users).
 
 ## Highlights
 
@@ -16,7 +16,7 @@ Modern, production-ready Kubernetes visibility dashboard with strict application
 
 ## Architecture
 
-- **Backend**: Go + `client-go`
+- **Backend**: Go + `client-go`. The backend communicates directly with the Kubernetes API server using client-go.
 - **Frontend**: React + TypeScript
 - **Database**: SQLite
 - **Deployment**: Docker + Kubernetes manifests
@@ -71,6 +71,179 @@ kubectl apply -f deploy/service.yaml
   SQLite DB location.
 - `STATIC_DIR` (default: `/app/public`)  
   Served React build output.
+
+---
+
+# Kubernetes API Access (ServiceAccount Setup)
+
+Kubernetes OpenConsole runs with a single cluster identity and enforces authorization strictly at the application layer.
+
+It does **not** act as a Kubernetes security boundary.  
+It only reflects the permissions granted to its ServiceAccount.
+
+Below is the recommended setup using a dedicated ServiceAccount in the `kubernetes-openconsole` namespace.
+
+---
+
+> ⚠️ **Quick Start (In-Cluster Default)**
+>
+> If OpenConsole is deployed inside the same Kubernetes cluster it will monitor,
+> it can automatically use the in-cluster configuration via the mounted
+> ServiceAccount token (typically the default ServiceAccount).
+>
+> In that case, you may skip the kubeconfig generation steps below and proceed directly to:
+>
+> 👉 **[First Login](#first-login)**
+>
+> ⚠️ While this works for quick testing, it is **not recommended for production**.
+>
+> For production environments it is strongly recommended to:
+>
+> - Create a dedicated ServiceAccount
+> - Assign a minimal read-only ClusterRole
+> - Avoid granting permissions to the default ServiceAccount
+>
+> This reduces blast radius and aligns with least-privilege principles.
+
+
+## Create ServiceAccount
+
+```bash
+kubectl create serviceaccount openconsole-reader -n kubernetes-openconsole
+```
+
+
+
+## Create ClusterRole (Read-Only + Logs + Events + Namespace List)
+
+Create `openconsole-clusterrole.yaml`:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: openconsole-readonly
+rules:
+  - apiGroups: [""]
+    resources:
+      - namespaces
+      - pods
+      - services
+      - configmaps
+      - events
+    verbs: ["get", "list", "watch"]
+
+  - apiGroups: [""]
+    resources:
+      - pods/log
+    verbs: ["get"]
+
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+    verbs: ["get", "list", "watch"]
+
+  - apiGroups: ["networking.k8s.io"]
+    resources:
+      - ingresses
+    verbs: ["get", "list", "watch"]
+
+  - apiGroups: ["batch"]
+    resources:
+      - cronjobs
+    verbs: ["get", "list", "watch"]
+```
+
+Apply it:
+
+```bash
+kubectl apply -f openconsole-clusterrole.yaml
+```
+
+
+
+## Bind ClusterRole to ServiceAccount
+
+```bash
+kubectl create clusterrolebinding openconsole-readonly-binding \
+  --clusterrole=openconsole-readonly \
+  --serviceaccount=kubernetes-openconsole:openconsole-reader
+```
+
+
+
+## Generate Access Token (Kubernetes 1.24+)
+
+```bash
+kubectl create token openconsole-reader \
+  -n kubernetes-openconsole \
+  --duration=8760h
+```
+
+> 8760h = 1 year. Adjust as needed.
+
+
+
+## Create Minimal kubeconfig
+
+```yaml
+apiVersion: v1
+kind: Config
+clusters:
+- name: target-cluster
+  cluster:
+    server: https://YOUR_API_SERVER
+    certificate-authority-data: YOUR_CA_DATA # from your kubeconfig
+users:
+- name: openconsole-reader
+  user:
+    token: YOUR_GENERATED_TOKEN # previous step
+contexts:
+- name: openconsole-context
+  context:
+    cluster: target-cluster
+    user: openconsole-reader
+current-context: openconsole-context
+```
+
+
+
+## Add serviceAccount to deployment
+```yaml
+...
+    metadata:
+      labels:
+        app: kubernetes-openconsole
+    spec:
+      serviceAccountName: openconsole-reader # -> add this line
+      securityContext:
+        runAsNonRoot: true
+...
+```
+
+# Security Notes
+
+- This ServiceAccount is **read-only**
+- It cannot:
+  - exec into pods
+  - port-forward
+  - read secrets
+  - modify resources
+- Token rotation is recommended (every 6–12 months)
+- Do not store generated tokens in Git
+- Prefer one ServiceAccount per cluster
+- OpenConsole does not bypass Kubernetes RBAC; it operates strictly within the permissions granted to its ServiceAccount.
+
+
+## Recommended Production Pattern
+
+- One ServiceAccount per cluster
+- One kubeconfig per cluster
+- Store tokens securely
+- Rotate periodically
+- Avoid using personal user credentials
+
+---
 
 ## First Login
 
