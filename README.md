@@ -8,7 +8,7 @@ Modern, production-ready Kubernetes visibility dashboard with strict application
 - **Application-level RBAC**: user → groups → roles → per-namespace permissions
 - **Namespace discovery is permission-based** (no leakage)
 - **JWT authentication** with forced password change on first login
-- **Local users** (bcrypt) + **LDAP auth** (bind-based) configurable via UI
+- **Local users** (bcrypt) + **LDAP auth** (bind-based) + **Azure AD login** configurable via UI
 - **Audit logs** with pagination, filters, and CSV export
 - **WebSocket pod log streaming** with rate limiting
 - **Cluster connection management via UI only** (kubeconfig or token)
@@ -258,8 +258,9 @@ You will be forced to change the password on first login.
 
 1. Log in as admin.
 2. **Admin → Cluster**: upload kubeconfig or token, validate, apply.
-3. **Admin → Users/Groups/Roles**: define access.
-4. **Admin → Audit Logs**: filter, search, export CSV.
+3. **Admin → LDAP / Azure AD**: configure optional identity providers.
+4. **Admin → Users/Groups/Roles**: define access.
+5. **Admin → Audit Logs**: filter, search, export CSV.
 
 ## Example LDAP (Active Directory) Config
 
@@ -272,6 +273,25 @@ You will be forced to change the password on first login.
 - **bind password**: `********`
 - **user base dn**: `OU=Engineering,OU=Users,DC=example,DC=corp`
 - **user filter**: `(sAMAccountName=%s*)`
+
+## Azure AD Login (Single-Tenant, Optional)
+
+Azure AD is supported as an additional login method and can run in parallel with local/LDAP authentication.
+
+### Behavior
+
+- Azure AD login is configured from **Admin → Azure AD**.
+- On first successful Azure AD login, the user is automatically created in the local database.
+- RBAC still uses the same local model (**Users → Groups → Roles**).
+- Logout is application-local only (does not sign out globally from Microsoft).
+
+### Required Azure App Registration Settings
+
+- **Tenant type**: Single tenant
+- **Redirect URI**: `https://<your-domain>/api/auth/azure/callback`
+- **Scopes used by app**: `openid profile email`
+
+> After first login, assign groups/roles in **Admin → Users/Groups/Roles** to grant namespace/resource access.
 
 ## Tips & Gotchas
 
