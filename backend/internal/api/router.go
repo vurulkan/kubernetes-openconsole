@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/base64"
 	"encoding/csv"
 	"encoding/json"
@@ -77,6 +78,9 @@ func (s *Server) Router() http.Handler {
 
 	r.Route("/api/auth", func(r chi.Router) {
 		r.Post("/login", s.handleLogin)
+		r.Get("/azure/start", s.handleAzureStart)
+		r.Get("/azure/callback", s.handleAzureCallback)
+		r.Get("/providers", s.handleAuthProviders)
 		r.With(auth.AuthMiddleware(s.jwtKey)).Get("/me", s.handleMe)
 		r.With(auth.AuthMiddleware(s.jwtKey)).Post("/change-password", s.handleChangePassword)
 	})
@@ -139,6 +143,9 @@ func (s *Server) Router() http.Handler {
 		r.Post("/api/admin/ldap/test", s.handleTestLDAP)
 		r.Post("/api/admin/ldap/users/search", s.handleSearchLDAPUsers)
 		r.Post("/api/admin/ldap/users/import", s.handleImportLDAPUsers)
+		r.Get("/api/admin/azure-ad", s.handleGetAzureAD)
+		r.Put("/api/admin/azure-ad", s.handleUpdateAzureAD)
+		r.Post("/api/admin/azure-ad/test", s.handleTestAzureAD)
 
 		r.Get("/api/admin/session", s.handleGetSession)
 		r.Put("/api/admin/session", s.handleUpdateSession)
@@ -320,6 +327,15 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.issueTokenForUser(w, r, user)
+}
+
+func (s *Server) issueTokenForUser(w http.ResponseWriter, r *http.Request, user *models.User) {
+	if user == nil || !user.IsActive {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
 	session, err := s.store.GetSessionSettings(r.Context())
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -335,6 +351,142 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		"token": token,
 		"user":  user,
 	})
+}
+
+func (s *Server) handleAuthProviders(w http.ResponseWriter, r *http.Request) {
+	azureEnabled := false
+	cfg, err := s.store.GetAzureADConfig(r.Context())
+	if err == nil && cfg.Enabled && cfg.ClientID != "" && cfg.TenantID != "" && cfg.RedirectURL != "" {
+		azureEnabled = true
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"azureAdEnabled": azureEnabled})
+}
+
+func (s *Server) handleAzureStart(w http.ResponseWriter, r *http.Request) {
+	cfg, err := s.store.GetAzureADConfig(r.Context())
+	if err != nil || !cfg.Enabled || cfg.ClientID == "" || cfg.TenantID == "" || cfg.RedirectURL == "" {
+		writeError(w, http.StatusBadRequest, "azure ad is not configured")
+		return
+	}
+	state := randomPassword()
+	http.SetCookie(w, &http.Cookie{
+		Name:     "azure_oauth_state",
+		Value:    state,
+		Path:     "/",
+		MaxAge:   600,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   r.TLS != nil,
+	})
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	url, err := auth.AzureAuthorizeURL(ctx, auth.AzureADConfig{
+		Enabled:      cfg.Enabled,
+		TenantID:     cfg.TenantID,
+		ClientID:     cfg.ClientID,
+		ClientSecret: cfg.ClientSecret,
+		RedirectURL:  cfg.RedirectURL,
+	}, state)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "failed to initialize azure login")
+		return
+	}
+	http.Redirect(w, r, url, http.StatusFound)
+}
+
+func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
+	stateCookie, err := r.Cookie("azure_oauth_state")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "missing oauth state")
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     "azure_oauth_state",
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   r.TLS != nil,
+	})
+	if r.URL.Query().Get("state") == "" || stateCookie.Value != r.URL.Query().Get("state") {
+		writeError(w, http.StatusBadRequest, "invalid oauth state")
+		return
+	}
+	code := r.URL.Query().Get("code")
+	if code == "" {
+		writeError(w, http.StatusBadRequest, "missing oauth code")
+		return
+	}
+	cfg, err := s.store.GetAzureADConfig(r.Context())
+	if err != nil || !cfg.Enabled {
+		writeError(w, http.StatusBadRequest, "azure ad is not configured")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	username, err := auth.AzureExchangeCode(ctx, auth.AzureADConfig{
+		Enabled:      cfg.Enabled,
+		TenantID:     cfg.TenantID,
+		ClientID:     cfg.ClientID,
+		ClientSecret: cfg.ClientSecret,
+		RedirectURL:  cfg.RedirectURL,
+	}, code)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "azure authentication failed")
+		return
+	}
+
+	user, err := s.store.GetUserByUsername(r.Context(), username)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusInternalServerError, "failed to load user")
+			return
+		}
+		randomHash, hashErr := auth.HashPassword(randomPassword())
+		if hashErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to initialize user")
+			return
+		}
+		userID, createErr := s.store.CreateUser(r.Context(), username, randomHash)
+		if createErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to create user")
+			return
+		}
+		user, err = s.store.GetUserByID(r.Context(), userID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load user")
+			return
+		}
+	}
+	if !user.IsActive {
+		writeError(w, http.StatusForbidden, "user is disabled")
+		return
+	}
+
+	session, err := s.store.GetSessionSettings(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load session settings")
+		return
+	}
+	token, err := auth.GenerateToken(s.jwtKey, user.ID, user.Username, time.Duration(session.SessionMinutes)*time.Minute)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate token")
+		return
+	}
+	go s.audit.Record(context.Background(), models.AuditLog{
+		User:         user.Username,
+		Action:       "login.azure",
+		Namespace:    "-",
+		ResourceType: "auth",
+		ResourceName: "azure_ad",
+	})
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(fmt.Sprintf(`<!doctype html><html><body><script>
+try { localStorage.setItem('authToken', %q); } catch (e) {}
+window.location.replace('/');
+</script></body></html>`, token)))
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
@@ -1180,6 +1332,16 @@ func (s *Server) handleGetLDAP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, cfg)
 }
 
+func (s *Server) handleGetAzureAD(w http.ResponseWriter, r *http.Request) {
+	cfg, err := s.store.GetAzureADConfig(r.Context())
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	cfg.ClientSecret = ""
+	writeJSON(w, http.StatusOK, cfg)
+}
+
 func (s *Server) handleUpdateLDAP(w http.ResponseWriter, r *http.Request) {
 	var request models.LDAPConfig
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -1191,6 +1353,20 @@ func (s *Server) handleUpdateLDAP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.recordAudit(r, "admin.update", "-", "ldap", "config")
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+func (s *Server) handleUpdateAzureAD(w http.ResponseWriter, r *http.Request) {
+	var request models.AzureADConfig
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if err := s.store.UpdateAzureADConfig(r.Context(), request); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	s.recordAudit(r, "admin.update", "-", "azure_ad", "config")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
@@ -1215,6 +1391,31 @@ func (s *Server) handleTestLDAP(w http.ResponseWriter, r *http.Request) {
 		UserBaseDNs:       cfg.UserBaseDNs,
 		UserFilter:        cfg.UserFilter,
 		UsernameAttribute: cfg.UsernameAttribute,
+	}); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleTestAzureAD(w http.ResponseWriter, r *http.Request) {
+	cfg, err := s.store.GetAzureADConfig(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load azure ad config")
+		return
+	}
+	if cfg.TenantID == "" || cfg.ClientID == "" {
+		writeError(w, http.StatusBadRequest, "tenant and client id are required")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	if err := auth.TestAzureConnection(ctx, auth.AzureADConfig{
+		Enabled:      cfg.Enabled,
+		TenantID:     cfg.TenantID,
+		ClientID:     cfg.ClientID,
+		ClientSecret: cfg.ClientSecret,
+		RedirectURL:  cfg.RedirectURL,
 	}); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

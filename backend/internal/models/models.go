@@ -49,6 +49,15 @@ type LDAPConfig struct {
 	PasswordConfigured bool  `json:"passwordConfigured"`
 }
 
+type AzureADConfig struct {
+	Enabled            bool   `json:"enabled"`
+	TenantID           string `json:"tenantId"`
+	ClientID           string `json:"clientId"`
+	ClientSecret       string `json:"clientSecret"`
+	RedirectURL        string `json:"redirectUrl"`
+	PasswordConfigured bool   `json:"passwordConfigured"`
+}
+
 type SessionSettings struct {
 	SessionMinutes int `json:"sessionMinutes"`
 }

@@ -36,6 +36,15 @@ export type LDAPConfig = {
   passwordConfigured?: boolean;
 };
 
+export type AzureADConfig = {
+  enabled: boolean;
+  tenantId: string;
+  clientId: string;
+  clientSecret: string;
+  redirectUrl: string;
+  passwordConfigured?: boolean;
+};
+
 export type KubeClusterStatus = {
   method: string;
   server: string;
@@ -182,6 +191,12 @@ export const login = (username: string, password: string) =>
     body: JSON.stringify({ username, password })
   });
 
+export const getAuthProviders = () => apiRequest<{ azureAdEnabled: boolean }>('/api/auth/providers');
+
+export const startAzureLogin = () => {
+  window.location.assign('/api/auth/azure/start');
+};
+
 export const getMe = () =>
   apiRequest<{ user: User; namespaces: string[]; permissions: NamespacePermission[] }>('/api/auth/me');
 
@@ -321,8 +336,16 @@ export const deletePermission = (id: number) =>
 
 export const getLDAP = () => apiRequest<LDAPConfig>('/api/admin/ldap');
 
+export const getAzureAD = () => apiRequest<AzureADConfig>('/api/admin/azure-ad');
+
 export const updateLDAP = (payload: LDAPConfig) =>
   apiRequest('/api/admin/ldap', {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  });
+
+export const updateAzureAD = (payload: AzureADConfig) =>
+  apiRequest('/api/admin/azure-ad', {
     method: 'PUT',
     body: JSON.stringify(payload)
   });
@@ -337,6 +360,11 @@ export const deleteLogo = () => apiRequest('/api/admin/customization/logo', { me
 
 export const testLdapConnection = () =>
   apiRequest<{ status: string }>('/api/admin/ldap/test', {
+    method: 'POST'
+  });
+
+export const testAzureAdConnection = () =>
+  apiRequest<{ status: string }>('/api/admin/azure-ad/test', {
     method: 'POST'
   });
 

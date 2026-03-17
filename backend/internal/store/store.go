@@ -442,6 +442,54 @@ func (s *Store) UpdateLDAPConfig(ctx context.Context, cfg models.LDAPConfig) err
 	return err
 }
 
+func (s *Store) GetAzureADConfig(ctx context.Context) (models.AzureADConfig, error) {
+	row := s.conn.QueryRowContext(ctx, `SELECT enabled, tenant_id, client_id, client_secret_enc, redirect_url FROM azure_ad_config WHERE id = 1`)
+	var cfg models.AzureADConfig
+	var enabled int
+	var encSecret string
+	if err := row.Scan(&enabled, &cfg.TenantID, &cfg.ClientID, &encSecret, &cfg.RedirectURL); err != nil {
+		return cfg, err
+	}
+	cfg.Enabled = enabled == 1
+	cfg.PasswordConfigured = encSecret != ""
+	secret, err := decrypt(s.key, encSecret)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.ClientSecret = secret
+	return cfg, nil
+}
+
+func (s *Store) UpdateAzureADConfig(ctx context.Context, cfg models.AzureADConfig) error {
+	encSecret := ""
+	if cfg.ClientSecret != "" {
+		encrypted, err := encrypt(s.key, cfg.ClientSecret)
+		if err != nil {
+			return err
+		}
+		encSecret = encrypted
+	} else if cfg.PasswordConfigured {
+		if err := s.conn.QueryRowContext(ctx, `SELECT client_secret_enc FROM azure_ad_config WHERE id = 1`).Scan(&encSecret); err != nil {
+			return err
+		}
+	}
+
+	enabled := 0
+	if cfg.Enabled {
+		enabled = 1
+	}
+	_, err := s.conn.ExecContext(
+		ctx,
+		`UPDATE azure_ad_config SET enabled = ?, tenant_id = ?, client_id = ?, client_secret_enc = ?, redirect_url = ? WHERE id = 1`,
+		enabled,
+		cfg.TenantID,
+		cfg.ClientID,
+		encSecret,
+		cfg.RedirectURL,
+	)
+	return err
+}
+
 func (s *Store) GetSessionSettings(ctx context.Context) (models.SessionSettings, error) {
 	row := s.conn.QueryRowContext(ctx, `SELECT session_minutes FROM session_settings WHERE id = 1`)
 	var settings models.SessionSettings

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Box, Button, Card, CardContent, TextField, Typography, Alert } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
-import { login } from '../services/api';
+import { getAuthProviders, login, startAzureLogin } from '../services/api';
 
 type Props = {
   onLogin: () => Promise<void>;
@@ -14,9 +14,19 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [azureEnabled, setAzureEnabled] = useState(false);
 
   useEffect(() => {
     setLogoUrl('/api/customization/logo');
+    const loadProviders = async () => {
+      try {
+        const providers = await getAuthProviders();
+        setAzureEnabled(Boolean(providers.azureAdEnabled));
+      } catch (err) {
+        setAzureEnabled(false);
+      }
+    };
+    void loadProviders();
   }, []);
 
   const handleSubmit = async (event: React.FormEvent) => {
@@ -78,6 +88,11 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
             <Button type="submit" variant="contained" disabled={loading}>
               {loading ? 'Signing in...' : 'Sign in'}
             </Button>
+            {azureEnabled && (
+              <Button variant="outlined" onClick={startAzureLogin}>
+                Sign in with Microsoft
+              </Button>
+            )}
           </Box>
         </CardContent>
       </Card>

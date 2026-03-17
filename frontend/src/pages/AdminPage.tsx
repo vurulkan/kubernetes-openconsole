@@ -50,10 +50,13 @@ import {
   addRolePermission,
   deletePermission,
   getLDAP,
+  getAzureAD,
   updateLDAP,
+  updateAzureAD,
   uploadLogo,
   deleteLogo,
   testLdapConnection,
+  testAzureAdConnection,
   searchLdapUsers,
   importLdapUsers,
   getSession,
@@ -109,6 +112,16 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     userFilter: '',
     usernameAttribute: 'sAMAccountName'
   });
+  const [azureAdConfig, setAzureAdConfig] = useState({
+    enabled: false,
+    tenantId: '',
+    clientId: '',
+    clientSecret: '',
+    redirectUrl: '',
+    passwordConfigured: false
+  });
+  const [azureAdUpdateSecret, setAzureAdUpdateSecret] = useState(false);
+  const [azureAdTestStatus, setAzureAdTestStatus] = useState<{ status: 'success' | 'error'; message: string } | null>(null);
   const [ldapSearchQuery, setLdapSearchQuery] = useState('');
   const [ldapSearchResults, setLdapSearchResults] = useState<Array<{ username: string; dn: string }>>([]);
   const [ldapSelectedUsers, setLdapSelectedUsers] = useState<string[]>([]);
@@ -233,6 +246,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
       listGroups(),
       listRoles(),
       getLDAP(),
+      getAzureAD(),
       getSession(),
       getCluster(),
       listAuditLogs(50, auditOffset, auditUserFilter, auditActionFilter, auditNamespaceFilter, auditStartDate, auditEndDate),
@@ -244,6 +258,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
       groupsResult,
       rolesResult,
       ldapResult,
+      azureAdResult,
       sessionResult,
       clusterResult,
       auditResult,
@@ -284,6 +299,17 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
         passwordConfigured: ldapResult.value.passwordConfigured ?? false
       });
       setLdapUpdatePassword(false);
+    }
+    if (azureAdResult.status === 'fulfilled') {
+      setAzureAdConfig({
+        enabled: azureAdResult.value.enabled ?? false,
+        tenantId: azureAdResult.value.tenantId ?? '',
+        clientId: azureAdResult.value.clientId ?? '',
+        clientSecret: '',
+        redirectUrl: azureAdResult.value.redirectUrl ?? '',
+        passwordConfigured: azureAdResult.value.passwordConfigured ?? false
+      });
+      setAzureAdUpdateSecret(false);
     }
     if (sessionResult.status === 'fulfilled') {
       setSessionMinutes(sessionResult.value.sessionMinutes);
@@ -509,6 +535,26 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     }
   };
 
+  const handleSaveAzureAd = async () => {
+    await updateAzureAD({
+      ...azureAdConfig,
+      clientSecret:
+        azureAdUpdateSecret || !(azureAdConfig.passwordConfigured ?? false) ? azureAdConfig.clientSecret : '',
+      passwordConfigured: azureAdConfig.passwordConfigured ?? false
+    });
+    await refresh();
+  };
+
+  const handleTestAzureAd = async () => {
+    setAzureAdTestStatus(null);
+    try {
+      await testAzureAdConnection();
+      setAzureAdTestStatus({ status: 'success', message: 'Azure AD connection successful.' });
+    } catch (err) {
+      setAzureAdTestStatus({ status: 'error', message: (err as Error).message || 'Azure AD test failed.' });
+    }
+  };
+
   const handleLdapSearch = async () => {
     setLdapSearchLoading(true);
     setLdapSearchError(null);
@@ -686,6 +732,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
             <Tab label="Groups" value="groups" />
             <Tab label="Roles" value="roles" />
             <Tab label="LDAP" value="ldap" />
+            <Tab label="Azure AD" value="azure-ad" />
             <Tab label="Session" value="session" />
             <Tab label="Cluster" value="cluster" />
             <Tab label="Customization" value="customization" />
@@ -1036,6 +1083,60 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                     Import Selected Users
                   </Button>
                 </Box>
+              </CardContent>
+            </Card>
+          )}
+
+          {tab === 'azure-ad' && (
+            <Card variant="outlined">
+              <CardContent>
+                <Typography variant="subtitle1" fontWeight={600} gutterBottom>Azure AD Configuration</Typography>
+                <Box display="grid" gap={2} gridTemplateColumns="repeat(auto-fit, minmax(240px, 1fr))">
+                  <FormControlLabel
+                    control={<Checkbox checked={azureAdConfig.enabled} onChange={(e) => setAzureAdConfig({ ...azureAdConfig, enabled: e.target.checked })} />}
+                    label="Enabled"
+                  />
+                  <TextField
+                    label="Tenant ID"
+                    value={azureAdConfig.tenantId}
+                    onChange={(e) => setAzureAdConfig({ ...azureAdConfig, tenantId: e.target.value })}
+                  />
+                  <TextField
+                    label="Client ID"
+                    value={azureAdConfig.clientId}
+                    onChange={(e) => setAzureAdConfig({ ...azureAdConfig, clientId: e.target.value })}
+                  />
+                  <TextField
+                    label="Redirect URL"
+                    value={azureAdConfig.redirectUrl}
+                    onChange={(e) => setAzureAdConfig({ ...azureAdConfig, redirectUrl: e.target.value })}
+                    placeholder={`${window.location.origin}/api/auth/azure/callback`}
+                  />
+                  <FormControlLabel
+                    control={<Checkbox checked={azureAdUpdateSecret} onChange={(e) => setAzureAdUpdateSecret(e.target.checked)} />}
+                    label="Update Client Secret"
+                  />
+                  <TextField
+                    label="Client Secret"
+                    type="password"
+                    disabled={!azureAdUpdateSecret && (azureAdConfig.passwordConfigured ?? false)}
+                    value={
+                      !azureAdUpdateSecret && (azureAdConfig.passwordConfigured ?? false)
+                        ? 'Configured'
+                        : azureAdConfig.clientSecret
+                    }
+                    onChange={(e) => setAzureAdConfig({ ...azureAdConfig, clientSecret: e.target.value })}
+                  />
+                </Box>
+                <Box mt={2} display="flex" gap={2}>
+                  <Button variant="contained" onClick={handleSaveAzureAd}>Save Azure AD Settings</Button>
+                  <Button variant="outlined" onClick={handleTestAzureAd}>Test Connection</Button>
+                </Box>
+                {azureAdTestStatus && (
+                  <Alert severity={azureAdTestStatus.status} sx={{ mt: 2 }}>
+                    {azureAdTestStatus.message}
+                  </Alert>
+                )}
               </CardContent>
             </Card>
           )}

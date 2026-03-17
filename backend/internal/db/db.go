@@ -95,6 +95,14 @@ func migrate(ctx context.Context, conn *sql.DB) error {
 			user_filter TEXT NOT NULL DEFAULT '',
 			username_attribute TEXT NOT NULL DEFAULT 'sAMAccountName'
 		);`,
+		`CREATE TABLE IF NOT EXISTS azure_ad_config (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			enabled INTEGER NOT NULL DEFAULT 0,
+			tenant_id TEXT NOT NULL DEFAULT '',
+			client_id TEXT NOT NULL DEFAULT '',
+			client_secret_enc BLOB NOT NULL DEFAULT '',
+			redirect_url TEXT NOT NULL DEFAULT ''
+		);`,
 		`CREATE TABLE IF NOT EXISTS session_settings (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			session_minutes INTEGER NOT NULL
@@ -127,6 +135,9 @@ func migrate(ctx context.Context, conn *sql.DB) error {
 
 	if _, err := conn.ExecContext(ctx, `INSERT OR IGNORE INTO ldap_config (id, enabled) VALUES (1, 0);`); err != nil {
 		return fmt.Errorf("seed ldap config: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, `INSERT OR IGNORE INTO azure_ad_config (id, enabled) VALUES (1, 0);`); err != nil {
+		return fmt.Errorf("seed azure ad config: %w", err)
 	}
 
 	alterStatements := []string{
