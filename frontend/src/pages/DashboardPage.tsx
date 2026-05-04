@@ -1,24 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  Alert,
-  Box,
-  Button,
-  Card,
-  CardContent,
-  CircularProgress,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  Divider,
-  FormControlLabel,
-  Switch,
-  Tab,
-  Tabs,
-  TextField,
-  Typography
-} from '@mui/material';
 import Layout from '../components/Layout';
+import { Alert, Button, Input, Modal, Spinner, Toggle } from '../components/ui';
 import {
   User,
   getMe,
@@ -37,7 +19,7 @@ import {
   getCronJobYaml,
   getConfigMapData,
   getPodEvents,
-  getDeploymentEvents
+  getDeploymentEvents,
 } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 
@@ -65,15 +47,13 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   const logSocketRef = React.useRef<WebSocket | null>(null);
   const logPausedRef = React.useRef(false);
 
-  const orderedResources = useMemo(() =>
-    resourceOrder.filter((resource) => Object.keys(allowedResources).includes(resource)),
+  const orderedResources = useMemo(
+    () => resourceOrder.filter((resource) => Object.keys(allowedResources).includes(resource)),
     [allowedResources]
   );
 
   const filteredItems = useMemo(() => {
-    if (!searchQuery.trim()) {
-      return items;
-    }
+    if (!searchQuery.trim()) return items;
     const query = searchQuery.trim().toLowerCase();
     return items.filter((item) => {
       const name = (item.metadata as { name?: string })?.name ?? '';
@@ -108,9 +88,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
 
   useEffect(() => {
     const loadPermissions = async () => {
-      if (!selectedNamespace) {
-        return;
-      }
+      if (!selectedNamespace) return;
       try {
         const permissions = await getNamespacePermissions(selectedNamespace);
         setAllowedResources(permissions.resources);
@@ -126,25 +104,16 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   }, [selectedNamespace]);
 
   const loadResources = useCallback(async () => {
-    if (!selectedNamespace || !activeTab) {
-      return;
-    }
+    if (!selectedNamespace || !activeTab) return;
     setLoading(true);
     try {
       let result: { items: Array<Record<string, unknown>> } | null = null;
-      if (activeTab === 'pods') {
-        result = await listPods(selectedNamespace);
-      } else if (activeTab === 'deployments') {
-        result = await listDeployments(selectedNamespace);
-      } else if (activeTab === 'services') {
-        result = await listServices(selectedNamespace);
-      } else if (activeTab === 'configmaps') {
-        result = await listConfigMaps(selectedNamespace);
-      } else if (activeTab === 'ingresses') {
-        result = await listIngresses(selectedNamespace);
-      } else if (activeTab === 'cronjobs') {
-        result = await listCronJobs(selectedNamespace);
-      }
+      if (activeTab === 'pods') result = await listPods(selectedNamespace);
+      else if (activeTab === 'deployments') result = await listDeployments(selectedNamespace);
+      else if (activeTab === 'services') result = await listServices(selectedNamespace);
+      else if (activeTab === 'configmaps') result = await listConfigMaps(selectedNamespace);
+      else if (activeTab === 'ingresses') result = await listIngresses(selectedNamespace);
+      else if (activeTab === 'cronjobs') result = await listCronJobs(selectedNamespace);
       setItems(result?.items ?? []);
     } catch (err) {
       setItems([]);
@@ -162,9 +131,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   }, [activeTab, selectedNamespace]);
 
   useEffect(() => {
-    if (!selectedNamespace || (activeTab !== 'pods' && activeTab !== 'deployments')) {
-      return;
-    }
+    if (!selectedNamespace || (activeTab !== 'pods' && activeTab !== 'deployments')) return;
     const interval = setInterval(() => {
       void loadResources();
     }, 10000);
@@ -172,18 +139,14 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   }, [activeTab, loadResources, selectedNamespace]);
 
   useEffect(() => {
-    if (!logContainerRef.current) {
-      return;
-    }
+    if (!logContainerRef.current) return;
     if (autoScroll) {
       logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
     }
   }, [modalContent, autoScroll]);
 
   useEffect(() => {
-    if (!modalOpen || !logContainerRef.current) {
-      return;
-    }
+    if (!modalOpen || !logContainerRef.current) return;
     if (modalTitle.startsWith('Pod Logs')) {
       logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
     }
@@ -214,17 +177,11 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
     setModalContent('');
     try {
       let result: { yaml: string } = { yaml: '' };
-      if (type === 'deployments') {
-        result = await getDeploymentYaml(namespace, name);
-      } else if (type === 'services') {
-        result = await getServiceYaml(namespace, name);
-      } else if (type === 'configmaps') {
-        result = await getConfigMapYaml(namespace, name);
-      } else if (type === 'ingresses') {
-        result = await getIngressYaml(namespace, name);
-      } else if (type === 'cronjobs') {
-        result = await getCronJobYaml(namespace, name);
-      }
+      if (type === 'deployments') result = await getDeploymentYaml(namespace, name);
+      else if (type === 'services') result = await getServiceYaml(namespace, name);
+      else if (type === 'configmaps') result = await getConfigMapYaml(namespace, name);
+      else if (type === 'ingresses') result = await getIngressYaml(namespace, name);
+      else if (type === 'cronjobs') result = await getCronJobYaml(namespace, name);
       setModalContent(result.yaml);
     } catch (err) {
       setModalContent((err as Error).message);
@@ -303,7 +260,9 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
     setModalContent('');
     try {
       const result =
-        type === 'pods' ? await getPodEvents(namespace, name) : await getDeploymentEvents(namespace, name);
+        type === 'pods'
+          ? await getPodEvents(namespace, name)
+          : await getDeploymentEvents(namespace, name);
       setModalContent(JSON.stringify(result.items, null, 2));
     } catch (err) {
       setModalContent((err as Error).message);
@@ -313,17 +272,11 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   };
 
   const handleModalSelectAll = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'a') {
-      return;
-    }
-    if (!logContainerRef.current) {
-      return;
-    }
+    if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'a') return;
+    if (!logContainerRef.current) return;
     event.preventDefault();
     const selection = window.getSelection();
-    if (!selection) {
-      return;
-    }
+    if (!selection) return;
     const range = document.createRange();
     range.selectNodeContents(logContainerRef.current);
     selection.removeAllRanges();
@@ -331,13 +284,9 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   };
 
   const refreshModal = async () => {
-    if (!selectedNamespace || !modalTitle) {
-      return;
-    }
+    if (!selectedNamespace || !modalTitle) return;
     const name = modalTitle.split(' - ')[1];
-    if (!name) {
-      return;
-    }
+    if (!name) return;
     if (modalTitle.startsWith('ConfigMap Data')) {
       await openConfigMapDataModal(selectedNamespace, name);
     } else if (modalTitle.startsWith('PODS Events')) {
@@ -356,6 +305,8 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
     }
   };
 
+  // ─── Render ───────────────────────────────────────────────────────────────
+
   return (
     <Layout
       user={user}
@@ -365,288 +316,323 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
       namespaceSearch={namespaceSearch}
       onNamespaceSearchChange={setNamespaceSearch}
     >
-      <Typography variant="h5" fontWeight={600} gutterBottom>
-        Cluster Overview
-      </Typography>
-      <Typography variant="body2" color="text.secondary" gutterBottom>
+      <h1 className="text-xl font-semibold text-gray-900">Cluster Overview</h1>
+      <p className="mt-1 text-sm text-gray-500">
         Select a namespace to view authorized resources. Unauthorized resources never appear.
-      </Typography>
+      </p>
+
       {error && (
-        <Alert severity="warning" sx={{ mt: 2 }}>
+        <Alert severity="warning" className="mt-4">
           {error}
         </Alert>
       )}
 
-      <Card sx={{ mt: 3, boxShadow: 2 }}>
-        <CardContent>
-          <Box display="flex" justifyContent="space-between" alignItems="center">
-            <Box display="flex" alignItems="center" gap={2} flexWrap="wrap">
-              <Typography variant="h6" fontWeight={600}>
-                {selectedNamespace ?? 'No namespace available'}
-              </Typography>
-              <TextField
-                size="small"
-                placeholder={`Search ${activeTab}`}
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-            </Box>
-            {loading && <CircularProgress size={20} />}
-          </Box>
-          <Divider sx={{ my: 2 }} />
-          <Tabs
-            value={activeTab}
-            onChange={(_, value) => setActiveTab(value)}
-            textColor="primary"
-            indicatorColor="primary"
-          >
+      {/* ── Resource card ─────────────────────────────────────────── */}
+      <div className="mt-6 rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-base font-semibold text-gray-900">
+              {selectedNamespace ?? 'No namespace available'}
+            </span>
+            <Input
+              placeholder={`Search ${activeTab}`}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-48"
+            />
+          </div>
+          {loading && <Spinner size="sm" />}
+        </div>
+
+        {/* Tab bar */}
+        <div className="border-t border-gray-100">
+          <div className="flex gap-0 overflow-x-auto px-4">
             {orderedResources.map((resource) => (
-              <Tab key={resource} value={resource} label={resource.toUpperCase()} />
-            ))}
-          </Tabs>
-          <Divider sx={{ my: 2 }} />
-          <Box display="grid" gap={2}>
-            {filteredItems.length === 0 && !loading && (
-              <Typography variant="body2" color="text.secondary">
-                {searchQuery ? 'No matching records found.' : 'No records available for this resource.'}
-              </Typography>
-            )}
-            {filteredItems.map((item, index) => {
-              const name = (item.metadata as { name?: string })?.name ?? 'Unnamed';
-              const containerStatuses = (item.status as { containerStatuses?: Array<{ ready?: boolean; restartCount?: number }> })
-                ?.containerStatuses ?? [];
-              const restartCount = containerStatuses.reduce((sum, status) => sum + (status.restartCount ?? 0), 0);
-              const allReady = containerStatuses.length > 0 && containerStatuses.every((status) => status.ready);
-              const isRunning = (item.status as { phase?: string })?.phase === 'Running';
-              const isHealthy = allReady && isRunning;
-              const healthyColor = '#16a34a';
-              const warningColor = '#f97316';
-              const neutralColor = '#111827';
-              const desiredReplicas = (item.spec as { replicas?: number })?.replicas ?? 0;
-              const readyReplicas = (item.status as { readyReplicas?: number })?.readyReplicas ?? 0;
-              const allReplicasReady = desiredReplicas > 0 && readyReplicas >= desiredReplicas;
-              const cronSchedule = (item.spec as { schedule?: string })?.schedule ?? 'N/A';
-              const lastSchedule = (item.status as { lastScheduleTime?: string })?.lastScheduleTime ?? 'Never';
-              const isSuspended = (item.spec as { suspend?: boolean })?.suspend ?? false;
-              const ingressRules = (item.spec as { rules?: Array<{ host?: string; http?: { paths?: Array<{ path?: string }> } }> })
-                ?.rules ?? [];
-              const ingressHosts = ingressRules.map((rule) => rule.host).filter(Boolean) as string[];
-              const ingressPaths = ingressRules
-                .flatMap((rule) => rule.http?.paths ?? [])
-                .map((path) => path.path)
-                .filter(Boolean) as string[];
-              return (
-              <Box
-                key={index}
-                sx={{
-                  p: 2,
-                  borderRadius: 2,
-                  border: '1px solid #e0e5f2',
-                  backgroundColor: '#fff'
-                }}
+              <button
+                key={resource}
+                onClick={() => setActiveTab(resource)}
+                className={`shrink-0 border-b-2 px-4 py-3 text-xs font-semibold uppercase tracking-wide transition-colors focus:outline-none ${
+                  activeTab === resource
+                    ? 'border-blue-600 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
+                }`}
               >
-                {activeTab === 'pods' && (
-                  <Box display="flex" alignItems="center" gap={1}>
-                    <Box
-                      sx={{
-                        width: 12,
-                        height: 12,
-                        borderRadius: '50%',
-                        backgroundColor: isHealthy ? healthyColor : warningColor,
-                        border: isHealthy && restartCount > 0 ? `2px solid ${warningColor}` : `1px solid ${isHealthy ? healthyColor : warningColor}`,
-                        boxSizing: 'border-box',
-                        flexShrink: 0
-                      }}
+                {resource}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Items grid */}
+        <div className="flex flex-col gap-3 p-5">
+          {filteredItems.length === 0 && !loading && (
+            <p className="text-sm text-gray-400">
+              {searchQuery ? 'No matching records found.' : 'No records available for this resource.'}
+            </p>
+          )}
+
+          {filteredItems.map((item, index) => {
+            const name = (item.metadata as { name?: string })?.name ?? 'Unnamed';
+            const containerStatuses = (
+              item.status as {
+                containerStatuses?: Array<{ ready?: boolean; restartCount?: number }>;
+              }
+            )?.containerStatuses ?? [];
+            const restartCount = containerStatuses.reduce(
+              (sum, s) => sum + (s.restartCount ?? 0),
+              0
+            );
+            const allReady =
+              containerStatuses.length > 0 && containerStatuses.every((s) => s.ready);
+            const isRunning = (item.status as { phase?: string })?.phase === 'Running';
+            const isHealthy = allReady && isRunning;
+
+            const desiredReplicas = (item.spec as { replicas?: number })?.replicas ?? 0;
+            const readyReplicas = (item.status as { readyReplicas?: number })?.readyReplicas ?? 0;
+            const allReplicasReady = desiredReplicas > 0 && readyReplicas >= desiredReplicas;
+
+            const cronSchedule = (item.spec as { schedule?: string })?.schedule ?? 'N/A';
+            const lastSchedule =
+              (item.status as { lastScheduleTime?: string })?.lastScheduleTime ?? 'Never';
+            const isSuspended = (item.spec as { suspend?: boolean })?.suspend ?? false;
+
+            const ingressRules = (
+              item.spec as {
+                rules?: Array<{
+                  host?: string;
+                  http?: { paths?: Array<{ path?: string }> };
+                }>;
+              }
+            )?.rules ?? [];
+            const ingressHosts = ingressRules
+              .map((r) => r.host)
+              .filter(Boolean) as string[];
+            const ingressPaths = ingressRules
+              .flatMap((r) => r.http?.paths ?? [])
+              .map((p) => p.path)
+              .filter(Boolean) as string[];
+
+            // Status dot color
+            let dotColor = '';
+            let dotRing = '';
+            if (activeTab === 'pods') {
+              dotColor = isHealthy ? 'bg-green-500' : 'bg-orange-400';
+              dotRing = isHealthy && restartCount > 0 ? 'ring-2 ring-orange-400' : '';
+            } else if (activeTab === 'deployments') {
+              dotColor =
+                desiredReplicas === 0
+                  ? 'bg-transparent border-2 border-gray-400'
+                  : allReplicasReady
+                  ? 'bg-green-500'
+                  : 'bg-orange-400';
+            } else if (activeTab === 'cronjobs') {
+              dotColor = isSuspended ? 'bg-orange-400' : 'bg-green-500';
+            }
+
+            const showDot = ['pods', 'deployments', 'cronjobs'].includes(activeTab);
+
+            return (
+              <div
+                key={index}
+                className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm"
+              >
+                <div className="flex items-center gap-2">
+                  {showDot && (
+                    <span
+                      className={`h-2.5 w-2.5 shrink-0 rounded-full ${dotColor} ${dotRing}`}
                     />
-                    <Typography variant="subtitle2" fontWeight={600}>
-                      {name}
-                    </Typography>
-                  </Box>
-                )}
-                {activeTab === 'deployments' && (
-                  <Box display="flex" alignItems="center" gap={1}>
-                    <Box
-                      sx={{
-                        width: 12,
-                        height: 12,
-                        borderRadius: '50%',
-                        backgroundColor: desiredReplicas === 0 ? 'transparent' : allReplicasReady ? healthyColor : warningColor,
-                        border: desiredReplicas === 0 ? `2px solid ${neutralColor}` : `1px solid ${allReplicasReady ? healthyColor : warningColor}`,
-                        boxSizing: 'border-box',
-                        flexShrink: 0
-                      }}
-                    />
-                    <Typography variant="subtitle2" fontWeight={600}>
-                      {name}
-                    </Typography>
-                  </Box>
-                )}
-                {(activeTab !== 'pods' && activeTab !== 'deployments' && activeTab !== 'cronjobs') && (
-                  <Typography variant="subtitle2" fontWeight={600}>
-                    {name}
-                  </Typography>
-                )}
-                {activeTab === 'cronjobs' && (
-                  <Box display="flex" alignItems="center" gap={1}>
-                    <Box
-                      sx={{
-                        width: 12,
-                        height: 12,
-                        borderRadius: '50%',
-                        backgroundColor: isSuspended ? warningColor : healthyColor,
-                        border: `1px solid ${isSuspended ? warningColor : healthyColor}`,
-                        boxSizing: 'border-box',
-                        flexShrink: 0
-                      }}
-                    />
-                    <Typography variant="subtitle2" fontWeight={600}>
-                      {name}
-                    </Typography>
-                  </Box>
-                )}
-                <Typography variant="body2" color="text.secondary">
+                  )}
+                  <span className="text-sm font-semibold text-gray-900">{name}</span>
+                </div>
+
+                <p className="mt-1 text-xs text-gray-400">
                   {(item.metadata as { creationTimestamp?: string })?.creationTimestamp ?? 'N/A'}
-                </Typography>
+                </p>
+
                 {activeTab === 'pods' && (
-                  <Typography variant="body2" color="text.secondary">
-                    Restarts: {restartCount}
-                  </Typography>
+                  <p className="text-xs text-gray-500">Restarts: {restartCount}</p>
                 )}
                 {activeTab === 'deployments' && (
-                  <Typography variant="body2" color="text.secondary">
+                  <p className="text-xs text-gray-500">
                     Replicas: {desiredReplicas} | Ready: {readyReplicas} | Available:{' '}
                     {(item.status as { availableReplicas?: number })?.availableReplicas ?? 0}
-                  </Typography>
+                  </p>
                 )}
                 {activeTab === 'ingresses' && (
                   <>
-                    <Typography variant="body2" color="text.secondary">
+                    <p className="text-xs text-gray-500">
                       Hosts: {ingressHosts.length > 0 ? ingressHosts.join(', ') : 'N/A'}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
+                    </p>
+                    <p className="text-xs text-gray-500">
                       Paths: {ingressPaths.length > 0 ? ingressPaths.join(', ') : 'N/A'}
-                    </Typography>
+                    </p>
                   </>
                 )}
                 {activeTab === 'cronjobs' && (
                   <>
-                    <Typography variant="body2" color="text.secondary">
-                      Schedule: {cronSchedule}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      Last schedule: {lastSchedule}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
+                    <p className="text-xs text-gray-500">Schedule: {cronSchedule}</p>
+                    <p className="text-xs text-gray-500">Last schedule: {lastSchedule}</p>
+                    <p className="text-xs text-gray-500">
                       Status: {isSuspended ? 'Disabled' : 'Enabled'}
-                    </Typography>
+                    </p>
                   </>
                 )}
-                <Box mt={2} display="flex" gap={1} flexWrap="wrap">
+
+                <div className="mt-3 flex flex-wrap gap-2">
                   {activeTab === 'pods' && (
-                    <Button size="small" variant="outlined" onClick={() => openLogModal(selectedNamespace ?? '', name)}>
-                      Logs
-                    </Button>
-                  )}
-                  {activeTab === 'pods' && (
-                    <Button size="small" variant="outlined" onClick={() => openEventsModal('pods', selectedNamespace ?? '', name)}>
-                      Events
-                    </Button>
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openLogModal(selectedNamespace ?? '', name)}
+                      >
+                        Logs
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openEventsModal('pods', selectedNamespace ?? '', name)}
+                      >
+                        Events
+                      </Button>
+                    </>
                   )}
                   {activeTab === 'deployments' && (
-                    <Button size="small" variant="outlined" onClick={() => openYamlModal('deployments', selectedNamespace ?? '', name)}>
-                      YAML
-                    </Button>
-                  )}
-                  {activeTab === 'deployments' && (
-                    <Button size="small" variant="outlined" onClick={() => openEventsModal('deployments', selectedNamespace ?? '', name)}>
-                      Events
-                    </Button>
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openYamlModal('deployments', selectedNamespace ?? '', name)}
+                      >
+                        YAML
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          openEventsModal('deployments', selectedNamespace ?? '', name)
+                        }
+                      >
+                        Events
+                      </Button>
+                    </>
                   )}
                   {activeTab === 'services' && (
-                    <Button size="small" variant="outlined" onClick={() => openYamlModal('services', selectedNamespace ?? '', name)}>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => openYamlModal('services', selectedNamespace ?? '', name)}
+                    >
                       YAML
                     </Button>
                   )}
                   {activeTab === 'ingresses' && (
-                    <Button size="small" variant="outlined" onClick={() => openYamlModal('ingresses', selectedNamespace ?? '', name)}>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => openYamlModal('ingresses', selectedNamespace ?? '', name)}
+                    >
                       YAML
                     </Button>
                   )}
                   {activeTab === 'configmaps' && (
                     <>
-                      <Button size="small" variant="outlined" onClick={() => openConfigMapDataModal(selectedNamespace ?? '', name)}>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openConfigMapDataModal(selectedNamespace ?? '', name)}
+                      >
                         Data
                       </Button>
-                      <Button size="small" variant="outlined" onClick={() => openYamlModal('configmaps', selectedNamespace ?? '', name)}>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openYamlModal('configmaps', selectedNamespace ?? '', name)}
+                      >
                         YAML
                       </Button>
                     </>
                   )}
                   {activeTab === 'cronjobs' && (
-                    <Button size="small" variant="outlined" onClick={() => openYamlModal('cronjobs', selectedNamespace ?? '', name)}>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => openYamlModal('cronjobs', selectedNamespace ?? '', name)}
+                    >
                       YAML
                     </Button>
                   )}
-                </Box>
-              </Box>
-            )})}
-          </Box>
-        </CardContent>
-      </Card>
-      <Dialog
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── Modal ─────────────────────────────────────────────────── */}
+      <Modal
         open={modalOpen}
         onClose={closeModal}
-        fullWidth
-        maxWidth={false}
-        PaperProps={{ sx: { width: '95vw', height: '95vh', maxWidth: '95vw', maxHeight: '95vh' } }}
-      >
-        <DialogTitle>{modalTitle}</DialogTitle>
-        <DialogContent dividers onKeyDown={handleModalSelectAll} tabIndex={0}>
-          {modalLoading ? (
-            <CircularProgress size={20} />
-          ) : (
-            <>
-              {modalTitle.startsWith('Pod Logs') && (
-                <Box display="flex" gap={2} alignItems="center" mb={2}>
-                  <FormControlLabel
-                    control={<Switch checked={!logPaused} onChange={(e) => setLogPaused(!e.target.checked)} />}
-                    label={logPaused ? 'Paused' : 'Live'}
-                  />
-                  <FormControlLabel
-                    control={<Switch checked={autoScroll} onChange={(e) => setAutoScroll(e.target.checked)} />}
-                    label="Auto-scroll"
-                  />
-                  <FormControlLabel
-                    control={<Switch checked={wordWrap} onChange={(e) => setWordWrap(e.target.checked)} />}
-                    label="Word wrap"
-                  />
-                </Box>
-              )}
-              <pre
-                ref={logContainerRef}
-                style={{
-                  maxHeight: '90%',
-                  height: '90%',
-                  overflow: 'auto',
-                  whiteSpace: wordWrap ? 'pre-wrap' : 'pre',
-                  fontFamily: 'monospace',
-                  fontSize: '0.75em'
-                }}
+        title={modalTitle}
+        onKeyDown={handleModalSelectAll}
+        footer={
+          <>
+            {modalTitle.startsWith('Pod Logs') ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  connectLogs(selectedNamespace ?? '', modalTitle.split(' - ')[1] ?? '')
+                }
               >
-                {modalContent || 'No data'}
-              </pre>
-            </>
-          )}
-        </DialogContent>
-        <DialogActions>
-          {modalTitle.startsWith('Pod Logs') ? (
-            <Button onClick={() => connectLogs(selectedNamespace ?? '', modalTitle.split(' - ')[1] ?? '')}>Reconnect</Button>
-          ) : (
-            <Button onClick={refreshModal}>Refresh</Button>
-          )}
-          <Button onClick={closeModal}>Close</Button>
-        </DialogActions>
-      </Dialog>
+                Reconnect
+              </Button>
+            ) : (
+              <Button variant="outline" size="sm" onClick={refreshModal}>
+                Refresh
+              </Button>
+            )}
+            <Button variant="primary" size="sm" onClick={closeModal}>
+              Close
+            </Button>
+          </>
+        }
+      >
+        {modalLoading ? (
+          <div className="flex h-full items-center justify-center">
+            <Spinner size="md" />
+          </div>
+        ) : (
+          <div className="flex h-full flex-col gap-3">
+            {modalTitle.startsWith('Pod Logs') && (
+              <div className="flex flex-wrap items-center gap-4">
+                <Toggle
+                  checked={!logPaused}
+                  onChange={(v) => setLogPaused(!v)}
+                  label={logPaused ? 'Paused' : 'Live'}
+                />
+                <Toggle
+                  checked={autoScroll}
+                  onChange={setAutoScroll}
+                  label="Auto-scroll"
+                />
+                <Toggle
+                  checked={wordWrap}
+                  onChange={setWordWrap}
+                  label="Word wrap"
+                />
+              </div>
+            )}
+            <pre
+              ref={logContainerRef}
+              className="flex-1 overflow-auto rounded-lg bg-gray-950 p-4 font-mono text-xs leading-5 text-gray-100"
+              style={{ whiteSpace: wordWrap ? 'pre-wrap' : 'pre' }}
+            >
+              {modalContent || 'No data'}
+            </pre>
+          </div>
+        )}
+      </Modal>
     </Layout>
   );
 };

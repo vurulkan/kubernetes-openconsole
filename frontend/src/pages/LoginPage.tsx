@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Box, Button, Card, CardContent, TextField, Typography, Alert } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
+import { Alert, Button, Input } from '../components/ui';
 import { getAuthProviders, login, startAzureLogin } from '../services/api';
 
 type Props = {
@@ -50,53 +50,53 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
   };
 
   return (
-    <Box display="flex" alignItems="center" justifyContent="center" minHeight="100vh">
-      <Card sx={{ width: '90vw', maxWidth: 380, boxShadow: 4 }}>
-        <CardContent>
-          {logoUrl && (
-            <Box display="flex" justifyContent="center" mb={2} sx={{ width: '100%', overflow: 'hidden' }}>
-              <Box
-                component="img"
-                src={logoUrl}
-                alt="Organization logo"
-                onError={() => setLogoUrl(null)}
-                sx={{ width: '100%', maxWidth: '100%', height: 'auto', objectFit: 'contain', display: 'block' }}
-              />
-            </Box>
-          )}
-          <Typography variant="h5" fontWeight={600} gutterBottom>
-            Kubernetes OpenConsole
-          </Typography>
-          <Typography variant="body2" color="text.secondary" gutterBottom>
-            Sign in with your account.
-          </Typography>
-          {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-          <Box component="form" onSubmit={handleSubmit} display="flex" flexDirection="column" gap={2}>
-            <TextField
-              label="Username"
-              value={username}
-              onChange={(event) => setUsername(event.target.value)}
-              fullWidth
+    <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4 font-sans">
+      <div className="w-full max-w-sm rounded-xl border border-gray-200 bg-white p-8 shadow-sm">
+        {logoUrl && (
+          <div className="mb-6 flex justify-center overflow-hidden">
+            <img
+              src={logoUrl}
+              alt="Organization logo"
+              onError={() => setLogoUrl(null)}
+              className="max-h-20 w-full max-w-full object-contain"
             />
-            <TextField
-              label="Password"
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              fullWidth
-            />
-            <Button type="submit" variant="contained" disabled={loading}>
-              {loading ? 'Signing in...' : 'Sign in'}
+          </div>
+        )}
+
+        <h1 className="mb-1 text-xl font-semibold text-gray-900">Kubernetes OpenConsole</h1>
+        <p className="mb-6 text-sm text-gray-500">Sign in with your account.</p>
+
+        {error && (
+          <Alert severity="error" className="mb-4">
+            {error}
+          </Alert>
+        )}
+
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <Input
+            label="Username"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            autoComplete="username"
+          />
+          <Input
+            label="Password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
+          />
+          <Button type="submit" variant="primary" disabled={loading} className="w-full">
+            {loading ? 'Signing in...' : 'Sign in'}
+          </Button>
+          {azureEnabled && (
+            <Button type="button" variant="outline" onClick={startAzureLogin} className="w-full">
+              Sign in with Microsoft
             </Button>
-            {azureEnabled && (
-              <Button variant="outlined" onClick={startAzureLogin}>
-                Sign in with Microsoft
-              </Button>
-            )}
-          </Box>
-        </CardContent>
-      </Card>
-    </Box>
+          )}
+        </form>
+      </div>
+    </div>
   );
 };
 

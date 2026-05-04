@@ -1,11 +1,9 @@
-:root {
-  font-family: 'Inter', system-ui, sans-serif;
-  color-scheme: light;
-}
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 body {
   margin: 0;
-  background: #f5f7fb;
 }
 
 #root {

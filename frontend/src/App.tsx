@@ -1,22 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
-import { ThemeProvider, createTheme, CssBaseline, CircularProgress, Box } from '@mui/material';
+import { Spinner } from './components/ui';
 import LoginPage from './pages/LoginPage';
 import ChangePasswordPage from './pages/ChangePasswordPage';
 import DashboardPage from './pages/DashboardPage';
 import AdminPage from './pages/AdminPage';
 import { getMe, User } from './services/api';
-
-const theme = createTheme({
-  palette: {
-    mode: 'light',
-    primary: { main: '#174bd2' },
-    background: { default: '#f5f7fb' }
-  },
-  typography: {
-    fontFamily: 'Inter, system-ui, sans-serif'
-  }
-});
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -43,34 +32,28 @@ const App: React.FC = () => {
 
   if (loading) {
     return (
-      <ThemeProvider theme={theme}>
-        <CssBaseline />
-        <Box display="flex" alignItems="center" justifyContent="center" minHeight="100vh">
-          <CircularProgress />
-        </Box>
-      </ThemeProvider>
+      <div className="flex min-h-screen items-center justify-center bg-slate-50">
+        <Spinner size="lg" />
+      </div>
     );
   }
 
   return (
-    <ThemeProvider theme={theme}>
-      <CssBaseline />
-      <Routes>
-        <Route path="/login" element={<LoginPage onLogin={refreshUser} />} />
-        <Route
-          path="/change-password"
-          element={user ? <ChangePasswordPage onChanged={refreshUser} /> : <Navigate to="/login" />}
-        />
-        <Route
-          path="/"
-          element={user ? <DashboardPage user={user} /> : <Navigate to="/login" />}
-        />
-        <Route
-          path="/admin"
-          element={user ? <AdminPage user={user} /> : <Navigate to="/login" />}
-        />
-      </Routes>
-    </ThemeProvider>
+    <Routes>
+      <Route path="/login" element={<LoginPage onLogin={refreshUser} />} />
+      <Route
+        path="/change-password"
+        element={user ? <ChangePasswordPage onChanged={refreshUser} /> : <Navigate to="/login" />}
+      />
+      <Route
+        path="/"
+        element={user ? <DashboardPage user={user} /> : <Navigate to="/login" />}
+      />
+      <Route
+        path="/admin"
+        element={user ? <AdminPage user={user} /> : <Navigate to="/login" />}
+      />
+    </Routes>
   );
 };
 
