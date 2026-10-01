@@ -184,6 +184,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     configmaps: { list: true, get: true },
     ingresses: { list: true, get: true },
     cronjobs: { list: true, get: true },
+    jobs: { list: true, get: true },
   });
   const [ldapConfig, setLdapConfig] = useState({
     enabled: false,
@@ -685,6 +686,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
       configmaps: { list: true, get: true },
       ingresses: { list: true, get: true },
       cronjobs: { list: true, get: true },
+      jobs: { list: true, get: true },
     });
   };
 

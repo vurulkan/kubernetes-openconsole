@@ -7,6 +7,7 @@ import {
   FileText,
   Globe,
   LayoutGrid,
+  ListChecks,
   Minus,
   Plus,
   RefreshCw,
@@ -31,11 +32,13 @@ import {
   listConfigMaps,
   listIngresses,
   listCronJobs,
+  listJobs,
   getDeploymentYaml,
   getServiceYaml,
   getConfigMapYaml,
   getIngressYaml,
   getCronJobYaml,
+  getJobYaml,
   getConfigMapData,
   getPodEvents,
   getDeploymentEvents,
@@ -44,7 +47,7 @@ import {
 } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 
-const resourceOrder = ['pods', 'deployments', 'services', 'configmaps', 'ingresses', 'cronjobs'];
+const resourceOrder = ['pods', 'deployments', 'services', 'configmaps', 'ingresses', 'cronjobs', 'jobs'];
 
 const RESOURCE_META: Record<
   string,
@@ -56,6 +59,7 @@ const RESOURCE_META: Record<
   configmaps: { label: 'ConfigMaps', icon: FileText },
   ingresses: { label: 'Ingresses', icon: Globe },
   cronjobs: { label: 'CronJobs', icon: Calendar },
+  jobs: { label: 'Jobs', icon: ListChecks },
 };
 
 const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
@@ -232,7 +236,19 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
       else if (activeTab === 'configmaps') result = await listConfigMaps(selectedNamespace);
       else if (activeTab === 'ingresses') result = await listIngresses(selectedNamespace);
       else if (activeTab === 'cronjobs') result = await listCronJobs(selectedNamespace);
-      setItems(result?.items ?? []);
+      else if (activeTab === 'jobs') result = await listJobs(selectedNamespace);
+
+      // Pods tab: hide pods owned by a Job. Job-created pods clutter the Pods
+      // list (CronJob runs, migration helpers, one-shots). They're now visible
+      // on their own Jobs tab with proper status chips.
+      let items = result?.items ?? [];
+      if (activeTab === 'pods') {
+        items = items.filter((p) => {
+          const owners = ((p.metadata as any)?.ownerReferences ?? []) as Array<{ kind?: string }>;
+          return !owners.some((o) => o.kind === 'Job');
+        });
+      }
+      setItems(items);
     } catch (err) {
       setItems([]);
       setError((err as Error).message || 'Failed to load resources.');
@@ -362,6 +378,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
       else if (type === 'configmaps') result = await getConfigMapYaml(namespace, name);
       else if (type === 'ingresses') result = await getIngressYaml(namespace, name);
       else if (type === 'cronjobs') result = await getCronJobYaml(namespace, name);
+      else if (type === 'jobs') result = await getJobYaml(namespace, name);
       setModalContent(result.yaml);
     } catch (err) {
       setModalContent((err as Error).message);
@@ -478,7 +495,8 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
       modalTitle.startsWith('SERVICES') ||
       modalTitle.startsWith('CONFIGMAPS') ||
       modalTitle.startsWith('INGRESSES') ||
-      modalTitle.startsWith('CRONJOBS')
+      modalTitle.startsWith('CRONJOBS') ||
+      modalTitle.startsWith('JOBS')
     ) {
       const type = modalTitle.split(' ')[0].toLowerCase();
       await fetchYaml(type, selectedNamespace, name);
@@ -763,9 +781,32 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
               ) : (
                 <Badge variant="success">Active</Badge>
               );
+            } else if (activeTab === 'jobs') {
+              const jobStatus = (item.status as {
+                succeeded?: number;
+                failed?: number;
+                active?: number;
+                completionTime?: string;
+              }) ?? {};
+              const succeeded = jobStatus.succeeded ?? 0;
+              const failed = jobStatus.failed ?? 0;
+              const activeCount = jobStatus.active ?? 0;
+              if (failed > 0) {
+                dotClass = 'status-dot status-dot-error';
+                statusLabel = <Badge variant="error">Failed · {failed}</Badge>;
+              } else if (activeCount > 0) {
+                dotClass = 'status-dot status-dot-warning';
+                statusLabel = <Badge variant="warning">Running · {activeCount}</Badge>;
+              } else if (succeeded > 0) {
+                dotClass = 'status-dot status-dot-success';
+                statusLabel = <Badge variant="success">Succeeded</Badge>;
+              } else {
+                dotClass = 'status-dot status-dot-idle';
+                statusLabel = <Badge variant="default">Pending</Badge>;
+              }
             }
 
-            const showDot = ['pods', 'deployments', 'cronjobs'].includes(activeTab);
+            const showDot = ['pods', 'deployments', 'cronjobs', 'jobs'].includes(activeTab);
             const createdAt = (item.metadata as { creationTimestamp?: string })?.creationTimestamp;
 
             return (
@@ -836,6 +877,35 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                       </div>
                     </>
                   )}
+                  {activeTab === 'jobs' && (() => {
+                    const spec = (item.spec as { completions?: number; parallelism?: number; backoffLimit?: number }) ?? {};
+                    const st = (item.status as {
+                      succeeded?: number; failed?: number; active?: number;
+                      startTime?: string; completionTime?: string;
+                    }) ?? {};
+                    return (
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="rounded-md bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-slate-700 dark:text-slate-200">
+                          completions {st.succeeded ?? 0}/{spec.completions ?? 1}
+                        </span>
+                        {(st.active ?? 0) > 0 && (
+                          <span className="rounded-md bg-amber-50 px-1.5 py-0.5 font-mono text-[10px] text-amber-800 ring-1 ring-inset ring-amber-200">
+                            active {st.active}
+                          </span>
+                        )}
+                        {(st.failed ?? 0) > 0 && (
+                          <span className="rounded-md bg-rose-50 px-1.5 py-0.5 font-mono text-[10px] text-rose-700 ring-1 ring-inset ring-rose-200">
+                            failed {st.failed}
+                          </span>
+                        )}
+                        {st.completionTime && (
+                          <span className="text-slate-400 dark:text-slate-500">
+                            done {st.completionTime}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 <div className="mt-auto flex flex-wrap gap-2 pt-1">
@@ -978,6 +1048,16 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                       variant="outline"
                       size="sm"
                       onClick={() => openYamlModal('cronjobs', selectedNamespace ?? '', name)}
+                    >
+                      <FileCode2 size={13} />
+                      YAML
+                    </Button>
+                  )}
+                  {activeTab === 'jobs' && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => openYamlModal('jobs', selectedNamespace ?? '', name)}
                     >
                       <FileCode2 size={13} />
                       YAML

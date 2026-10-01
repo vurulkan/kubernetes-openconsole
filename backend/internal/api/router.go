@@ -160,6 +160,8 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/namespaces/{namespace}/ingresses/{name}/yaml", s.handleIngressYAML)
 		r.Get("/api/namespaces/{namespace}/cronjobs", s.handleCronJobs)
 		r.Get("/api/namespaces/{namespace}/cronjobs/{name}/yaml", s.handleCronJobYAML)
+		r.Get("/api/namespaces/{namespace}/jobs", s.handleJobs)
+		r.Get("/api/namespaces/{namespace}/jobs/{name}/yaml", s.handleJobYAML)
 		r.Get("/ws/namespaces/{namespace}/pods/{name}/logs", s.handlePodLogsWS)
 		r.Get("/ws/namespaces/{namespace}/pods/{name}/exec", s.handlePodExecWS)
 		r.Get("/ws/namespaces/{namespace}/deployments/{name}/logs", s.handleDeploymentLogsWS)
@@ -776,6 +778,7 @@ func (s *Server) handleNamespacePermissions(w http.ResponseWriter, r *http.Reque
 				"configmaps":  {"list", "get"},
 				"ingresses":   {"list", "get"},
 				"cronjobs":    {"list", "get"},
+				"jobs":        {"list", "get"},
 			},
 		})
 		return
@@ -1105,6 +1108,40 @@ func (s *Server) handleCronJobYAML(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.recordAudit(r, "get", namespace, "cronjobs", item.Name)
+	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(data)})
+}
+
+func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
+	namespace, ok := s.requirePermission(w, r, "jobs", "list")
+	if !ok {
+		return
+	}
+	items, err := s.resources.ListJobs(r.Context(), namespace)
+	if err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	s.recordAudit(r, "list", namespace, "jobs", "*")
+	writeJSON(w, http.StatusOK, map[string]interface{}{"items": items})
+}
+
+func (s *Server) handleJobYAML(w http.ResponseWriter, r *http.Request) {
+	namespace, ok := s.requirePermission(w, r, "jobs", "get")
+	if !ok {
+		return
+	}
+	item, err := s.resources.GetJob(r.Context(), namespace, chi.URLParam(r, "name"))
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	item.ManagedFields = nil
+	data, err := yaml.Marshal(item)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to render yaml")
+		return
+	}
+	s.recordAudit(r, "get", namespace, "jobs", item.Name)
 	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(data)})
 }
 

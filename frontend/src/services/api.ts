@@ -228,6 +228,12 @@ export const listConfigMaps = (namespace: string) =>
 export const listIngresses = (namespace: string) =>
   apiRequest<{ items: Array<Record<string, unknown>> }>(`/api/namespaces/${namespace}/ingresses`);
 
+export const listJobs = (namespace: string) =>
+  apiRequest<{ items: Array<Record<string, unknown>> }>(`/api/namespaces/${namespace}/jobs`);
+
+export const getJobYaml = (namespace: string, name: string) =>
+  apiRequest<{ yaml: string }>(`/api/namespaces/${namespace}/jobs/${name}/yaml`);
+
 export const listCronJobs = (namespace: string) =>
   apiRequest<{ items: Array<Record<string, unknown>> }>(`/api/namespaces/${namespace}/cronjobs`);
 

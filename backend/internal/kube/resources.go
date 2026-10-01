@@ -154,6 +154,30 @@ func (c *ResourceClient) GetCronJob(ctx context.Context, namespace, name string)
 	return client.BatchV1().CronJobs(namespace).Get(ctx, name, metav1.GetOptions{})
 }
 
+// ListJobs enumerates batchv1 Jobs in a namespace. Shown in its own
+// dashboard tab so operators can see short-lived or one-shot work (CronJob
+// executions, image-pull helpers, migration pods) without flooding the
+// Pods list with throwaway rows.
+func (c *ResourceClient) ListJobs(ctx context.Context, namespace string) ([]batchv1.Job, error) {
+	client, ok := c.manager.Client()
+	if !ok || !c.manager.Ready() {
+		return nil, fmt.Errorf("kubernetes client not ready")
+	}
+	result, err := client.BatchV1().Jobs(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return result.Items, nil
+}
+
+func (c *ResourceClient) GetJob(ctx context.Context, namespace, name string) (*batchv1.Job, error) {
+	client, ok := c.manager.Client()
+	if !ok || !c.manager.Ready() {
+		return nil, fmt.Errorf("kubernetes client not ready")
+	}
+	return client.BatchV1().Jobs(namespace).Get(ctx, name, metav1.GetOptions{})
+}
+
 // RestartDeployment triggers a rolling restart by patching the pod template
 // annotation (kubectl.kubernetes.io/restartedAt). Returns the restart timestamp
 // applied so callers can echo it in audit entries.

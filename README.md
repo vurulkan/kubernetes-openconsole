@@ -190,6 +190,7 @@ rules:
   - apiGroups: ["batch"]
     resources:
       - cronjobs
+      - jobs
     verbs: ["get", "list", "watch"]
 ```
 
