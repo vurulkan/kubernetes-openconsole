@@ -165,6 +165,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/ws/namespaces/{namespace}/pods/{name}/logs", s.handlePodLogsWS)
 		r.Get("/ws/namespaces/{namespace}/pods/{name}/exec", s.handlePodExecWS)
 		r.Get("/ws/namespaces/{namespace}/deployments/{name}/logs", s.handleDeploymentLogsWS)
+		r.Get("/ws/namespaces/{namespace}/jobs/{name}/logs", s.handleJobLogsWS)
 	})
 
 	r.Group(func(r chi.Router) {

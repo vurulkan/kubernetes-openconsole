@@ -101,6 +101,47 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
     setTimeout(() => setActionNotice((v) => (v === msg ? null : v)), 4000);
   };
 
+  // Job "Logs" opens one WebSocket to the backend fan-out that follows every
+  // pod of the job (label-selected by job-name). Same visual as deployment
+  // logs; the modal title prefix drives the Reconnect handler.
+  const openJobLogs = (ns: string, jobName: string) => {
+    if (logSocketRef.current) {
+      logSocketRef.current.close();
+      logSocketRef.current = null;
+    }
+    setModalOpen(true);
+    setModalTitle(`Job Logs - ${jobName}`);
+    setModalContent('');
+    setAutoScroll(true);
+    setLogPaused(false);
+
+    const token = localStorage.getItem('authToken') ?? '';
+    if (!token) {
+      setModalContent('[log stream error] Missing auth token.\n');
+      return;
+    }
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const wsUrl = `${protocol}://${window.location.host}/ws/namespaces/${ns}/jobs/${jobName}/logs?tail=100&token=${encodeURIComponent(token)}`;
+    const socket = new WebSocket(wsUrl);
+    socket.onopen = () => {
+      setModalContent((prev) => (prev ? `${prev}\n` : '') + '[log stream connected]\n');
+    };
+    socket.onmessage = (event) => {
+      if (!logPausedRef.current) {
+        setModalContent((prev) => `${prev}${event.data}`);
+      }
+    };
+    socket.onerror = () => {
+      setModalContent((prev) => `${prev}\n[log stream error]\n`);
+    };
+    socket.onclose = (event) => {
+      if (event.code !== 1000) {
+        setModalContent((prev) => `${prev}\n[log stream closed: ${event.code}]\n`);
+      }
+    };
+    logSocketRef.current = socket;
+  };
+
   // Deployment "Logs" opens one WebSocket to a backend fan-out that follows
   // every pod × container of the deployment and prefixes each line with
   // `[pod/container]`, matching the behavior of
@@ -268,7 +309,11 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   // though a modal is open, so we attach via a dedicated effect that only
   // listens while the log modal is visible.
   useEffect(() => {
-    const isLog = modalOpen && (modalTitle.startsWith('Pod Logs') || modalTitle.startsWith('Deployment Logs'));
+    const isLog =
+      modalOpen &&
+      (modalTitle.startsWith('Pod Logs') ||
+        modalTitle.startsWith('Deployment Logs') ||
+        modalTitle.startsWith('Job Logs'));
     if (!isLog) return;
     const handler = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -1054,14 +1099,24 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                     </Button>
                   )}
                   {activeTab === 'jobs' && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => openYamlModal('jobs', selectedNamespace ?? '', name)}
-                    >
-                      <FileCode2 size={13} />
-                      YAML
-                    </Button>
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openYamlModal('jobs', selectedNamespace ?? '', name)}
+                      >
+                        <FileCode2 size={13} />
+                        YAML
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openJobLogs(selectedNamespace ?? '', name)}
+                      >
+                        <Terminal size={13} />
+                        Logs
+                      </Button>
+                    </>
                   )}
                 </div>
               </div>
@@ -1078,7 +1133,9 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
         onKeyDown={handleModalSelectAll}
         footer={
           <>
-            {modalTitle.startsWith('Pod Logs') || modalTitle.startsWith('Deployment Logs') ? (
+            {modalTitle.startsWith('Pod Logs') ||
+            modalTitle.startsWith('Deployment Logs') ||
+            modalTitle.startsWith('Job Logs') ? (
               <Button
                 variant="outline"
                 size="sm"
@@ -1086,6 +1143,8 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                   const name = modalTitle.split(' - ')[1] ?? '';
                   if (modalTitle.startsWith('Deployment Logs')) {
                     openDeploymentLogs(selectedNamespace ?? '', name);
+                  } else if (modalTitle.startsWith('Job Logs')) {
+                    openJobLogs(selectedNamespace ?? '', name);
                   } else {
                     connectLogs(selectedNamespace ?? '', name);
                   }
@@ -1112,7 +1171,9 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
           </div>
         ) : (
           <div className="flex h-full flex-col gap-3">
-            {(modalTitle.startsWith('Pod Logs') || modalTitle.startsWith('Deployment Logs')) && (
+            {(modalTitle.startsWith('Pod Logs') ||
+              modalTitle.startsWith('Deployment Logs') ||
+              modalTitle.startsWith('Job Logs')) && (
               <div className="flex flex-wrap items-center gap-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 px-3 py-2">
                 <Toggle
                   checked={!logPaused}
