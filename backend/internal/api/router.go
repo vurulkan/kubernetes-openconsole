@@ -642,11 +642,32 @@ func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 		ResourceName: "azure_ad",
 	})
 
+	// The global securityHeaders middleware blocks inline scripts with CSP
+	// script-src 'self'. This bootstrap page writes the token into
+	// localStorage before redirecting, so we have to permit THIS inline
+	// script. Give it a per-response nonce and override CSP for this
+	// response only — same middleware check lets handler-set headers win.
+	var nonceBytes [16]byte
+	if _, err := rand.Read(nonceBytes[:]); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate nonce")
+		return
+	}
+	nonce := base64.RawStdEncoding.EncodeToString(nonceBytes[:])
+	w.Header().Set("Content-Security-Policy",
+		"default-src 'self'; "+
+			"script-src 'self' 'nonce-"+nonce+"'; "+
+			"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "+
+			"font-src 'self' https://fonts.gstatic.com data:; "+
+			"img-src 'self' data: blob:; "+
+			"connect-src 'self' ws: wss:; "+
+			"frame-ancestors 'none'; "+
+			"base-uri 'self'; "+
+			"form-action 'self'")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(fmt.Sprintf(`<!doctype html><html><body><script>
+	_, _ = w.Write([]byte(fmt.Sprintf(`<!doctype html><html><body><script nonce=%q>
 try { localStorage.setItem('authToken', %q); } catch (e) {}
 window.location.replace('/');
-</script></body></html>`, token)))
+</script></body></html>`, nonce, token)))
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
