@@ -5,15 +5,27 @@ import {
   Badge,
   Button,
   Checkbox,
-  ChipInput,
   Input,
+  Modal,
   MultiSelect,
   MultiSelectOption,
   NativeSelect,
   Spinner,
 } from '../components/ui';
+import { UsersSection } from './admin/UsersSection';
+import { GroupsSection } from './admin/GroupsSection';
+import { RolesSection } from './admin/RolesSection';
+import { useScopedShortcuts } from '../hooks/useScopedShortcuts';
+import { confirm } from '../components/ConfirmDialog';
 import {
   User,
+  ClusterListItem,
+  listClustersAdmin,
+  createCluster,
+  updateClusterRow,
+  deleteClusterRow,
+  activateCluster,
+  deactivateCluster,
   listUsers,
   createUser,
   updateUser,
@@ -56,38 +68,66 @@ import {
   NamespacePermission,
 } from '../services/api';
 import { useNavigate } from 'react-router-dom';
-import { X } from 'lucide-react';
+import {
+  Boxes,
+  Clock,
+  FileText,
+  Image as ImageIcon,
+  KeyRound,
+  Layers,
+  Pencil,
+  Plus,
+  Power,
+  PowerOff,
+  Search,
+  Settings,
+  ShieldCheck,
+  Trash2,
+  UserPlus,
+  Users as UsersIcon,
+  X,
+} from 'lucide-react';
 
 // ─── Tab definitions ──────────────────────────────────────────────────────────
 
-const ADMIN_TABS = [
-  { label: 'Users', value: 'users' },
-  { label: 'Groups', value: 'groups' },
-  { label: 'Roles', value: 'roles' },
-  { label: 'LDAP', value: 'ldap' },
-  { label: 'Azure AD', value: 'azure-ad' },
-  { label: 'Session', value: 'session' },
-  { label: 'Cluster', value: 'cluster' },
-  { label: 'Customization', value: 'customization' },
-  { label: 'Audit Logs', value: 'audit' },
+const ADMIN_TABS: Array<{
+  label: string;
+  value: string;
+  icon: React.ComponentType<{ size?: number; className?: string }>;
+}> = [
+  { label: 'Users', value: 'users', icon: UsersIcon },
+  { label: 'Groups', value: 'groups', icon: Layers },
+  { label: 'Roles', value: 'roles', icon: ShieldCheck },
+  { label: 'LDAP', value: 'ldap', icon: UserPlus },
+  { label: 'Azure AD', value: 'azure-ad', icon: KeyRound },
+  { label: 'Session', value: 'session', icon: Clock },
+  { label: 'Clusters', value: 'clusters', icon: Boxes },
+  { label: 'Customization', value: 'customization', icon: ImageIcon },
+  { label: 'Audit Logs', value: 'audit', icon: FileText },
 ];
 
 // ─── Section card ─────────────────────────────────────────────────────────────
 
-const SectionCard: React.FC<{ title: string; children: React.ReactNode }> = ({
+const SectionCard: React.FC<{ title: string; description?: string; children: React.ReactNode }> = ({
   title,
+  description,
   children,
 }) => (
-  <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-    <h3 className="mb-4 text-sm font-semibold text-gray-900">{title}</h3>
+  <section className="card-surface p-5">
+    <header className="mb-4 flex items-start justify-between gap-3">
+      <div>
+        <h3 className="text-sm font-semibold tracking-tight text-slate-900 dark:text-slate-100">{title}</h3>
+        {description && <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{description}</p>}
+      </div>
+    </header>
     {children}
-  </div>
+  </section>
 );
 
 // ─── Divider ─────────────────────────────────────────────────────────────────
 
 const Divider: React.FC<{ className?: string }> = ({ className = '' }) => (
-  <div className={`border-t border-gray-200 ${className}`} />
+  <div className={`border-t border-slate-200 dark:border-slate-800 ${className}`} />
 );
 
 // ─── AdminPage ────────────────────────────────────────────────────────────────
@@ -95,6 +135,29 @@ const Divider: React.FC<{ className?: string }> = ({ className = '' }) => (
 const AdminPage: React.FC<{ user: User }> = ({ user }) => {
   const navigate = useNavigate();
   const [tab, setTab] = useState(() => localStorage.getItem('adminActiveTab') || 'users');
+
+  // Admin page shortcuts: [ / ] cycle sub-sections.
+  useScopedShortcuts(
+    [
+      {
+        key: '[',
+        handler: () => {
+          const idx = ADMIN_TABS.findIndex((t) => t.value === tab);
+          const next = ADMIN_TABS[(idx - 1 + ADMIN_TABS.length) % ADMIN_TABS.length];
+          setTab(next.value);
+        },
+      },
+      {
+        key: ']',
+        handler: () => {
+          const idx = ADMIN_TABS.findIndex((t) => t.value === tab);
+          const next = ADMIN_TABS[(idx + 1) % ADMIN_TABS.length];
+          setTab(next.value);
+        },
+      },
+    ],
+    true
+  );
   const [error, setError] = useState<string | null>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [groups, setGroups] = useState<Array<{ id: number; name: string }>>([]);
@@ -111,9 +174,12 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
   const [selectedRoleId, setSelectedRoleId] = useState<number | null>(null);
   const [rolePermissions, setRolePermissions] = useState<NamespacePermission[]>([]);
   const [newPermissionNamespaces, setNewPermissionNamespaces] = useState<string[]>([]);
+  // 0 means "all clusters" (wildcard).
+  const [newPermissionClusterId, setNewPermissionClusterId] = useState<number>(0);
+  const [permissionFormError, setPermissionFormError] = useState<string | null>(null);
   const [permissionMatrix, setPermissionMatrix] = useState({
-    pods: { list: true, get: true, logs: false },
-    deployments: { list: true, get: true },
+    pods: { list: true, get: true, logs: false, exec: false },
+    deployments: { list: true, get: true, restart: false, scale: false },
     services: { list: true, get: true },
     configmaps: { list: true, get: true },
     ingresses: { list: true, get: true },
@@ -228,6 +294,53 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     };
   });
   const [newUser, setNewUser] = useState({ username: '', password: '', isAdmin: false });
+  const [showCreateUser, setShowCreateUser] = useState(false);
+  const [showCreateGroup, setShowCreateGroup] = useState(false);
+  const [showCreateRole, setShowCreateRole] = useState(false);
+  const [editingUser, setEditingUser] = useState<null | {
+    id: number;
+    username: string;
+    isActive: boolean;
+    isAdmin: boolean;
+    groupIds: number[];
+  }>(null);
+  const [editingGroup, setEditingGroup] = useState<null | {
+    id: number;
+    name: string;
+    roleIds: number[];
+  }>(null);
+  const [editingRole, setEditingRole] = useState<null | {
+    id: number;
+    name: string;
+    description: string;
+  }>(null);
+  const [usersFilter, setUsersFilter] = useState('');
+  const [groupsFilter, setGroupsFilter] = useState('');
+  const [rolesFilter, setRolesFilter] = useState('');
+  const [savingDrawer, setSavingDrawer] = useState(false);
+  const [clustersList, setClustersList] = useState<ClusterListItem[]>([]);
+  const [clustersStatus, setClustersStatus] = useState<{ status: 'success' | 'error'; message: string } | null>(null);
+  const [newClusterName, setNewClusterName] = useState('');
+  const [newClusterDesc, setNewClusterDesc] = useState('');
+  const [newClusterMethod, setNewClusterMethod] = useState<'kubeconfig' | 'token'>('kubeconfig');
+  const [newClusterKubeconfig, setNewClusterKubeconfig] = useState('');
+  const [newClusterToken, setNewClusterToken] = useState('');
+  const [newClusterServer, setNewClusterServer] = useState('');
+  const [newClusterCA, setNewClusterCA] = useState('');
+  const [newClusterKubeconfigName, setNewClusterKubeconfigName] = useState('');
+  const [clusterBusy, setClusterBusy] = useState<number | 'create' | null>(null);
+  const [editCluster, setEditCluster] = useState<{
+    id: number;
+    name: string;
+    description: string;
+    method: 'kubeconfig' | 'token';
+    replaceSecrets: boolean;
+    kubeconfigBase64: string;
+    kubeconfigName: string;
+    token: string;
+    server: string;
+    caCertBase64: string;
+  } | null>(null);
   const [newGroup, setNewGroup] = useState('');
   const [newRole, setNewRole] = useState({ name: '', description: '' });
   const [clusterConfig, setClusterConfig] = useState({
@@ -269,6 +382,13 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     if (tab === 'roles') {
       setSelectedRoleId(null);
       setRolePermissions([]);
+    }
+    if (tab === 'clusters' || tab === 'roles') {
+      // Roles tab also needs the cluster list so the permission form can offer
+      // a per-cluster scope selector.
+      listClustersAdmin()
+        .then((r) => setClustersList(r.items ?? []))
+        .catch(() => setClustersList([]));
     }
   }, [tab]);
 
@@ -492,23 +612,51 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     if (selectedRoleId) await loadRolePermissions(selectedRoleId);
   };
 
+  // Group a role's permissions by (cluster, namespace) so admins can read the
+  // matrix at a glance even when the same namespace exists on several clusters.
   const groupedPermissions = React.useMemo(() => {
     const map = new Map<string, NamespacePermission[]>();
     rolePermissions.forEach((perm) => {
-      const list = map.get(perm.namespace) ?? [];
+      const key = `${perm.clusterId}|${perm.namespace}`;
+      const list = map.get(key) ?? [];
       list.push(perm);
-      map.set(perm.namespace, list);
+      map.set(key, list);
     });
-    return Array.from(map.entries()).map(([namespace, permissions]) => ({
-      namespace,
-      permissions,
-    }));
+    return Array.from(map.entries()).map(([key, permissions]) => {
+      const [clusterIdStr, namespace] = key.split('|');
+      return {
+        clusterId: Number(clusterIdStr),
+        clusterName: permissions[0]?.clusterName ?? '',
+        namespace,
+        permissions,
+      };
+    });
   }, [rolePermissions]);
 
   const handleAddPermission = async () => {
-    if (!selectedRoleId || newPermissionNamespaces.length === 0) return;
+    setPermissionFormError(null);
+    if (!selectedRoleId) {
+      setPermissionFormError('Select a role first.');
+      return;
+    }
+    const sanitizedNamespaces = newPermissionNamespaces
+      .map((n) => n.trim())
+      .filter((n) => n.length > 0);
+    if (sanitizedNamespaces.length === 0) {
+      setPermissionFormError(
+        'Enter at least one namespace. Use * to grant on every namespace.'
+      );
+      return;
+    }
+    const anyChecked = Object.values(permissionMatrix).some((actions) =>
+      Object.values(actions).some(Boolean)
+    );
+    if (!anyChecked) {
+      setPermissionFormError('Pick at least one action in the matrix below.');
+      return;
+    }
     const existing = new Set(
-      rolePermissions.map((perm) => `${perm.namespace}:${perm.resource}:${perm.action}`)
+      rolePermissions.map((perm) => `${perm.clusterId}:${perm.namespace}:${perm.resource}:${perm.action}`)
     );
     const requests: Array<{ resource: string; action: string }> = [];
     Object.entries(permissionMatrix).forEach(([resource, actions]) => {
@@ -516,12 +664,12 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
         if (enabled) requests.push({ resource, action });
       });
     });
-    for (const namespace of newPermissionNamespaces) {
-      if (!namespace) continue;
+    for (const namespace of sanitizedNamespaces) {
       for (const item of requests) {
-        const key = `${namespace}:${item.resource}:${item.action}`;
+        const key = `${newPermissionClusterId}:${namespace}:${item.resource}:${item.action}`;
         if (existing.has(key)) continue;
         await addRolePermission(selectedRoleId, {
+          clusterId: newPermissionClusterId || undefined,
           namespace,
           resource: item.resource,
           action: item.action,
@@ -531,8 +679,8 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     await loadRolePermissions(selectedRoleId);
     setNewPermissionNamespaces([]);
     setPermissionMatrix({
-      pods: { list: true, get: true, logs: false },
-      deployments: { list: true, get: true },
+      pods: { list: true, get: true, logs: false, exec: false },
+      deployments: { list: true, get: true, restart: false, scale: false },
       services: { list: true, get: true },
       configmaps: { list: true, get: true },
       ingresses: { list: true, get: true },
@@ -782,11 +930,49 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
   // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <Layout user={user} namespaces={[]} activeNamespace={null} onNamespaceChange={() => undefined}>
-      <h1 className="text-xl font-semibold text-gray-900">Admin Control Center</h1>
-      <p className="mt-1 text-sm text-gray-500">
-        Manage users, roles, LDAP, sessions, and cluster connections entirely from the UI.
-      </p>
+    <Layout
+      user={user}
+      panelTitle="Admin"
+      panel={
+        <nav className="flex flex-col gap-0.5 p-2">
+          {ADMIN_TABS.map((t) => {
+            const Icon = t.icon;
+            const active = tab === t.value;
+            return (
+              <button
+                key={t.value}
+                onClick={() => setTab(t.value)}
+                className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors ${
+                  active
+                    ? 'bg-brand-50 dark:bg-brand-500/15 font-medium text-brand-700 dark:text-brand-200 ring-1 ring-inset ring-brand-200 dark:ring-brand-500/30'
+                    : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100 dark:text-slate-100'
+                }`}
+              >
+                <Icon
+                  size={15}
+                  className={active ? 'text-brand-600 dark:text-brand-300' : 'text-slate-400 dark:text-slate-500'}
+                />
+                {t.label}
+              </button>
+            );
+          })}
+        </nav>
+      }
+    >
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400">
+            <Settings size={14} className="text-brand-600 dark:text-brand-300" />
+            <span className="uppercase tracking-wider">Administration</span>
+          </div>
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+            {ADMIN_TABS.find((t) => t.value === tab)?.label ?? 'Admin'}
+          </h1>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+            Manage users, roles, LDAP, sessions and cluster connections entirely from the UI.
+          </p>
+        </div>
+      </div>
 
       {error && (
         <Alert severity="error" className="mt-4">
@@ -794,325 +980,126 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
         </Alert>
       )}
 
-      <div className="mt-6 rounded-xl border border-gray-200 bg-white shadow-sm">
-        {/* ── Tab bar ───────────────────────────────────────────────── */}
-        <div className="flex overflow-x-auto border-b border-gray-200 px-2">
-          {ADMIN_TABS.map((t) => (
-            <button
-              key={t.value}
-              onClick={() => setTab(t.value)}
-              className={`shrink-0 border-b-2 px-4 py-3 text-sm font-medium transition-colors focus:outline-none ${
-                tab === t.value
-                  ? 'border-blue-600 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-
+      <div className="card-surface mt-6 overflow-hidden">
         <div className="p-5">
           {/* ─────────────────────────── USERS ──────────────────────── */}
           {tab === 'users' && (
-            <div className="flex flex-col gap-5">
-              <SectionCard title="Create User">
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                  <Input
-                    label="Username"
-                    value={newUser.username}
-                    onChange={(e) => setNewUser({ ...newUser, username: e.target.value })}
-                  />
-                  <Input
-                    label="Password"
-                    type="password"
-                    value={newUser.password}
-                    onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
-                  />
-                  <div className="flex items-end pb-0.5">
-                    <Checkbox
-                      checked={newUser.isAdmin}
-                      onChange={(v) => setNewUser({ ...newUser, isAdmin: v })}
-                      label="Admin"
-                    />
-                  </div>
-                </div>
-                <Button variant="primary" size="sm" className="mt-4" onClick={handleCreateUser}>
-                  Create User
-                </Button>
-              </SectionCard>
-
-              <SectionCard title="Existing Users">
-                <div className="flex flex-col gap-4">
-                  {users.map((u) => (
-                    <div
-                      key={u.id}
-                      className="rounded-lg border border-gray-100 p-4"
-                    >
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                        <Input
-                          label="Username"
-                          value={u.username}
-                          onChange={(e) =>
-                            setUsers(
-                              users.map((item) =>
-                                item.id === u.id
-                                  ? { ...item, username: e.target.value }
-                                  : item
-                              )
-                            )
-                          }
-                        />
-                        <div className="flex items-end gap-4 pb-0.5">
-                          <Checkbox
-                            checked={u.isActive}
-                            onChange={(v) =>
-                              setUsers(
-                                users.map((item) =>
-                                  item.id === u.id ? { ...item, isActive: v } : item
-                                )
-                              )
-                            }
-                            label="Active"
-                          />
-                          <Checkbox
-                            checked={u.isAdmin}
-                            onChange={(v) =>
-                              setUsers(
-                                users.map((item) =>
-                                  item.id === u.id ? { ...item, isAdmin: v } : item
-                                )
-                              )
-                            }
-                            label="Admin"
-                          />
-                        </div>
-                        <MultiSelect
-                          label="Groups"
-                          options={groups.map((g) => ({ id: g.id, label: g.name }))}
-                          value={(userGroups[u.id] ?? []).map((g) => ({
-                            id: g.id,
-                            label: g.name,
-                          }))}
-                          onChange={(value: MultiSelectOption[]) =>
-                            setUserGroupsState({
-                              ...userGroups,
-                              [u.id]: value.map((v) => ({
-                                id: Number(v.id),
-                                name: v.label,
-                              })),
-                            })
-                          }
-                          noOptionsText="No groups found"
-                          placeholder="Assign groups..."
-                        />
-                        <div className="flex items-end gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() =>
-                              updateUser(u.id, {
-                                username: u.username,
-                                isActive: u.isActive,
-                                isAdmin: u.isAdmin,
-                              })
-                            }
-                          >
-                            Save
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleSaveUserGroups(u.id)}
-                          >
-                            Save Groups
-                          </Button>
-                          <Button
-                            variant="danger"
-                            size="sm"
-                            onClick={async () => {
-                              await deleteUser(u.id);
-                              await refresh();
-                            }}
-                          >
-                            Delete
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </SectionCard>
-            </div>
+            <UsersSection
+              users={users}
+              groups={groups}
+              userGroups={userGroups}
+              filter={usersFilter}
+              onFilter={setUsersFilter}
+              onNew={() => {
+                setNewUser({ username: '', password: '', isAdmin: false });
+                setShowCreateUser(true);
+              }}
+              onEdit={(u) =>
+                setEditingUser({
+                  id: u.id,
+                  username: u.username,
+                  isActive: u.isActive,
+                  isAdmin: u.isAdmin,
+                  groupIds: (userGroups[u.id] ?? []).map((g) => g.id),
+                })
+              }
+              onDelete={async (u) => {
+                const ok = await confirm({
+                  title: `Delete user "${u.username}"?`,
+                  message:
+                    'This removes the user. If they are the last active admin, the operation will be refused.',
+                  confirmText: 'Delete',
+                  variant: 'danger',
+                });
+                if (!ok) return;
+                setError(null);
+                try {
+                  await deleteUser(u.id);
+                  await refresh();
+                } catch (err) {
+                  setError((err as Error).message || 'Delete failed.');
+                }
+              }}
+            />
           )}
 
           {/* ─────────────────────────── GROUPS ─────────────────────── */}
           {tab === 'groups' && (
-            <div className="flex flex-col gap-5">
-              <SectionCard title="Create Group">
-                <div className="flex gap-3">
-                  <Input
-                    label="Group Name"
-                    value={newGroup}
-                    onChange={(e) => setNewGroup(e.target.value)}
-                  />
-                  <div className="flex items-end">
-                    <Button variant="primary" size="sm" onClick={handleCreateGroup}>
-                      Create
-                    </Button>
-                  </div>
-                </div>
-              </SectionCard>
-
-              <SectionCard title="Existing Groups">
-                <div className="flex flex-col gap-4">
-                  {groups.map((group) => (
-                    <div key={group.id} className="rounded-lg border border-gray-100 p-4">
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                        <Input
-                          label="Name"
-                          value={group.name}
-                          onChange={(e) =>
-                            setGroups(
-                              groups.map((g) =>
-                                g.id === group.id ? { ...g, name: e.target.value } : g
-                              )
-                            )
-                          }
-                        />
-                        <MultiSelect
-                          label="Roles"
-                          options={roles.map((r) => ({ id: r.id, label: r.name }))}
-                          value={(groupRoles[group.id] ?? []).map((r) => ({
-                            id: r.id,
-                            label: r.name,
-                          }))}
-                          onChange={(value: MultiSelectOption[]) =>
-                            setGroupRolesState({
-                              ...groupRoles,
-                              [group.id]: value.map((v) => ({
-                                id: Number(v.id),
-                                name: v.label,
-                              })),
-                            })
-                          }
-                          noOptionsText="No roles found"
-                          placeholder="Assign roles..."
-                        />
-                        <div className="flex items-end gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => updateGroup(group.id, group.name)}
-                          >
-                            Save
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleSaveGroupRoles(group.id)}
-                          >
-                            Save Roles
-                          </Button>
-                          <Button
-                            variant="danger"
-                            size="sm"
-                            onClick={async () => {
-                              await deleteGroup(group.id);
-                              await refresh();
-                            }}
-                          >
-                            Delete
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </SectionCard>
-            </div>
+            <GroupsSection
+              groups={groups}
+              roles={roles}
+              groupRoles={groupRoles}
+              users={users}
+              userGroups={userGroups}
+              filter={groupsFilter}
+              onFilter={setGroupsFilter}
+              onNew={() => {
+                setNewGroup('');
+                setShowCreateGroup(true);
+              }}
+              onEdit={(g) =>
+                setEditingGroup({
+                  id: g.id,
+                  name: g.name,
+                  roleIds: (groupRoles[g.id] ?? []).map((r) => r.id),
+                })
+              }
+              onDelete={async (g) => {
+                const ok = await confirm({
+                  title: `Delete group "${g.name}"?`,
+                  message:
+                    'Members of this group will lose any roles they inherited through it.',
+                  confirmText: 'Delete',
+                  variant: 'danger',
+                });
+                if (!ok) return;
+                setError(null);
+                try {
+                  await deleteGroup(g.id);
+                  await refresh();
+                } catch (err) {
+                  setError((err as Error).message || 'Delete failed.');
+                }
+              }}
+            />
           )}
 
           {/* ─────────────────────────── ROLES ──────────────────────── */}
           {tab === 'roles' && (
             <div className="flex flex-col gap-5">
-              <SectionCard title="Create Role">
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <Input
-                    label="Name"
-                    value={newRole.name}
-                    onChange={(e) => setNewRole({ ...newRole, name: e.target.value })}
-                  />
-                  <Input
-                    label="Description"
-                    value={newRole.description}
-                    onChange={(e) => setNewRole({ ...newRole, description: e.target.value })}
-                  />
-                </div>
-                <Button variant="primary" size="sm" className="mt-4" onClick={handleCreateRole}>
-                  Create Role
-                </Button>
-              </SectionCard>
-
-              <SectionCard title="Existing Roles">
-                <div className="flex flex-col gap-3">
-                  {roles.map((role) => (
-                    <div key={role.id} className="rounded-lg border border-gray-100 p-4">
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                        <Input
-                          label="Name"
-                          value={role.name}
-                          onChange={(e) =>
-                            setRoles(
-                              roles.map((r) =>
-                                r.id === role.id ? { ...r, name: e.target.value } : r
-                              )
-                            )
-                          }
-                        />
-                        <Input
-                          label="Description"
-                          value={role.description}
-                          onChange={(e) =>
-                            setRoles(
-                              roles.map((r) =>
-                                r.id === role.id ? { ...r, description: e.target.value } : r
-                              )
-                            )
-                          }
-                        />
-                        <div className="flex items-end gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() =>
-                              updateRole(role.id, {
-                                name: role.name,
-                                description: role.description,
-                              })
-                            }
-                          >
-                            Save
-                          </Button>
-                          <Button
-                            variant="danger"
-                            size="sm"
-                            onClick={async () => {
-                              await deleteRole(role.id);
-                              await refresh();
-                            }}
-                          >
-                            Delete
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </SectionCard>
+              <RolesSection
+                roles={roles}
+                groupRoles={groupRoles}
+                filter={rolesFilter}
+                onFilter={setRolesFilter}
+                onNew={() => {
+                  setNewRole({ name: '', description: '' });
+                  setShowCreateRole(true);
+                }}
+                onEdit={(r) =>
+                  setEditingRole({ id: r.id, name: r.name, description: r.description })
+                }
+                onDelete={async (r) => {
+                  const ok = await confirm({
+                    title: `Delete role "${r.name}"?`,
+                    message:
+                      'All permissions attached to this role and all group assignments pointing to it are removed.',
+                    confirmText: 'Delete',
+                    variant: 'danger',
+                  });
+                  if (!ok) return;
+                  setError(null);
+                  try {
+                    await deleteRole(r.id);
+                    await refresh();
+                  } catch (err) {
+                    setError((err as Error).message || 'Delete failed.');
+                  }
+                }}
+              />
 
               <SectionCard title="Role Permissions">
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                   <NativeSelect
                     label="Role"
                     value={selectedRoleId ?? ''}
@@ -1134,12 +1121,38 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                     ))}
                   </NativeSelect>
 
-                  <ChipInput
+                  <NativeSelect
+                    label="Cluster scope"
+                    value={newPermissionClusterId}
+                    onChange={(e) => setNewPermissionClusterId(Number(e.target.value))}
+                  >
+                    <option value={0}>All clusters</option>
+                    {clustersList.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </NativeSelect>
+
+                  <MultiSelect
                     label="Namespaces"
-                    value={newPermissionNamespaces}
-                    onChange={setNewPermissionNamespaces}
-                    suggestions={namespaceOptions}
-                    placeholder="Type or select namespaces..."
+                    options={[
+                      { id: '*', label: '* (all namespaces)' },
+                      ...namespaceOptions.map((ns) => ({ id: ns, label: ns })),
+                    ]}
+                    value={newPermissionNamespaces.map((ns) => ({
+                      id: ns,
+                      label: ns === '*' ? '* (all namespaces)' : ns,
+                    }))}
+                    onChange={(value: MultiSelectOption[]) =>
+                      setNewPermissionNamespaces(value.map((v) => String(v.id)))
+                    }
+                    placeholder="Pick namespaces (or * for all)…"
+                    noOptionsText={
+                      namespaceOptions.length === 0
+                        ? 'No namespaces visible — activate a cluster first.'
+                        : 'No matching namespace.'
+                    }
                   />
                 </div>
 
@@ -1147,9 +1160,9 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   {Object.entries(permissionMatrix).map(([resource, actions]) => (
                     <div
                       key={resource}
-                      className="rounded-lg border border-gray-200 p-3"
+                      className="rounded-lg border border-slate-200 dark:border-slate-800 p-3"
                     >
-                      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-700">
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-200">
                         {resource}
                       </p>
                       {Object.entries(actions).map(([action, enabled]) => (
@@ -1170,6 +1183,11 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   ))}
                 </div>
 
+                {permissionFormError && (
+                  <Alert severity="warning" className="mt-4">
+                    {permissionFormError}
+                  </Alert>
+                )}
                 <Button
                   variant="primary"
                   size="sm"
@@ -1181,31 +1199,43 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
 
                 <div className="mt-4">
                   {!selectedRoleId && (
-                    <p className="text-sm text-gray-400">Select a role to view its permissions.</p>
+                    <p className="text-sm text-slate-400 dark:text-slate-500">Select a role to view its permissions.</p>
                   )}
                   {selectedRoleId && groupedPermissions.length === 0 && (
-                    <p className="text-sm text-gray-400">No permissions assigned yet.</p>
+                    <p className="text-sm text-slate-400 dark:text-slate-500">No permissions assigned yet.</p>
                   )}
                   {selectedRoleId && groupedPermissions.length > 0 && (
-                    <div className="overflow-auto rounded-lg border border-gray-200">
+                    <div className="overflow-auto rounded-lg border border-slate-200 dark:border-slate-800">
                       <table className="w-full text-sm">
-                        <thead className="bg-gray-50">
+                        <thead className="bg-slate-50 dark:bg-slate-900">
                           <tr>
-                            <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
+                            <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">
+                              Cluster
+                            </th>
+                            <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">
                               Namespace
                             </th>
-                            <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
+                            <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">
                               Permissions
                             </th>
-                            <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-600">
+                            <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">
                               Actions
                             </th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-gray-100">
+                        <tbody className="divide-y divide-slate-100">
                           {groupedPermissions.map((group) => (
-                            <tr key={group.namespace}>
-                              <td className="px-4 py-3 font-medium text-gray-900">
+                            <tr key={`${group.clusterId}:${group.namespace}`}>
+                              <td className="px-4 py-3">
+                                {group.clusterId === 0 ? (
+                                  <Badge variant="info">All clusters</Badge>
+                                ) : (
+                                  <span className="font-mono text-xs text-slate-700 dark:text-slate-200">
+                                    {group.clusterName || `#${group.clusterId}`}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-4 py-3 font-medium text-slate-900 dark:text-slate-100">
                                 {group.namespace}
                               </td>
                               <td className="px-4 py-3">
@@ -1213,13 +1243,13 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                                   {group.permissions.map((perm) => (
                                     <span
                                       key={perm.id}
-                                      className="group inline-flex items-center gap-1 rounded border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-700 hover:border-gray-300"
+                                      className="group inline-flex items-center gap-1 rounded border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 py-0.5 text-xs text-slate-700 dark:text-slate-200 hover:border-slate-300"
                                     >
                                       {perm.resource}:{perm.action}
                                       <button
                                         type="button"
                                         onClick={() => handleRemovePermission(perm.id)}
-                                        className="text-gray-300 transition-opacity group-hover:text-red-400 focus:outline-none"
+                                        className="text-slate-300 transition-opacity group-hover:text-red-400 focus:outline-none"
                                       >
                                         <X size={10} />
                                       </button>
@@ -1231,11 +1261,12 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                                 <Button
                                   variant="danger"
                                   size="sm"
-                                  onClick={() =>
-                                    handleRemoveNamespacePermissions(group.namespace)
-                                  }
+                                  onClick={() => {
+                                    const ids = group.permissions.map((p) => p.id);
+                                    ids.forEach((id) => void handleRemovePermission(id));
+                                  }}
                                 >
-                                  Remove Namespace
+                                  Remove Row
                                 </Button>
                               </td>
                             </tr>
@@ -1517,178 +1548,430 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
             </SectionCard>
           )}
 
-          {/* ─────────────────────────── CLUSTER ────────────────────── */}
-          {tab === 'cluster' && (
-            <SectionCard title="Cluster Connection">
-              <div className="mb-4 flex flex-wrap gap-2">
-                <Badge variant={cluster.active ? 'success' : 'default'}>
-                  Active: {cluster.active ? 'Yes' : 'No'}
-                </Badge>
-                <Badge variant={cluster.ready ? 'success' : 'warning'}>
-                  Ready: {cluster.ready ? 'Yes' : 'No'}
-                </Badge>
-                <Badge variant="default">Method: {cluster.method || 'Not set'}</Badge>
-                <Badge variant={authTokenPresent ? 'success' : 'error'}>
-                  Auth Token: {authTokenPresent ? 'Present' : 'Missing'}
-                </Badge>
-              </div>
-
-              {cluster.server && (
-                <p className="mb-2 text-sm text-gray-500">API Server: {cluster.server}</p>
-              )}
-
-              {!apiReachable && (
-                <Alert severity="error" className="mb-4">
-                  Backend is not reachable from the browser. Check that{' '}
-                  <code>http://localhost:8080/healthz</code> responds.
-                </Alert>
-              )}
-              {cluster.lastError && (
-                <Alert severity="warning" className="mb-4">
-                  {cluster.lastError}
-                </Alert>
-              )}
-
-              {/* Last applied cluster info */}
-              <div className="mb-4 rounded-lg border border-gray-200 p-4">
-                <p className="mb-2 text-sm font-semibold text-gray-700">Last Applied Cluster</p>
-                <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-gray-500">
-                  <dt className="font-medium text-gray-600">Status</dt>
-                  <dd>{lastAppliedCluster.status || 'N/A'}</dd>
-                  <dt className="font-medium text-gray-600">Method</dt>
-                  <dd>{lastAppliedCluster.method || 'N/A'}</dd>
-                  <dt className="font-medium text-gray-600">API Server</dt>
-                  <dd>{lastAppliedCluster.server || 'N/A'}</dd>
-                  <dt className="font-medium text-gray-600">Kubeconfig File</dt>
-                  <dd>{lastAppliedCluster.kubeconfigFileName || 'N/A'}</dd>
-                  <dt className="font-medium text-gray-600">CA Cert File</dt>
-                  <dd>{lastAppliedCluster.caCertFileName || 'N/A'}</dd>
-                  <dt className="font-medium text-gray-600">Applied At</dt>
-                  <dd>{lastAppliedCluster.appliedAt || 'N/A'}</dd>
-                  {lastAppliedCluster.requestId && (
-                    <>
-                      <dt className="font-medium text-gray-600">Request ID</dt>
-                      <dd>{lastAppliedCluster.requestId}</dd>
-                    </>
-                  )}
-                </dl>
-                {lastAppliedCluster.error && (
-                  <Alert severity="error" className="mt-2">
-                    {lastAppliedCluster.error}
+          {/* ─────────────────────────── CLUSTERS (multi) ───────────── */}
+          {tab === 'clusters' && (
+            <div className="flex flex-col gap-5">
+              <SectionCard
+                title="Configured Clusters"
+                description="Add multiple Kubernetes clusters and switch between them. The active cluster drives Dashboard reads and all write actions."
+              >
+                {clustersStatus && (
+                  <Alert severity={clustersStatus.status} className="mb-4">
+                    {clustersStatus.message}
                   </Alert>
                 )}
-              </div>
-
-              {clusterValidation && (
-                <Alert severity={clusterValidation.status} className="mb-4">
-                  {clusterValidation.message}
-                </Alert>
-              )}
-
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <NativeSelect
-                  label="Method"
-                  value={clusterConfig.method}
-                  onChange={(e) => {
-                    setClusterConfig({
-                      method: e.target.value,
-                      kubeconfigBase64: '',
-                      token: '',
-                      server: '',
-                      caCertBase64: '',
-                    });
-                  }}
-                >
-                  <option value="kubeconfig">Kubeconfig</option>
-                  <option value="token">ServiceAccount Token</option>
-                </NativeSelect>
-
-                {clusterConfig.method === 'kubeconfig' && (
-                  <div className="flex flex-col gap-1">
-                    <span className="text-sm font-medium text-gray-700">Kubeconfig file</span>
-                    <label className="inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50">
-                      Upload kubeconfig
-                      <input
-                        type="file"
-                        className="hidden"
-                        onChange={(e) =>
-                          handleFileUpload(e.target.files?.[0] ?? null, 'kubeconfigBase64')
-                        }
-                      />
-                    </label>
-                    <span className="text-xs text-gray-400">
-                      {kubeconfigFileName ? `Loaded: ${kubeconfigFileName}` : 'No kubeconfig selected'}
-                    </span>
+                {clustersList.length === 0 ? (
+                  <p className="text-sm text-slate-400">
+                    No clusters saved yet. Add one below.
+                  </p>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    {clustersList.map((c) => (
+                      <div
+                        key={c.id}
+                        className={`flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3 ${
+                          c.isActive
+                            ? 'border-brand-200 bg-brand-50/40 dark:border-brand-500/30 dark:bg-brand-500/10'
+                            : 'border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/40'
+                        }`}
+                      >
+                        <div className="flex min-w-0 items-center gap-3">
+                          <div
+                            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md ${
+                              c.isActive
+                                ? 'bg-brand-500 text-white'
+                                : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
+                            }`}
+                          >
+                            <Boxes size={14} />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="truncate font-mono text-sm font-semibold text-slate-900 dark:text-slate-100">
+                                {c.name}
+                              </span>
+                              {c.isActive && <Badge variant="success">Active</Badge>}
+                            </div>
+                            <div className="truncate text-xs text-slate-500 dark:text-slate-400">
+                              {c.description || c.server || `method: ${c.method}`}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {c.isActive ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={clusterBusy !== null}
+                              onClick={async () => {
+                                const ok = await confirm({
+                                  title: `Deactivate ${c.name}?`,
+                                  message:
+                                    'The Dashboard will have no active cluster until you activate one.',
+                                  confirmText: 'Deactivate',
+                                  variant: 'danger',
+                                });
+                                if (!ok) return;
+                                setClusterBusy(c.id);
+                                setClustersStatus(null);
+                                try {
+                                  await deactivateCluster(c.id);
+                                  setClustersStatus({ status: 'success', message: `Deactivated ${c.name}. Reloading…` });
+                                  setTimeout(() => window.location.reload(), 600);
+                                } catch (err) {
+                                  setClustersStatus({ status: 'error', message: (err as Error).message || 'Deactivate failed.' });
+                                } finally {
+                                  setClusterBusy(null);
+                                }
+                              }}
+                            >
+                              <PowerOff size={13} />
+                              Deactivate
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={clusterBusy !== null}
+                              onClick={async () => {
+                                setClusterBusy(c.id);
+                                setClustersStatus(null);
+                                try {
+                                  await activateCluster(c.id);
+                                  setClustersStatus({ status: 'success', message: `Activated ${c.name}. Reloading…` });
+                                  setTimeout(() => window.location.reload(), 600);
+                                } catch (err) {
+                                  setClustersStatus({ status: 'error', message: (err as Error).message || 'Activation failed.' });
+                                } finally {
+                                  setClusterBusy(null);
+                                }
+                              }}
+                            >
+                              <Power size={13} />
+                              Activate
+                            </Button>
+                          )}
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={clusterBusy !== null}
+                            onClick={() =>
+                              setEditCluster({
+                                id: c.id,
+                                name: c.name,
+                                description: c.description ?? '',
+                                method: (c.method as 'kubeconfig' | 'token') || 'kubeconfig',
+                                replaceSecrets: false,
+                                kubeconfigBase64: '',
+                                kubeconfigName: '',
+                                token: '',
+                                server: c.server ?? '',
+                                caCertBase64: '',
+                              })
+                            }
+                          >
+                            <Pencil size={13} />
+                            Edit
+                          </Button>
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            disabled={c.isActive || clusterBusy !== null}
+                            onClick={async () => {
+                              const ok = await confirm({
+                                title: `Delete cluster "${c.name}"?`,
+                                message:
+                                  'The cluster entry and its stored credentials are removed. If this cluster is active, deactivate it first.',
+                                confirmText: 'Delete',
+                                variant: 'danger',
+                              });
+                              if (!ok) return;
+                              setClusterBusy(c.id);
+                              setClustersStatus(null);
+                              try {
+                                await deleteClusterRow(c.id);
+                                const refreshed = await listClustersAdmin();
+                                setClustersList(refreshed.items ?? []);
+                              } catch (err) {
+                                setClustersStatus({ status: 'error', message: (err as Error).message || 'Delete failed.' });
+                              } finally {
+                                setClusterBusy(null);
+                              }
+                            }}
+                          >
+                            <Trash2 size={13} />
+                            Delete
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
+              </SectionCard>
 
-                {clusterConfig.method === 'token' && (
-                  <>
-                    <Input
-                      label="Token"
-                      value={clusterConfig.token}
-                      onChange={(e) =>
-                        setClusterConfig({ ...clusterConfig, token: e.target.value })
-                      }
-                    />
-                    <Input
-                      label="API Server"
-                      value={clusterConfig.server}
-                      onChange={(e) =>
-                        setClusterConfig({ ...clusterConfig, server: e.target.value })
-                      }
-                    />
+              <SectionCard
+                title="Add Cluster"
+                description="Credentials are validated against the API server before being saved."
+              >
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <Input
+                    label="Name"
+                    value={newClusterName}
+                    onChange={(e) => setNewClusterName(e.target.value)}
+                    placeholder="e.g. prod-west, staging"
+                  />
+                  <Input
+                    label="Description"
+                    value={newClusterDesc}
+                    onChange={(e) => setNewClusterDesc(e.target.value)}
+                    placeholder="Optional"
+                  />
+                  <NativeSelect
+                    label="Method"
+                    value={newClusterMethod}
+                    onChange={(e) => setNewClusterMethod(e.target.value as 'kubeconfig' | 'token')}
+                  >
+                    <option value="kubeconfig">Kubeconfig</option>
+                    <option value="token">ServiceAccount Token</option>
+                  </NativeSelect>
+                  {newClusterMethod === 'kubeconfig' && (
                     <div className="flex flex-col gap-1">
-                      <span className="text-sm font-medium text-gray-700">CA Certificate</span>
-                      <label className="inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50">
-                        Upload CA Cert
+                      <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Kubeconfig file
+                      </span>
+                      <label className="inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">
+                        Upload kubeconfig
                         <input
                           type="file"
                           className="hidden"
-                          onChange={(e) =>
-                            handleFileUpload(e.target.files?.[0] ?? null, 'caCertBase64')
-                          }
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) {
+                              setNewClusterKubeconfig('');
+                              setNewClusterKubeconfigName('');
+                              return;
+                            }
+                            const reader = new FileReader();
+                            reader.onload = () => {
+                              const result = reader.result?.toString() ?? '';
+                              const base64 = result.includes(',') ? result.split(',')[1] : result;
+                              setNewClusterKubeconfig(base64);
+                              setNewClusterKubeconfigName(file.name);
+                            };
+                            reader.readAsDataURL(file);
+                          }}
                         />
                       </label>
-                      <span className="text-xs text-gray-400">
-                        {caCertFileName ? `Loaded: ${caCertFileName}` : 'No CA cert selected'}
+                      <span className="text-xs text-slate-400">
+                        {newClusterKubeconfigName || 'No file selected'}
                       </span>
                     </div>
-                  </>
-                )}
-              </div>
-
-              <div className="mt-4 flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleValidateCluster}
-                  disabled={!isClusterConfigValid()}
-                >
-                  Validate
-                </Button>
+                  )}
+                  {newClusterMethod === 'token' && (
+                    <>
+                      <Input
+                        label="API Server"
+                        value={newClusterServer}
+                        onChange={(e) => setNewClusterServer(e.target.value)}
+                        placeholder="https://..."
+                      />
+                      <Input
+                        label="Token"
+                        value={newClusterToken}
+                        onChange={(e) => setNewClusterToken(e.target.value)}
+                      />
+                      <Input
+                        label="CA Cert (base64, optional)"
+                        value={newClusterCA}
+                        onChange={(e) => setNewClusterCA(e.target.value)}
+                      />
+                    </>
+                  )}
+                </div>
                 <Button
                   variant="primary"
                   size="sm"
-                  onClick={handleSaveCluster}
-                  disabled={!isClusterConfigValid()}
+                  className="mt-4"
+                  disabled={clusterBusy !== null || !newClusterName}
+                  onClick={async () => {
+                    setClusterBusy('create');
+                    setClustersStatus(null);
+                    try {
+                      await createCluster({
+                        name: newClusterName,
+                        description: newClusterDesc,
+                        method: newClusterMethod,
+                        kubeconfigBase64: newClusterKubeconfig || undefined,
+                        token: newClusterToken || undefined,
+                        server: newClusterServer || undefined,
+                        caCertBase64: newClusterCA || undefined,
+                      });
+                      setNewClusterName('');
+                      setNewClusterDesc('');
+                      setNewClusterKubeconfig('');
+                      setNewClusterKubeconfigName('');
+                      setNewClusterToken('');
+                      setNewClusterServer('');
+                      setNewClusterCA('');
+                      const refreshed = await listClustersAdmin();
+                      setClustersList(refreshed.items ?? []);
+                      setClustersStatus({ status: 'success', message: 'Cluster added.' });
+                    } catch (err) {
+                      setClustersStatus({ status: 'error', message: (err as Error).message || 'Create failed.' });
+                    } finally {
+                      setClusterBusy(null);
+                    }
+                  }}
                 >
-                  Apply Cluster Connection
+                  Save Cluster
                 </Button>
+              </SectionCard>
+            </div>
+          )}
+
+          {/* ── Edit cluster modal ───────────────────────────────────── */}
+          {editCluster && (
+            <Modal
+              open={editCluster !== null}
+              onClose={() => setEditCluster(null)}
+              title={`Edit cluster · ${editCluster.name}`}
+              size="md"
+              footer={
+                <>
+                  <Button variant="outline" size="sm" onClick={() => setEditCluster(null)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    disabled={clusterBusy !== null || !editCluster.name}
+                    onClick={async () => {
+                      if (!editCluster) return;
+                      setClusterBusy(editCluster.id);
+                      setClustersStatus(null);
+                      try {
+                        await updateClusterRow(editCluster.id, {
+                          name: editCluster.name,
+                          description: editCluster.description,
+                          method: editCluster.method,
+                          replaceSecrets: editCluster.replaceSecrets,
+                          kubeconfigBase64: editCluster.replaceSecrets ? editCluster.kubeconfigBase64 || undefined : undefined,
+                          token: editCluster.replaceSecrets ? editCluster.token || undefined : undefined,
+                          server: editCluster.replaceSecrets ? editCluster.server || undefined : undefined,
+                          caCertBase64: editCluster.replaceSecrets ? editCluster.caCertBase64 || undefined : undefined,
+                        });
+                        const refreshed = await listClustersAdmin();
+                        setClustersList(refreshed.items ?? []);
+                        setClustersStatus({ status: 'success', message: 'Cluster updated.' });
+                        setEditCluster(null);
+                      } catch (err) {
+                        setClustersStatus({ status: 'error', message: (err as Error).message || 'Update failed.' });
+                      } finally {
+                        setClusterBusy(null);
+                      }
+                    }}
+                  >
+                    Save Changes
+                  </Button>
+                </>
+              }
+            >
+              <div className="flex flex-col gap-3">
+                <Input
+                  label="Name"
+                  value={editCluster.name}
+                  onChange={(e) => setEditCluster({ ...editCluster, name: e.target.value })}
+                />
+                <Input
+                  label="Description"
+                  value={editCluster.description}
+                  onChange={(e) => setEditCluster({ ...editCluster, description: e.target.value })}
+                />
+                <Checkbox
+                  checked={editCluster.replaceSecrets}
+                  onChange={(v) => setEditCluster({ ...editCluster, replaceSecrets: v })}
+                  label="Replace credentials (otherwise saved secrets are kept)"
+                />
+                {editCluster.replaceSecrets && (
+                  <>
+                    <NativeSelect
+                      label="Method"
+                      value={editCluster.method}
+                      onChange={(e) =>
+                        setEditCluster({ ...editCluster, method: e.target.value as 'kubeconfig' | 'token' })
+                      }
+                    >
+                      <option value="kubeconfig">Kubeconfig</option>
+                      <option value="token">ServiceAccount Token</option>
+                    </NativeSelect>
+                    {editCluster.method === 'kubeconfig' && (
+                      <div className="flex flex-col gap-1">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          New Kubeconfig
+                        </span>
+                        <label className="inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">
+                          Upload kubeconfig
+                          <input
+                            type="file"
+                            className="hidden"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) {
+                                setEditCluster({ ...editCluster, kubeconfigBase64: '', kubeconfigName: '' });
+                                return;
+                              }
+                              const reader = new FileReader();
+                              reader.onload = () => {
+                                const result = reader.result?.toString() ?? '';
+                                const base64 = result.includes(',') ? result.split(',')[1] : result;
+                                setEditCluster({ ...editCluster, kubeconfigBase64: base64, kubeconfigName: file.name });
+                              };
+                              reader.readAsDataURL(file);
+                            }}
+                          />
+                        </label>
+                        <span className="text-xs text-slate-400">
+                          {editCluster.kubeconfigName || 'No file selected'}
+                        </span>
+                      </div>
+                    )}
+                    {editCluster.method === 'token' && (
+                      <>
+                        <Input
+                          label="API Server"
+                          value={editCluster.server}
+                          onChange={(e) => setEditCluster({ ...editCluster, server: e.target.value })}
+                        />
+                        <Input
+                          label="Token"
+                          value={editCluster.token}
+                          onChange={(e) => setEditCluster({ ...editCluster, token: e.target.value })}
+                        />
+                        <Input
+                          label="CA Cert (base64, optional)"
+                          value={editCluster.caCertBase64}
+                          onChange={(e) =>
+                            setEditCluster({ ...editCluster, caCertBase64: e.target.value })
+                          }
+                        />
+                      </>
+                    )}
+                  </>
+                )}
               </div>
-            </SectionCard>
+            </Modal>
           )}
 
           {/* ─────────────────────────── CUSTOMIZATION ──────────────── */}
           {tab === 'customization' && (
             <SectionCard title="Login Logo">
-              <p className="mb-4 text-sm text-gray-500">
+              <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">
                 Upload a logo to display on the login screen. Recommended PNG/SVG with transparent
                 background.
               </p>
 
               {logoPreviewUrl && (
-                <div className="mb-4 w-full max-w-xs overflow-hidden rounded-lg border border-gray-200 p-2">
+                <div className="mb-4 w-full max-w-xs overflow-hidden rounded-lg border border-slate-200 dark:border-slate-800 p-2">
                   <img
                     src={logoPreviewUrl}
                     alt="Current logo"
@@ -1699,7 +1982,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
               )}
 
               <div className="flex flex-wrap items-center gap-3">
-                <label className="inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50">
+                <label className="inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/60 dark:bg-slate-900">
                   Select Logo
                   <input
                     type="file"
@@ -1708,7 +1991,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                     onChange={(e) => setLogoFile(e.target.files?.[0] ?? null)}
                   />
                 </label>
-                <span className="text-sm text-gray-400">
+                <span className="text-sm text-slate-400 dark:text-slate-500">
                   {logoFile ? logoFile.name : 'No file selected'}
                 </span>
                 <Button variant="primary" size="sm" onClick={handleUploadLogo} disabled={!logoFile}>
@@ -1777,7 +2060,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   }}
                 />
                 <div className="flex items-end gap-3">
-                  <span className="text-xs text-gray-400">
+                  <span className="text-xs text-slate-400 dark:text-slate-500">
                     {auditOffset + 1}–{Math.min(auditOffset + 50, auditTotal)} of {auditTotal}
                   </span>
                   <Button variant="outline" size="sm" onClick={handleAuditExport}>
@@ -1790,20 +2073,20 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                 {auditLogs.map((entry, index) => (
                   <div
                     key={index}
-                    className="rounded-lg border border-gray-100 bg-white px-4 py-3"
+                    className="rounded-lg border border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3"
                   >
-                    <p className="text-sm font-semibold text-gray-900">
+                    <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                       {(entry.user as string) ?? 'unknown'} —{' '}
-                      <span className="font-normal text-gray-600">
+                      <span className="font-normal text-slate-600 dark:text-slate-300">
                         {(entry.action as string) ?? ''}
                       </span>
                     </p>
-                    <p className="mt-0.5 text-xs text-gray-400">
+                    <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">
                       {(entry.timestampFormatted as string) ??
                         (entry.timestamp as string) ??
                         ''}
                     </p>
-                    <p className="text-xs text-gray-500">
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
                       {(entry.namespace as string) ?? '-'} /{' '}
                       {(entry.resourceType as string) ?? ''} /{' '}
                       {(entry.resourceName as string) ?? ''}
@@ -1834,6 +2117,403 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
           )}
         </div>
       </div>
+
+      {/* ── Create User modal ─────────────────────────────────────── */}
+      {(() => {
+        const submit = async () => {
+          if (!newUser.username || !newUser.password) return;
+          setSavingDrawer(true);
+          setError(null);
+          try {
+            await handleCreateUser();
+            setShowCreateUser(false);
+          } catch (err) {
+            setError((err as Error).message || 'Create failed.');
+          } finally {
+            setSavingDrawer(false);
+          }
+        };
+        return (
+          <Modal
+            open={showCreateUser}
+            onClose={() => setShowCreateUser(false)}
+            title="New user"
+            size="sm"
+            footer={
+              <>
+                <Button variant="outline" size="sm" onClick={() => setShowCreateUser(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  disabled={savingDrawer || !newUser.username || !newUser.password}
+                  onClick={submit}
+                >
+                  {savingDrawer ? 'Creating…' : 'Create user'}
+                </Button>
+              </>
+            }
+          >
+            <form
+              className="flex flex-col gap-4"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void submit();
+              }}
+            >
+              <Input
+                label="Username"
+                value={newUser.username}
+                onChange={(e) => setNewUser({ ...newUser, username: e.target.value })}
+                autoFocus
+              />
+              <Input
+                label="Password"
+                type="password"
+                value={newUser.password}
+                onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+              />
+              <Checkbox
+                checked={newUser.isAdmin}
+                onChange={(v) => setNewUser({ ...newUser, isAdmin: v })}
+                label="Grant admin privileges"
+              />
+              <button type="submit" className="hidden" aria-hidden="true" />
+            </form>
+          </Modal>
+        );
+      })()}
+
+      {/* ── Edit User modal ───────────────────────────────────────── */}
+      {editingUser && (() => {
+        const submit = async () => {
+          if (!editingUser) return;
+          setSavingDrawer(true);
+          setError(null);
+          try {
+            await updateUser(editingUser.id, {
+              username: editingUser.username,
+              isActive: editingUser.isActive,
+              isAdmin: editingUser.isAdmin,
+            });
+            await setUserGroups(editingUser.id, editingUser.groupIds);
+            await refresh();
+            setEditingUser(null);
+          } catch (err) {
+            setError((err as Error).message || 'Save failed.');
+          } finally {
+            setSavingDrawer(false);
+          }
+        };
+        return (
+          <Modal
+            open={editingUser !== null}
+            onClose={() => setEditingUser(null)}
+            title={`Edit · ${editingUser.username}`}
+            size="md"
+            footer={
+              <>
+                <Button variant="outline" size="sm" onClick={() => setEditingUser(null)}>
+                  Cancel
+                </Button>
+                <Button variant="primary" size="sm" disabled={savingDrawer} onClick={submit}>
+                  {savingDrawer ? 'Saving…' : 'Save'}
+                </Button>
+              </>
+            }
+          >
+            <form
+              className="flex flex-col gap-4"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void submit();
+              }}
+            >
+              <Input
+                label="Username"
+                value={editingUser.username}
+                onChange={(e) => setEditingUser({ ...editingUser, username: e.target.value })}
+                autoFocus
+              />
+              <div className="flex items-center gap-5">
+                <Checkbox
+                  checked={editingUser.isActive}
+                  onChange={(v) => setEditingUser({ ...editingUser, isActive: v })}
+                  label="Active"
+                />
+                <Checkbox
+                  checked={editingUser.isAdmin}
+                  onChange={(v) => setEditingUser({ ...editingUser, isAdmin: v })}
+                  label="Admin"
+                />
+              </div>
+              <MultiSelect
+                label="Groups"
+                options={groups.map((g) => ({ id: g.id, label: g.name }))}
+                value={editingUser.groupIds.map((id) => {
+                  const g = groups.find((grp) => grp.id === id);
+                  return { id, label: g?.name ?? `Group ${id}` };
+                })}
+                onChange={(value: MultiSelectOption[]) =>
+                  setEditingUser({
+                    ...editingUser,
+                    groupIds: value.map((v) => Number(v.id)),
+                  })
+                }
+                placeholder="Assign groups…"
+                noOptionsText="No groups found"
+              />
+              <button type="submit" className="hidden" aria-hidden="true" />
+            </form>
+          </Modal>
+        );
+      })()}
+
+      {/* ── Create Group modal ────────────────────────────────────── */}
+      {(() => {
+        const submit = async () => {
+          if (!newGroup) return;
+          setSavingDrawer(true);
+          setError(null);
+          try {
+            await handleCreateGroup();
+            setShowCreateGroup(false);
+          } catch (err) {
+            setError((err as Error).message || 'Create failed.');
+          } finally {
+            setSavingDrawer(false);
+          }
+        };
+        return (
+          <Modal
+            open={showCreateGroup}
+            onClose={() => setShowCreateGroup(false)}
+            title="New group"
+            size="sm"
+            footer={
+              <>
+                <Button variant="outline" size="sm" onClick={() => setShowCreateGroup(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  disabled={savingDrawer || !newGroup}
+                  onClick={submit}
+                >
+                  {savingDrawer ? 'Creating…' : 'Create group'}
+                </Button>
+              </>
+            }
+          >
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void submit();
+              }}
+            >
+              <Input
+                label="Group name"
+                value={newGroup}
+                onChange={(e) => setNewGroup(e.target.value)}
+                autoFocus
+              />
+              <button type="submit" className="hidden" aria-hidden="true" />
+            </form>
+          </Modal>
+        );
+      })()}
+
+      {/* ── Edit Group modal ──────────────────────────────────────── */}
+      {editingGroup && (() => {
+        const submit = async () => {
+          if (!editingGroup) return;
+          setSavingDrawer(true);
+          setError(null);
+          try {
+            await updateGroup(editingGroup.id, editingGroup.name);
+            await setGroupRoles(editingGroup.id, editingGroup.roleIds);
+            await refresh();
+            setEditingGroup(null);
+          } catch (err) {
+            setError((err as Error).message || 'Save failed.');
+          } finally {
+            setSavingDrawer(false);
+          }
+        };
+        return (
+          <Modal
+            open={editingGroup !== null}
+            onClose={() => setEditingGroup(null)}
+            title={`Edit · ${editingGroup.name}`}
+            size="md"
+            footer={
+              <>
+                <Button variant="outline" size="sm" onClick={() => setEditingGroup(null)}>
+                  Cancel
+                </Button>
+                <Button variant="primary" size="sm" disabled={savingDrawer} onClick={submit}>
+                  {savingDrawer ? 'Saving…' : 'Save'}
+                </Button>
+              </>
+            }
+          >
+            <form
+              className="flex flex-col gap-4"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void submit();
+              }}
+            >
+              <Input
+                label="Name"
+                value={editingGroup.name}
+                onChange={(e) => setEditingGroup({ ...editingGroup, name: e.target.value })}
+                autoFocus
+              />
+              <MultiSelect
+                label="Roles"
+                options={roles.map((r) => ({ id: r.id, label: r.name }))}
+                value={editingGroup.roleIds.map((id) => {
+                  const r = roles.find((rr) => rr.id === id);
+                  return { id, label: r?.name ?? `Role ${id}` };
+                })}
+                onChange={(value: MultiSelectOption[]) =>
+                  setEditingGroup({
+                    ...editingGroup,
+                    roleIds: value.map((v) => Number(v.id)),
+                  })
+                }
+                placeholder="Assign roles…"
+                noOptionsText="No roles found"
+              />
+              <button type="submit" className="hidden" aria-hidden="true" />
+            </form>
+          </Modal>
+        );
+      })()}
+
+      {/* ── Create Role modal ─────────────────────────────────────── */}
+      {(() => {
+        const submit = async () => {
+          if (!newRole.name) return;
+          setSavingDrawer(true);
+          setError(null);
+          try {
+            await handleCreateRole();
+            setShowCreateRole(false);
+          } catch (err) {
+            setError((err as Error).message || 'Create failed.');
+          } finally {
+            setSavingDrawer(false);
+          }
+        };
+        return (
+          <Modal
+            open={showCreateRole}
+            onClose={() => setShowCreateRole(false)}
+            title="New role"
+            size="sm"
+            footer={
+              <>
+                <Button variant="outline" size="sm" onClick={() => setShowCreateRole(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  disabled={savingDrawer || !newRole.name}
+                  onClick={submit}
+                >
+                  {savingDrawer ? 'Creating…' : 'Create role'}
+                </Button>
+              </>
+            }
+          >
+            <form
+              className="flex flex-col gap-4"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void submit();
+              }}
+            >
+              <Input
+                label="Name"
+                value={newRole.name}
+                onChange={(e) => setNewRole({ ...newRole, name: e.target.value })}
+                autoFocus
+              />
+              <Input
+                label="Description"
+                value={newRole.description}
+                onChange={(e) => setNewRole({ ...newRole, description: e.target.value })}
+              />
+              <button type="submit" className="hidden" aria-hidden="true" />
+            </form>
+          </Modal>
+        );
+      })()}
+
+      {/* ── Edit Role modal ───────────────────────────────────────── */}
+      {editingRole && (() => {
+        const submit = async () => {
+          if (!editingRole) return;
+          setSavingDrawer(true);
+          setError(null);
+          try {
+            await updateRole(editingRole.id, {
+              name: editingRole.name,
+              description: editingRole.description,
+            });
+            await refresh();
+            setEditingRole(null);
+          } catch (err) {
+            setError((err as Error).message || 'Save failed.');
+          } finally {
+            setSavingDrawer(false);
+          }
+        };
+        return (
+          <Modal
+            open={editingRole !== null}
+            onClose={() => setEditingRole(null)}
+            title={`Edit · ${editingRole.name}`}
+            size="sm"
+            footer={
+              <>
+                <Button variant="outline" size="sm" onClick={() => setEditingRole(null)}>
+                  Cancel
+                </Button>
+                <Button variant="primary" size="sm" disabled={savingDrawer} onClick={submit}>
+                  {savingDrawer ? 'Saving…' : 'Save'}
+                </Button>
+              </>
+            }
+          >
+            <form
+              className="flex flex-col gap-4"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void submit();
+              }}
+            >
+              <Input
+                label="Name"
+                value={editingRole.name}
+                onChange={(e) => setEditingRole({ ...editingRole, name: e.target.value })}
+                autoFocus
+              />
+              <Input
+                label="Description"
+                value={editingRole.description}
+                onChange={(e) => setEditingRole({ ...editingRole, description: e.target.value })}
+              />
+              <button type="submit" className="hidden" aria-hidden="true" />
+            </form>
+          </Modal>
+        );
+      })()}
     </Layout>
   );
 };

@@ -9,6 +9,8 @@ export type User = {
 export type NamespacePermission = {
   id: number;
   roleId: number;
+  clusterId: number; // 0 = "all clusters" (wildcard)
+  clusterName?: string; // decorated by backend for display
   namespace: string;
   resource: string;
   action: string;
@@ -253,6 +255,82 @@ export const getPodEvents = (namespace: string, name: string) =>
 export const getDeploymentEvents = (namespace: string, name: string) =>
   apiRequest<{ items: Array<Record<string, unknown>> }>(`/api/namespaces/${namespace}/deployments/${name}/events`);
 
+export const restartDeployment = (namespace: string, name: string) =>
+  apiRequest<{ status: string; restartedAt: string }>(
+    `/api/namespaces/${namespace}/deployments/${name}/restart`,
+    { method: 'POST' }
+  );
+
+// ─── Clusters (multi-cluster) ────────────────────────────────────────────────
+
+export type ClusterListItem = {
+  id: number;
+  name: string;
+  description?: string;
+  server?: string;
+  method?: string;
+  isActive: boolean;
+  createdAt?: string;
+};
+
+export const listClustersPublic = () =>
+  apiRequest<{ items: Array<{ id: number; name: string; isActive: boolean }> }>(
+    '/api/clusters/public'
+  );
+
+export const getActiveCluster = () =>
+  apiRequest<{
+    active: { id: number; name: string; description: string; server: string; method: string } | null;
+  }>('/api/cluster/active');
+
+export const listClustersAdmin = () =>
+  apiRequest<{ items: ClusterListItem[] }>('/api/admin/clusters');
+
+export type ClusterCreatePayload = {
+  name: string;
+  description: string;
+  method: 'kubeconfig' | 'token';
+  kubeconfigBase64?: string;
+  token?: string;
+  server?: string;
+  caCertBase64?: string;
+};
+
+export const createCluster = (payload: ClusterCreatePayload) =>
+  apiRequest<{ id: number }>('/api/admin/clusters', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+export const updateClusterRow = (
+  id: number,
+  payload: ClusterCreatePayload & { replaceSecrets?: boolean }
+) =>
+  apiRequest<{ status: string }>(`/api/admin/clusters/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+
+export const deleteClusterRow = (id: number) =>
+  apiRequest<{ status: string }>(`/api/admin/clusters/${id}`, { method: 'DELETE' });
+
+export const activateCluster = (id: number) =>
+  apiRequest<{ status: string; name: string }>(`/api/admin/clusters/${id}/activate`, {
+    method: 'POST',
+  });
+
+export const deactivateCluster = (id: number) =>
+  apiRequest<{ status: string }>(`/api/admin/clusters/${id}/deactivate`, { method: 'POST' });
+
+export const scaleDeployment = (namespace: string, name: string, replicas: number) =>
+  apiRequest<{ status: string; previous: number; replicas: number }>(
+    `/api/namespaces/${namespace}/deployments/${name}/scale`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ replicas }),
+    }
+  );
+
 export const listUsers = () => apiRequest<{ items: User[] }>('/api/admin/users');
 
 export const createUser = (payload: { username: string; password: string; isAdmin: boolean }) =>
@@ -325,7 +403,10 @@ export const deleteRole = (id: number) =>
 export const listRolePermissions = (id: number) =>
   apiRequest<{ items: NamespacePermission[] }>(`/api/admin/roles/${id}/permissions`);
 
-export const addRolePermission = (roleId: number, payload: { namespace: string; resource: string; action: string }) =>
+export const addRolePermission = (
+  roleId: number,
+  payload: { clusterId?: number; namespace: string; resource: string; action: string }
+) =>
   apiRequest(`/api/admin/roles/${roleId}/permissions`, {
     method: 'POST',
     body: JSON.stringify(payload)

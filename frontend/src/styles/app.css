@@ -2,10 +2,122 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  margin: 0;
+@layer base {
+  :root {
+    /* Minimalist calm: single soft tint behind the content, no grid.
+       Two very wide, very low-opacity glows at the top corners add just
+       enough depth to avoid a flat sheet of color without becoming
+       decorative. Everything else earns its contrast from the content. */
+    --app-bg: #f7f8fb;
+    --app-bg-glow:
+      radial-gradient(1400px 600px at 0% -20%, rgba(99, 102, 241, 0.05), transparent 70%),
+      radial-gradient(1200px 500px at 100% -20%, rgba(16, 185, 129, 0.04), transparent 70%);
+    --scrollbar-thumb: rgba(148, 163, 184, 0.5);
+    --scrollbar-thumb-hover: rgba(100, 116, 139, 0.65);
+  }
+
+  .dark {
+    /* A tick lighter than the sidebar (#0b1220) so panels still stand out
+       without the backdrop looking almost-black. */
+    --app-bg: #111827;
+    --app-bg-glow:
+      radial-gradient(1400px 600px at 0% -20%, rgba(99, 102, 241, 0.10), transparent 70%),
+      radial-gradient(1200px 500px at 100% -20%, rgba(16, 185, 129, 0.06), transparent 70%);
+    --scrollbar-thumb: rgba(71, 85, 105, 0.6);
+    --scrollbar-thumb-hover: rgba(100, 116, 139, 0.8);
+
+    color-scheme: dark;
+  }
+
+  html,
+  body {
+    margin: 0;
+    font-family:
+      'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+      sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    color: #0f172a;
+    background-color: var(--app-bg);
+    transition: background-color 150ms ease, color 150ms ease;
+  }
+
+  .dark body {
+    color: #e2e8f0;
+  }
+
+  #root {
+    min-height: 100vh;
+    background-image: var(--app-bg-glow);
+    background-repeat: no-repeat;
+    background-position: top center;
+    background-attachment: fixed;
+  }
+
+  *:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.35);
+    border-radius: 6px;
+  }
+
+  /* Scrollbar polish */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-thumb-hover);
+    background-clip: padding-box;
+    border: 2px solid transparent;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
 }
 
-#root {
-  min-height: 100vh;
+@layer components {
+  .card-surface {
+    @apply rounded-2xl border border-slate-200/70 bg-white/90 shadow-card backdrop-blur-sm dark:border-slate-800/70 dark:bg-slate-900/70;
+  }
+
+  .glass-surface {
+    @apply border border-white/60 bg-white/70 shadow-card backdrop-blur-md dark:border-slate-800/60 dark:bg-slate-900/60;
+  }
+
+  .section-title {
+    @apply text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400;
+  }
+
+  .status-dot {
+    @apply inline-block h-2.5 w-2.5 shrink-0 rounded-full;
+  }
+
+  .status-dot-success {
+    @apply bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.18)];
+  }
+
+  .status-dot-warning {
+    @apply bg-amber-400 shadow-[0_0_0_3px_rgba(251,191,36,0.18)];
+  }
+
+  .status-dot-error {
+    @apply bg-rose-500 shadow-[0_0_0_3px_rgba(244,63,94,0.18)];
+  }
+
+  .status-dot-idle {
+    @apply border-2 border-slate-300 bg-transparent dark:border-slate-600;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .animate-live {
+      animation: pulse-dot 1.8s ease-in-out infinite;
+    }
+  }
 }

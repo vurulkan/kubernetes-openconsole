@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,38 +16,61 @@ import (
 	"k8s-dashboard/backend/internal/config"
 	"k8s-dashboard/backend/internal/db"
 	"k8s-dashboard/backend/internal/kube"
+	logpkg "k8s-dashboard/backend/internal/logging"
 	"k8s-dashboard/backend/internal/store"
 )
 
 func main() {
 	cfg := config.Load()
 
+	logger := logpkg.New(logpkg.Config{
+		Level:        cfg.LogLevel,
+		Format:       cfg.LogFormat,
+		Output:       cfg.LogOutput,
+		AddSource:    cfg.LogAddSource,
+		Service:      "openconsole",
+		Version:      cfg.Version,
+		Env:          cfg.Env,
+		IncludeAudit: cfg.LogIncludeAudit,
+	})
+	logpkg.SetDefault(logger)
+
+	slog.Info("starting openconsole",
+		slog.String("port", cfg.Port),
+		slog.String("data_path", cfg.DataPath),
+		slog.String("timezone", cfg.TimeZone),
+		slog.String("log_format", cfg.LogFormat),
+		slog.String("log_level", cfg.LogLevel),
+	)
+
 	database, err := db.Open(cfg.DataPath)
 	if err != nil {
-		log.Fatalf("db error: %v", err)
+		fatal("db error", err)
 	}
 
-	store, err := store.New(database.Conn)
+	stor, err := store.New(database.Conn)
 	if err != nil {
-		log.Fatalf("store error: %v", err)
+		fatal("store error", err)
 	}
 
 	defaultHash, err := auth.HashPassword("admin")
 	if err != nil {
-		log.Fatalf("hash error: %v", err)
+		fatal("hash error", err)
 	}
-	if err := store.EnsureDefaultAdmin(context.Background(), defaultHash); err != nil {
-		log.Fatalf("admin seed error: %v", err)
+	if err := stor.EnsureDefaultAdmin(context.Background(), defaultHash); err != nil {
+		fatal("admin seed error", err)
 	}
 
 	kubeManager := kube.NewManager()
-	if creds, err := store.GetKubeCredentials(context.Background()); err == nil && creds.Active {
+	if creds, err := stor.GetKubeCredentials(context.Background()); err == nil && creds.Active {
 		if err := kubeManager.ApplyCredentials(creds); err == nil {
 			_ = kubeManager.Start(context.Background())
 		}
 	}
 
-	auditLogger := audit.New(store)
+	auditLogger := audit.New(stor)
+	auditLogger.SetConsoleMirror(cfg.LogIncludeAudit)
+	audit.SetMetricHook(api.MetricsAuditIncr)
 	auditLogger.StartRetention(context.Background(), cfg.LogRetentionDays, cfg.AuditPurgeInterval)
 
 	staticDir := "./public"
@@ -55,7 +78,7 @@ func main() {
 		staticDir = value
 	}
 	dataDir := filepath.Dir(cfg.DataPath)
-	server := api.NewServer(store, auditLogger, kubeManager, staticDir, dataDir, cfg.TimeZone)
+	server := api.NewServer(stor, auditLogger, kubeManager, staticDir, dataDir, cfg.TimeZone)
 	httpServer := &http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      server.Router(),
@@ -64,9 +87,9 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("server listening on %s", httpServer.Addr)
+		slog.Info("server listening", slog.String("addr", httpServer.Addr))
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("listen error: %v", err)
+			fatal("listen error", err)
 		}
 	}()
 
@@ -74,9 +97,16 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
 
+	slog.Info("shutdown signal received")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := httpServer.Shutdown(ctx); err != nil {
-		log.Printf("shutdown error: %v", err)
+		slog.Error("shutdown error", slog.Any("error", err))
 	}
+	slog.Info("server stopped")
+}
+
+func fatal(msg string, err error) {
+	slog.Error(msg, slog.Any("error", err))
+	os.Exit(1)
 }

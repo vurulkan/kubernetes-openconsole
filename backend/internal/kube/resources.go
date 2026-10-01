@@ -3,12 +3,15 @@ package kube
 import (
 	"context"
 	"fmt"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 type ResourceClient struct {
@@ -149,4 +152,57 @@ func (c *ResourceClient) GetCronJob(ctx context.Context, namespace, name string)
 		return nil, fmt.Errorf("kubernetes client not ready")
 	}
 	return client.BatchV1().CronJobs(namespace).Get(ctx, name, metav1.GetOptions{})
+}
+
+// RestartDeployment triggers a rolling restart by patching the pod template
+// annotation (kubectl.kubernetes.io/restartedAt). Returns the restart timestamp
+// applied so callers can echo it in audit entries.
+func (c *ResourceClient) RestartDeployment(ctx context.Context, namespace, name string) (string, error) {
+	client, ok := c.manager.Client()
+	if !ok || !c.manager.Ready() {
+		return "", fmt.Errorf("kubernetes client not ready")
+	}
+	stamp := time.Now().UTC().Format(time.RFC3339)
+	patch := fmt.Sprintf(
+		`{"spec":{"template":{"metadata":{"annotations":{"kubectl.kubernetes.io/restartedAt":%q}}}}}`,
+		stamp,
+	)
+	_, err := client.AppsV1().Deployments(namespace).Patch(
+		ctx,
+		name,
+		types.StrategicMergePatchType,
+		[]byte(patch),
+		metav1.PatchOptions{},
+	)
+	if err != nil {
+		return "", err
+	}
+	return stamp, nil
+}
+
+// ScaleDeployment updates the replicas of a Deployment via its Scale
+// subresource. Returns the previous replica count so audit entries can log
+// both before and after values.
+func (c *ResourceClient) ScaleDeployment(ctx context.Context, namespace, name string, replicas int32) (int32, error) {
+	client, ok := c.manager.Client()
+	if !ok || !c.manager.Ready() {
+		return 0, fmt.Errorf("kubernetes client not ready")
+	}
+	current, err := client.AppsV1().Deployments(namespace).GetScale(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return 0, err
+	}
+	previous := current.Spec.Replicas
+	updated := &autoscalingv1.Scale{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            current.Name,
+			Namespace:       current.Namespace,
+			ResourceVersion: current.ResourceVersion,
+		},
+		Spec: autoscalingv1.ScaleSpec{Replicas: replicas},
+	}
+	if _, err := client.AppsV1().Deployments(namespace).UpdateScale(ctx, name, updated, metav1.UpdateOptions{}); err != nil {
+		return previous, err
+	}
+	return previous, nil
 }

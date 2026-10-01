@@ -28,6 +28,11 @@ func (s *Store) SigningKey() []byte {
 	return s.key
 }
 
+// Ping verifies the underlying DB connection is responsive. Used by readyz.
+func (s *Store) Ping(ctx context.Context) error {
+	return s.conn.PingContext(ctx)
+}
+
 func ensureKey(ctx context.Context, conn *sql.DB) ([]byte, error) {
 	var existing []byte
 	err := conn.QueryRowContext(ctx, `SELECT encryption_key FROM app_secrets WHERE id = 1`).Scan(&existing)
@@ -150,6 +155,16 @@ func (s *Store) UpdateUserPassword(ctx context.Context, userID int, passwordHash
 	return err
 }
 
+// CountActiveAdmins returns how many users are flagged is_admin AND is_active.
+// Used to block self-destruct scenarios where the last admin would lock
+// everyone out of the system.
+func (s *Store) CountActiveAdmins(ctx context.Context) (int, error) {
+	var n int
+	err := s.conn.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM users WHERE is_admin = 1 AND is_active = 1`).Scan(&n)
+	return n, err
+}
+
 func (s *Store) DeleteUser(ctx context.Context, id int) error {
 	_, err := s.conn.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id)
 	return err
@@ -228,7 +243,14 @@ func (s *Store) DeleteRole(ctx context.Context, id int) error {
 }
 
 func (s *Store) ListNamespacePermissions(ctx context.Context, roleID int) ([]models.NamespacePermission, error) {
-	rows, err := s.conn.QueryContext(ctx, `SELECT id, role_id, namespace, resource, action FROM namespace_permissions WHERE role_id = ?`, roleID)
+	rows, err := s.conn.QueryContext(ctx, `
+		SELECT np.id, np.role_id, COALESCE(np.cluster_id, 0),
+		       COALESCE(c.name, ''),
+		       np.namespace, np.resource, np.action
+		FROM namespace_permissions np
+		LEFT JOIN clusters c ON c.id = np.cluster_id
+		WHERE np.role_id = ?
+		ORDER BY np.cluster_id, np.namespace, np.resource, np.action`, roleID)
 	if err != nil {
 		return nil, err
 	}
@@ -236,7 +258,8 @@ func (s *Store) ListNamespacePermissions(ctx context.Context, roleID int) ([]mod
 	var permissions []models.NamespacePermission
 	for rows.Next() {
 		var perm models.NamespacePermission
-		if err := rows.Scan(&perm.ID, &perm.RoleID, &perm.Namespace, &perm.Resource, &perm.Action); err != nil {
+		if err := rows.Scan(&perm.ID, &perm.RoleID, &perm.ClusterID, &perm.ClusterName,
+			&perm.Namespace, &perm.Resource, &perm.Action); err != nil {
 			return nil, err
 		}
 		permissions = append(permissions, perm)
@@ -244,8 +267,18 @@ func (s *Store) ListNamespacePermissions(ctx context.Context, roleID int) ([]mod
 	return permissions, nil
 }
 
-func (s *Store) AddNamespacePermission(ctx context.Context, roleID int, namespace, resource, action string) error {
-	_, err := s.conn.ExecContext(ctx, `INSERT INTO namespace_permissions (role_id, namespace, resource, action) VALUES (?, ?, ?, ?)`, roleID, namespace, resource, action)
+// AddNamespacePermission writes a row. clusterID == 0 is stored as NULL
+// (meaning "all clusters").
+func (s *Store) AddNamespacePermission(ctx context.Context, roleID, clusterID int, namespace, resource, action string) error {
+	if clusterID <= 0 {
+		_, err := s.conn.ExecContext(ctx,
+			`INSERT INTO namespace_permissions (role_id, cluster_id, namespace, resource, action) VALUES (?, NULL, ?, ?, ?)`,
+			roleID, namespace, resource, action)
+		return err
+	}
+	_, err := s.conn.ExecContext(ctx,
+		`INSERT INTO namespace_permissions (role_id, cluster_id, namespace, resource, action) VALUES (?, ?, ?, ?, ?)`,
+		roleID, clusterID, namespace, resource, action)
 	return err
 }
 
@@ -645,7 +678,8 @@ func (s *Store) PurgeAuditLogs(ctx context.Context, olderThan time.Time) error {
 
 func (s *Store) ListPermissionsByUser(ctx context.Context, userID int) ([]models.NamespacePermission, error) {
 	rows, err := s.conn.QueryContext(ctx, `
-		SELECT np.id, np.role_id, np.namespace, np.resource, np.action
+		SELECT np.id, np.role_id, COALESCE(np.cluster_id, 0),
+		       np.namespace, np.resource, np.action
 		FROM namespace_permissions np
 		JOIN group_roles gr ON np.role_id = gr.role_id
 		JOIN user_groups ug ON gr.group_id = ug.group_id
@@ -657,7 +691,8 @@ func (s *Store) ListPermissionsByUser(ctx context.Context, userID int) ([]models
 	var permissions []models.NamespacePermission
 	for rows.Next() {
 		var perm models.NamespacePermission
-		if err := rows.Scan(&perm.ID, &perm.RoleID, &perm.Namespace, &perm.Resource, &perm.Action); err != nil {
+		if err := rows.Scan(&perm.ID, &perm.RoleID, &perm.ClusterID,
+			&perm.Namespace, &perm.Resource, &perm.Action); err != nil {
 			return nil, err
 		}
 		permissions = append(permissions, perm)

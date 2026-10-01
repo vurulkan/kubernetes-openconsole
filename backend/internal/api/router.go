@@ -11,7 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -30,6 +31,7 @@ import (
 	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/auth"
 	"k8s-dashboard/backend/internal/kube"
+	logpkg "k8s-dashboard/backend/internal/logging"
 	"k8s-dashboard/backend/internal/models"
 	"k8s-dashboard/backend/internal/rbac"
 	"k8s-dashboard/backend/internal/store"
@@ -46,6 +48,10 @@ type Server struct {
 	staticDir  string
 	dataDir    string
 	timezone   *time.Location
+	// Active cluster id — cached from the clusters.is_active row and refreshed
+	// on activate/deactivate. 0 means "no active cluster", in which case
+	// permission checks fall back to wildcard matching.
+	activeClusterID atomic.Int64
 }
 
 func NewServer(store *store.Store, auditLogger *audit.Logger, kubeManager *kube.Manager, staticDir string, dataDir string, timeZone string) *Server {
@@ -53,7 +59,7 @@ func NewServer(store *store.Store, auditLogger *audit.Logger, kubeManager *kube.
 	if err != nil {
 		location = time.UTC
 	}
-	return &Server{
+	s := &Server{
 		store:      store,
 		audit:      auditLogger,
 		kube:       kubeManager,
@@ -64,17 +70,57 @@ func NewServer(store *store.Store, auditLogger *audit.Logger, kubeManager *kube.
 		dataDir:    dataDir,
 		timezone:   location,
 	}
+	// Seed the active cluster id from whatever row is currently is_active.
+	// Called sync so permission checks on early requests see a stable value.
+	if cluster, err := store.GetActiveCluster(context.Background()); err == nil && cluster != nil {
+		s.activeClusterID.Store(int64(cluster.ID))
+	}
+	return s
+}
+
+// ActiveClusterID returns the currently-active cluster id, or 0 when none is
+// set (fresh install or after a deactivate). Permission checks treat 0 as
+// "wildcard — any permission row applies".
+func (s *Server) ActiveClusterID() int {
+	return int(s.activeClusterID.Load())
 }
 
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Use(corsMiddleware)
+	r.Use(securityHeaders)
+	r.Use(requestIDMiddleware)
 	r.Use(recoverMiddleware)
 	r.Use(requestLogger)
 
+	// Liveness: just confirms the process is accepting requests.
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
 	})
+	r.Get("/livez", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("live"))
+	})
+	// Readiness: DB handle usable + if a cluster is configured, it must be
+	// ready. Returns 503 otherwise so Kubernetes rolls the pod out of service.
+	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		if err := s.store.Ping(r.Context()); err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte("db not reachable"))
+			return
+		}
+		if creds, err := s.store.GetKubeCredentials(r.Context()); err == nil && creds.Active && !s.kube.Ready() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte("cluster not ready"))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ready"))
+	})
+	// Prometheus-compatible metrics (unauthenticated — restrict at the network
+	// layer / scrape via internal service).
+	r.Get("/metrics", handleMetrics)
 
 	r.Route("/api/auth", func(r chi.Router) {
 		r.Post("/login", s.handleLogin)
@@ -89,6 +135,8 @@ func (s *Server) Router() http.Handler {
 
 	r.Group(func(r chi.Router) {
 		r.Use(auth.AuthMiddleware(s.jwtKey))
+		r.Get("/api/cluster/active", s.handleGetActiveCluster)
+		r.Get("/api/clusters/public", s.handleListClustersPublic)
 		r.Get("/api/namespaces", s.handleNamespaces)
 		r.Get("/api/namespaces/{namespace}/permissions", s.handleNamespacePermissions)
 		r.Get("/api/namespaces/{namespace}/pods", s.handlePods)
@@ -99,6 +147,8 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/namespaces/{namespace}/deployments/{name}", s.handleDeployment)
 		r.Get("/api/namespaces/{namespace}/deployments/{name}/yaml", s.handleDeploymentYAML)
 		r.Get("/api/namespaces/{namespace}/deployments/{name}/events", s.handleDeploymentEvents)
+		r.Post("/api/namespaces/{namespace}/deployments/{name}/restart", s.handleDeploymentRestart)
+		r.Post("/api/namespaces/{namespace}/deployments/{name}/scale", s.handleDeploymentScale)
 		r.Get("/api/namespaces/{namespace}/services", s.handleServices)
 		r.Get("/api/namespaces/{namespace}/services/{name}", s.handleService)
 		r.Get("/api/namespaces/{namespace}/services/{name}/yaml", s.handleServiceYAML)
@@ -111,6 +161,8 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/namespaces/{namespace}/cronjobs", s.handleCronJobs)
 		r.Get("/api/namespaces/{namespace}/cronjobs/{name}/yaml", s.handleCronJobYAML)
 		r.Get("/ws/namespaces/{namespace}/pods/{name}/logs", s.handlePodLogsWS)
+		r.Get("/ws/namespaces/{namespace}/pods/{name}/exec", s.handlePodExecWS)
+		r.Get("/ws/namespaces/{namespace}/deployments/{name}/logs", s.handleDeploymentLogsWS)
 	})
 
 	r.Group(func(r chi.Router) {
@@ -152,6 +204,15 @@ func (s *Server) Router() http.Handler {
 
 		r.Get("/api/admin/cluster", s.handleGetCluster)
 		r.Post("/api/admin/cluster", s.handleUpdateCluster)
+
+		// Multi-cluster CRUD (admin only). The legacy /api/admin/cluster
+		// endpoint stays for backward compat; new UI uses these.
+		r.Get("/api/admin/clusters", s.handleListClusters)
+		r.Post("/api/admin/clusters", s.handleCreateCluster)
+		r.Put("/api/admin/clusters/{id}", s.handleUpdateClusterByID)
+		r.Delete("/api/admin/clusters/{id}", s.handleDeleteCluster)
+		r.Post("/api/admin/clusters/{id}/activate", s.handleActivateCluster)
+		r.Post("/api/admin/clusters/{id}/deactivate", s.handleDeactivateCluster)
 		r.Put("/api/admin/cluster", s.handleUpdateCluster)
 		r.Post("/api/admin/cluster/validate", s.handleValidateCluster)
 
@@ -217,13 +278,77 @@ func (r *statusRecorder) Push(target string, opts *http.PushOptions) error {
 	return http.ErrNotSupported
 }
 
+func requestIDMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rid := r.Header.Get("X-Request-Id")
+		if rid == "" {
+			rid = newRequestID()
+		}
+		w.Header().Set("X-Request-Id", rid)
+		ctx := context.WithValue(r.Context(), logpkg.RequestIDKey, rid)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// logf is a thin shim preserving legacy printf-style call sites while routing
+// output through slog. Prefer slog.LogAttrs with structured fields in new code.
+func logf(format string, args ...any) {
+	slog.Info(fmt.Sprintf(format, args...))
+}
+
+func logWarnf(format string, args ...any) {
+	slog.Warn(fmt.Sprintf(format, args...))
+}
+
+func newRequestID() string {
+	var buf [12]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return strconv.FormatInt(time.Now().UnixNano(), 36)
+	}
+	return base64.RawURLEncoding.EncodeToString(buf[:])
+}
+
+func clientIP(r *http.Request) string {
+	if v := r.Header.Get("X-Forwarded-For"); v != "" {
+		if idx := strings.Index(v, ","); idx > 0 {
+			return strings.TrimSpace(v[:idx])
+		}
+		return strings.TrimSpace(v)
+	}
+	if v := r.Header.Get("X-Real-Ip"); v != "" {
+		return v
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
 func requestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		start := time.Now()
-		log.Printf("START %s %s", r.Method, r.URL.Path)
 		next.ServeHTTP(recorder, r)
-		log.Printf("%s %s %d %s", r.Method, r.URL.Path, recorder.status, time.Since(start))
+		duration := time.Since(start)
+
+		level := slog.LevelInfo
+		if recorder.status >= 500 {
+			level = slog.LevelError
+		} else if recorder.status >= 400 {
+			level = slog.LevelWarn
+		}
+
+		slog.LogAttrs(r.Context(), level, "http.request",
+			slog.String("method", r.Method),
+			slog.String("path", r.URL.Path),
+			slog.Int("status", recorder.status),
+			slog.Int64("duration_ms", duration.Milliseconds()),
+			slog.String("remote_ip", clientIP(r)),
+			slog.String("request_id", logpkg.RequestIDFrom(r.Context())),
+			slog.String("user_agent", r.UserAgent()),
+		)
+		metricsRecordRequest(recorder.status, duration.Milliseconds())
 	})
 }
 
@@ -231,7 +356,11 @@ func recoverMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if err := recover(); err != nil {
-				log.Printf("panic: %v", err)
+				slog.ErrorContext(r.Context(), "http.panic",
+					slog.Any("error", err),
+					slog.String("path", r.URL.Path),
+					slog.String("request_id", logpkg.RequestIDFrom(r.Context())),
+				)
 				writeError(w, http.StatusInternalServerError, "internal server error")
 			}
 		}()
@@ -288,8 +417,30 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	gateKey := clientIP(r) + "|" + strings.ToLower(strings.TrimSpace(request.Username))
+	if ok, retry := LoginGate().check(gateKey); !ok {
+		w.Header().Set("Retry-After", strconv.Itoa(retry))
+		go s.audit.Record(context.Background(), models.AuditLog{
+			User:         request.Username,
+			Action:       "login.locked",
+			Namespace:    "-",
+			ResourceType: "auth",
+			ResourceName: "local",
+		})
+		w.WriteHeader(http.StatusTooManyRequests)
+		return
+	}
+
 	user, err := s.store.GetUserByUsername(r.Context(), request.Username)
 	if err != nil || !user.IsActive {
+		LoginGate().recordFailure(gateKey)
+		go s.audit.Record(context.Background(), models.AuditLog{
+			User:         request.Username,
+			Action:       "login.failed",
+			Namespace:    "-",
+			ResourceType: "auth",
+			ResourceName: "unknown_user",
+		})
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
@@ -323,10 +474,19 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !authenticated {
+		LoginGate().recordFailure(gateKey)
+		go s.audit.Record(context.Background(), models.AuditLog{
+			User:         request.Username,
+			Action:       "login.failed",
+			Namespace:    "-",
+			ResourceType: "auth",
+			ResourceName: "bad_password",
+		})
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
 
+	LoginGate().recordSuccess(gateKey)
 	s.issueTokenForUser(w, r, user)
 }
 
@@ -503,7 +663,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	engine := rbac.New(perms)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"user":        user,
-		"namespaces":  engine.AllowedNamespaces(),
+		"namespaces":  engine.AllowedNamespaces(s.ActiveClusterID()),
 		"permissions": perms,
 	})
 }
@@ -564,7 +724,7 @@ func (s *Server) handleNamespaces(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-	allowed := engine.AllowedNamespaces()
+	allowed := engine.AllowedNamespaces(s.ActiveClusterID())
 	allowedSet := make(map[string]struct{})
 	for _, ns := range allowed {
 		allowedSet[ns] = struct{}{}
@@ -589,8 +749,8 @@ func (s *Server) handleNamespacePermissions(w http.ResponseWriter, r *http.Reque
 	if user.IsAdmin {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"resources": map[string][]string{
-				"pods":        {"list", "get", "logs"},
-				"deployments": {"list", "get"},
+				"pods":        {"list", "get", "logs", "exec"},
+				"deployments": {"list", "get", "restart", "scale"},
 				"services":    {"list", "get"},
 				"configmaps":  {"list", "get"},
 				"ingresses":   {"list", "get"},
@@ -604,7 +764,7 @@ func (s *Server) handleNamespacePermissions(w http.ResponseWriter, r *http.Reque
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-	permissions := engine.AllowedResources(namespace)
+	permissions := engine.AllowedResources(s.ActiveClusterID(), namespace)
 	if len(permissions) == 0 {
 		w.WriteHeader(http.StatusForbidden)
 		return
@@ -727,18 +887,18 @@ func (s *Server) handleConfigMap(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handlePodLogsWS(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.FromContext(r.Context())
 	if !ok {
-		log.Printf("logs ws unauthorized")
+		logWarnf("logs ws unauthorized")
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
 	namespace := chi.URLParam(r, "namespace")
 	if !s.can(r.Context(), claims.UserID, namespace, "pods", "logs") {
-		log.Printf("logs ws forbidden user=%s ns=%s", claims.Username, namespace)
+		logWarnf("logs ws forbidden user=%s ns=%s", claims.Username, namespace)
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
 	if !s.allowLogStream(claims.UserID) {
-		log.Printf("logs ws rate limited user=%s", claims.Username)
+		logWarnf("logs ws rate limited user=%s", claims.Username)
 		w.WriteHeader(http.StatusTooManyRequests)
 		return
 	}
@@ -747,7 +907,7 @@ func (s *Server) handlePodLogsWS(w http.ResponseWriter, r *http.Request) {
 
 	client, ok := s.kube.Client()
 	if !ok {
-		log.Printf("logs ws client not ready")
+		logWarnf("logs ws client not ready")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
@@ -755,7 +915,7 @@ func (s *Server) handlePodLogsWS(w http.ResponseWriter, r *http.Request) {
 	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("logs ws upgrade failed: %v", err)
+		logWarnf("logs ws upgrade failed: %v", err)
 		return
 	}
 	defer conn.Close()
@@ -772,7 +932,7 @@ func (s *Server) handlePodLogsWS(w http.ResponseWriter, r *http.Request) {
 
 	stream, err := client.CoreV1().Pods(namespace).GetLogs(podName, logOptions.ToKube()).Stream(r.Context())
 	if err != nil {
-		log.Printf("logs ws stream error: %v", err)
+		logWarnf("logs ws stream error: %v", err)
 		_ = conn.WriteMessage(websocket.TextMessage, []byte("log stream unavailable"))
 		return
 	}
@@ -1052,6 +1212,22 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
+	// Guard: do not let the last active admin be demoted or deactivated — the
+	// system would be unmanageable afterwards. "Last" is counted BEFORE this
+	// update is applied; if the user is currently admin+active and is about
+	// to lose either flag, require at least one other admin to survive.
+	if user.IsAdmin && user.IsActive && (!request.IsAdmin || !request.IsActive) {
+		count, err := s.store.CountActiveAdmins(r.Context())
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if count <= 1 {
+			writeError(w, http.StatusConflict,
+				"cannot demote or deactivate the last active administrator")
+			return
+		}
+	}
 	user.Username = request.Username
 	user.IsActive = request.IsActive
 	user.IsAdmin = request.IsAdmin
@@ -1069,11 +1245,35 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+
+	caller, _ := s.userForRequest(r)
+	if caller != nil && caller.ID == id {
+		writeError(w, http.StatusConflict, "you cannot delete your own account")
+		return
+	}
+	target, err := s.store.GetUserByID(r.Context(), id)
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	// Guard: deleting the last active admin would strand the system.
+	if target.IsAdmin && target.IsActive {
+		count, err := s.store.CountActiveAdmins(r.Context())
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if count <= 1 {
+			writeError(w, http.StatusConflict,
+				"cannot delete the last active administrator")
+			return
+		}
+	}
 	if err := s.store.DeleteUser(r.Context(), id); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	s.recordAudit(r, "admin.delete", "-", "users", strconv.Itoa(id))
+	s.recordAudit(r, "admin.delete", "-", "users", target.Username)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -1292,6 +1492,7 @@ func (s *Server) handleAddRolePermission(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var request struct {
+		ClusterID int    `json:"clusterId"` // 0 or omitted → "all clusters" wildcard
 		Namespace string `json:"namespace"`
 		Resource  string `json:"resource"`
 		Action    string `json:"action"`
@@ -1300,7 +1501,7 @@ func (s *Server) handleAddRolePermission(w http.ResponseWriter, r *http.Request)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	if err := s.store.AddNamespacePermission(r.Context(), roleID, request.Namespace, request.Resource, request.Action); err != nil {
+	if err := s.store.AddNamespacePermission(r.Context(), roleID, request.ClusterID, request.Namespace, request.Resource, request.Action); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -1538,36 +1739,36 @@ func (s *Server) handleGetCluster(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateCluster(w http.ResponseWriter, r *http.Request) {
-	log.Printf("cluster update received")
+	logf("cluster update received")
 	creds, err := parseClusterRequest(r)
 	if err != nil {
-		log.Printf("cluster update invalid: %v", err)
+		logf("cluster update invalid: %v", err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	creds.Active = true
 	if err := s.kube.ValidateCredentials(creds); err != nil {
-		log.Printf("cluster update validation failed: %v", err)
+		logf("cluster update validation failed: %v", err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	log.Printf("cluster update validation ok")
+	logf("cluster update validation ok")
 	if err := runWithTimeout(5*time.Second, func() error {
 		return s.store.UpdateKubeCredentials(r.Context(), creds)
 	}); err != nil {
-		log.Printf("cluster update store failed: %v", err)
+		logf("cluster update store failed: %v", err)
 		writeError(w, http.StatusInternalServerError, "failed to store cluster credentials")
 		return
 	}
-	log.Printf("cluster update stored")
+	logf("cluster update stored")
 	if err := runWithTimeout(5*time.Second, func() error {
 		return s.kube.ApplyCredentials(creds)
 	}); err != nil {
-		log.Printf("cluster update apply failed: %v", err)
+		logf("cluster update apply failed: %v", err)
 		writeError(w, http.StatusGatewayTimeout, err.Error())
 		return
 	}
-	log.Printf("cluster update applied")
+	logf("cluster update applied")
 	s.kube.StartAsync()
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{
 		"status":    "starting",
@@ -1575,7 +1776,7 @@ func (s *Server) handleUpdateCluster(w http.ResponseWriter, r *http.Request) {
 		"ready":     s.kube.Ready(),
 		"lastError": s.kube.LastError(),
 	})
-	log.Printf("cluster update response sent")
+	logf("cluster update response sent")
 	s.recordAudit(r, "admin.update", "-", "kube_cluster", creds.Method)
 }
 
@@ -1814,7 +2015,7 @@ func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, resou
 		w.WriteHeader(http.StatusUnauthorized)
 		return "", false
 	}
-	if !engine.Can(namespace, resource, action) {
+	if !engine.Can(s.ActiveClusterID(), namespace, resource, action) {
 		w.WriteHeader(http.StatusForbidden)
 		return "", false
 	}
@@ -1834,7 +2035,7 @@ func (s *Server) can(ctx context.Context, userID int, namespace, resource, actio
 		return false
 	}
 	engine := rbac.New(perms)
-	return engine.Can(namespace, resource, action)
+	return engine.Can(s.ActiveClusterID(), namespace, resource, action)
 }
 
 func (s *Server) userForRequest(r *http.Request) (*models.User, bool) {

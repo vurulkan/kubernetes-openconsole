@@ -23,12 +23,18 @@ type Role struct {
 	Description string `json:"description"`
 }
 
+// NamespacePermission grants a role one (cluster, namespace, resource, action)
+// tuple. ClusterID == 0 means "all clusters" (wildcard) — this keeps every
+// permission row written before multi-cluster phase 2 backwards compatible,
+// since those rows have NULL in the DB and we treat NULL as 0.
 type NamespacePermission struct {
-	ID        int    `json:"id"`
-	RoleID    int    `json:"roleId"`
-	Namespace string `json:"namespace"`
-	Resource  string `json:"resource"`
-	Action    string `json:"action"`
+	ID          int    `json:"id"`
+	RoleID      int    `json:"roleId"`
+	ClusterID   int    `json:"clusterId"`
+	ClusterName string `json:"clusterName,omitempty"`
+	Namespace   string `json:"namespace"`
+	Resource    string `json:"resource"`
+	Action      string `json:"action"`
 }
 
 type LDAPConfig struct {

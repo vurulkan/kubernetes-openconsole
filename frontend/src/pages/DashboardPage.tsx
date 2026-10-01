@@ -1,6 +1,25 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  Activity,
+  Boxes,
+  Calendar,
+  FileCode2,
+  FileText,
+  Globe,
+  LayoutGrid,
+  Minus,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  Scaling,
+  Search as SearchIcon,
+  Terminal,
+} from 'lucide-react';
 import Layout from '../components/Layout';
-import { Alert, Button, Input, Modal, Spinner, Toggle } from '../components/ui';
+import PodExecModal from '../components/PodExecModal';
+import { Alert, Badge, Button, Input, Modal, Spinner, Toggle } from '../components/ui';
+import { useScopedShortcuts } from '../hooks/useScopedShortcuts';
+import { dispatchOpenPalette } from '../hooks/useGlobalShortcuts';
 import {
   User,
   getMe,
@@ -20,10 +39,24 @@ import {
   getConfigMapData,
   getPodEvents,
   getDeploymentEvents,
+  restartDeployment,
+  scaleDeployment,
 } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 
 const resourceOrder = ['pods', 'deployments', 'services', 'configmaps', 'ingresses', 'cronjobs'];
+
+const RESOURCE_META: Record<
+  string,
+  { label: string; icon: React.ComponentType<{ size?: number; className?: string }> }
+> = {
+  pods: { label: 'Pods', icon: Boxes },
+  deployments: { label: 'Deployments', icon: LayoutGrid },
+  services: { label: 'Services', icon: Globe },
+  configmaps: { label: 'ConfigMaps', icon: FileText },
+  ingresses: { label: 'Ingresses', icon: Globe },
+  cronjobs: { label: 'CronJobs', icon: Calendar },
+};
 
 const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   const navigate = useNavigate();
@@ -43,6 +76,68 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   const [logPaused, setLogPaused] = useState(false);
   const [autoScroll, setAutoScroll] = useState(false);
   const [wordWrap, setWordWrap] = useState(false);
+  const [scaleTarget, setScaleTarget] = useState<{
+    name: string;
+    current: number;
+  } | null>(null);
+  const [scaleReplicas, setScaleReplicas] = useState(1);
+  const [scaleBusy, setScaleBusy] = useState(false);
+  const [actionBusy, setActionBusy] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
+
+  const canRestartDeployments = (allowedResources.deployments ?? []).includes('restart');
+  const canScaleDeployments = (allowedResources.deployments ?? []).includes('scale');
+  const canExecPods = (allowedResources.pods ?? []).includes('exec');
+  const [execTarget, setExecTarget] = useState<{ name: string; containers: string[] } | null>(null);
+  const [restartTarget, setRestartTarget] = useState<string | null>(null);
+
+  const showActionNotice = (msg: string) => {
+    setActionNotice(msg);
+    setTimeout(() => setActionNotice((v) => (v === msg ? null : v)), 4000);
+  };
+
+  // Deployment "Logs" opens one WebSocket to a backend fan-out that follows
+  // every pod × container of the deployment and prefixes each line with
+  // `[pod/container]`, matching the behavior of
+  //    kubectl logs -f -l <selector> --all-containers --prefix
+  const openDeploymentLogs = (ns: string, deploymentName: string) => {
+    if (logSocketRef.current) {
+      logSocketRef.current.close();
+      logSocketRef.current = null;
+    }
+    setModalOpen(true);
+    setModalTitle(`Deployment Logs - ${deploymentName}`);
+    setModalContent('');
+    setAutoScroll(true);
+    setLogPaused(false);
+
+    const token = localStorage.getItem('authToken') ?? '';
+    if (!token) {
+      setModalContent('[log stream error] Missing auth token.\n');
+      return;
+    }
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const wsUrl = `${protocol}://${window.location.host}/ws/namespaces/${ns}/deployments/${deploymentName}/logs?tail=100&token=${encodeURIComponent(token)}`;
+    const socket = new WebSocket(wsUrl);
+    socket.onopen = () => {
+      setModalContent((prev) => (prev ? `${prev}\n` : '') + '[log stream connected]\n');
+    };
+    socket.onmessage = (event) => {
+      if (!logPausedRef.current) {
+        setModalContent((prev) => `${prev}${event.data}`);
+      }
+    };
+    socket.onerror = () => {
+      setModalContent((prev) => `${prev}\n[log stream error]\n`);
+    };
+    socket.onclose = (event) => {
+      if (event.code !== 1000) {
+        setModalContent((prev) => `${prev}\n[log stream closed: ${event.code}]\n`);
+      }
+    };
+    logSocketRef.current = socket;
+  };
   const logContainerRef = React.useRef<HTMLPreElement | null>(null);
   const logSocketRef = React.useRef<WebSocket | null>(null);
   const logPausedRef = React.useRef(false);
@@ -86,14 +181,37 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
     void loadNamespaces();
   }, []);
 
+  // Switch namespace when the command palette writes a #ns:<name> hash.
+  useEffect(() => {
+    const applyHash = () => {
+      const h = window.location.hash;
+      if (!h.startsWith('#ns:')) return;
+      const target = decodeURIComponent(h.slice(4));
+      if (!target || target === selectedNamespace) return;
+      if (namespaces.includes(target)) {
+        setSelectedNamespace(target);
+        // Clear the hash so clicking the same palette item twice still works.
+        history.replaceState(null, '', window.location.pathname + window.location.search);
+      }
+    };
+    applyHash();
+    window.addEventListener('hashchange', applyHash);
+    return () => window.removeEventListener('hashchange', applyHash);
+  }, [namespaces, selectedNamespace]);
+
   useEffect(() => {
     const loadPermissions = async () => {
       if (!selectedNamespace) return;
       try {
         const permissions = await getNamespacePermissions(selectedNamespace);
         setAllowedResources(permissions.resources);
-        const first = resourceOrder.find((resource) => permissions.resources[resource]);
-        setActiveTab(first ?? '');
+        // Preserve the user's current resource tab across namespace switches
+        // when the new namespace also grants it; otherwise fall back to the
+        // first resource they can see.
+        setActiveTab((prev) => {
+          if (prev && permissions.resources[prev]) return prev;
+          return resourceOrder.find((resource) => permissions.resources[resource]) ?? '';
+        });
       } catch (err) {
         setAllowedResources({});
         setActiveTab('');
@@ -129,6 +247,68 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   useEffect(() => {
     setSearchQuery('');
   }, [activeTab, selectedNamespace]);
+
+  // Log modal shortcuts: p toggles pause, w toggles word-wrap. Must run even
+  // though a modal is open, so we attach via a dedicated effect that only
+  // listens while the log modal is visible.
+  useEffect(() => {
+    const isLog = modalOpen && (modalTitle.startsWith('Pod Logs') || modalTitle.startsWith('Deployment Logs'));
+    if (!isLog) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const tgt = e.target as HTMLElement | null;
+      if (tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.isContentEditable)) return;
+      if (e.key === 'p' || e.key === 'P') {
+        e.preventDefault();
+        setLogPaused((v) => !v);
+      } else if (e.key === 'w' || e.key === 'W') {
+        e.preventDefault();
+        setWordWrap((v) => !v);
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [modalOpen, modalTitle]);
+
+  // ─── Page shortcuts ───────────────────────────────────────────────────────
+  // [ / ] cycle resource tabs, r refresh, / focus the search box, n open the
+  // command palette with the namespace list in view. Suspended while any
+  // modal is open and while typing.
+  useScopedShortcuts(
+    [
+      {
+        key: '[',
+        handler: () => {
+          if (orderedResources.length === 0) return;
+          const idx = orderedResources.indexOf(activeTab);
+          const next = orderedResources[(idx - 1 + orderedResources.length) % orderedResources.length];
+          setActiveTab(next);
+        },
+      },
+      {
+        key: ']',
+        handler: () => {
+          if (orderedResources.length === 0) return;
+          const idx = orderedResources.indexOf(activeTab);
+          const next = orderedResources[(idx + 1) % orderedResources.length];
+          setActiveTab(next);
+        },
+      },
+      { key: 'r', handler: () => void loadResources() },
+      {
+        key: '/',
+        handler: () => {
+          // Focus the Dashboard's resource search input. We tag it with a
+          // data attribute to make this reliable across future layout tweaks.
+          const el = document.querySelector<HTMLInputElement>('input[data-shortcut="dashboard-search"]');
+          el?.focus();
+          el?.select();
+        },
+      },
+      { key: 'n', handler: () => dispatchOpenPalette() },
+    ],
+    true
+  );
 
   useEffect(() => {
     if (!selectedNamespace || (activeTab !== 'pods' && activeTab !== 'deployments')) return;
@@ -305,70 +485,197 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
     }
   };
 
+  // ─── Panel: namespace list ────────────────────────────────────────────────
+  const filteredNamespaces = namespaceSearch
+    ? namespaces.filter((ns) =>
+        ns.toLowerCase().includes(namespaceSearch.trim().toLowerCase())
+      )
+    : namespaces;
+
+  const namespacePanel = (
+    <div className="flex h-full flex-col gap-3 p-3">
+      <input
+        type="text"
+        value={namespaceSearch}
+        onChange={(e) => setNamespaceSearch(e.target.value)}
+        placeholder="Search namespaces…"
+        className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm placeholder:text-slate-400 dark:placeholder:text-slate-500 dark:text-slate-500 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/15"
+      />
+      <div className="flex flex-col gap-0.5 overflow-auto">
+        {filteredNamespaces.length === 0 && (
+          <p className="rounded-md px-3 py-2 text-xs text-slate-400 dark:text-slate-500">
+            {namespaces.length === 0
+              ? 'No namespaces available.'
+              : 'No namespaces match your search.'}
+          </p>
+        )}
+        {filteredNamespaces.map((ns) => {
+          const active = selectedNamespace === ns;
+          return (
+            <button
+              key={ns}
+              onClick={() => setSelectedNamespace(ns)}
+              className={`group flex items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors ${
+                active
+                  ? 'bg-brand-50 dark:bg-brand-500/15 font-medium text-brand-700 dark:text-brand-200 ring-1 ring-inset ring-brand-200 dark:ring-brand-500/30'
+                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100 dark:text-slate-100'
+              }`}
+            >
+              <span
+                className={`h-1.5 w-1.5 shrink-0 rounded-full transition-colors ${
+                  active ? 'bg-emerald-500' : 'bg-slate-300 group-hover:bg-slate-500'
+                }`}
+              />
+              <span className="truncate font-mono text-[12px]">{ns}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+
   // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <Layout
-      user={user}
-      namespaces={namespaces}
-      activeNamespace={selectedNamespace}
-      onNamespaceChange={(ns) => setSelectedNamespace(ns)}
-      namespaceSearch={namespaceSearch}
-      onNamespaceSearchChange={setNamespaceSearch}
-    >
-      <h1 className="text-xl font-semibold text-gray-900">Cluster Overview</h1>
-      <p className="mt-1 text-sm text-gray-500">
-        Select a namespace to view authorized resources. Unauthorized resources never appear.
-      </p>
+    <Layout user={user} panel={namespacePanel} panelTitle="Namespaces">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400">
+            <Activity size={14} className="text-brand-600 dark:text-brand-300" />
+            <span className="uppercase tracking-wider">Overview</span>
+          </div>
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+            Cluster Resources
+          </h1>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+            Pick a namespace to inspect its authorized resources. Unauthorized resources are hidden.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Badge variant="info" className="gap-1.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-brand-500" />
+            {namespaces.length} namespaces
+          </Badge>
+          {selectedNamespace && (
+            <Badge variant="default" className="gap-1.5">
+              <span className="font-mono text-[11px] text-slate-500 dark:text-slate-400">ns</span>
+              <span className="font-mono">{selectedNamespace}</span>
+            </Badge>
+          )}
+        </div>
+      </div>
 
       {error && (
         <Alert severity="warning" className="mt-4">
           {error}
         </Alert>
       )}
+      {actionError && (
+        <Alert severity="error" className="mt-4">
+          {actionError}
+        </Alert>
+      )}
+      {actionNotice && (
+        <Alert severity="success" className="mt-4">
+          {actionNotice}
+        </Alert>
+      )}
 
       {/* ── Resource card ─────────────────────────────────────────── */}
-      <div className="mt-6 rounded-xl border border-gray-200 bg-white shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+      <div className="card-surface mt-6 overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800/70 bg-slate-50 dark:bg-slate-900/50 px-5 py-4">
           <div className="flex flex-wrap items-center gap-3">
-            <span className="text-base font-semibold text-gray-900">
-              {selectedNamespace ?? 'No namespace available'}
-            </span>
-            <Input
-              placeholder={`Search ${activeTab}`}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-48"
-            />
+            <div className="flex items-center gap-2">
+              <div className="flex h-7 w-7 items-center justify-center rounded-md bg-brand-50 dark:bg-brand-500/15 text-brand-600 dark:text-brand-300 ring-1 ring-inset ring-brand-100">
+                <Boxes size={14} />
+              </div>
+              <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                {selectedNamespace ?? 'No namespace available'}
+              </span>
+            </div>
+            <div className="relative">
+              <SearchIcon
+                size={14}
+                className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500"
+              />
+              <Input
+                placeholder={activeTab ? `Search ${activeTab}…` : 'Search…'}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="h-9 w-56 pl-8"
+                data-shortcut="dashboard-search"
+              />
+            </div>
           </div>
-          {loading && <Spinner size="sm" />}
+          <div className="flex items-center gap-3">
+            {(activeTab === 'pods' || activeTab === 'deployments') && (
+              <span className="hidden items-center gap-1.5 text-[11px] font-medium text-slate-500 dark:text-slate-400 sm:inline-flex">
+                <span className="h-1.5 w-1.5 animate-live rounded-full bg-emerald-500" />
+                Auto-refresh 10s
+              </span>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void loadResources()}
+              disabled={loading || !activeTab}
+            >
+              <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+              Refresh
+            </Button>
+          </div>
         </div>
 
         {/* Tab bar */}
-        <div className="border-t border-gray-100">
-          <div className="flex gap-0 overflow-x-auto px-4">
-            {orderedResources.map((resource) => (
-              <button
-                key={resource}
-                onClick={() => setActiveTab(resource)}
-                className={`shrink-0 border-b-2 px-4 py-3 text-xs font-semibold uppercase tracking-wide transition-colors focus:outline-none ${
-                  activeTab === resource
-                    ? 'border-blue-600 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
-                }`}
-              >
-                {resource}
-              </button>
-            ))}
+        <div className="border-b border-slate-200 dark:border-slate-800/70 bg-white dark:bg-slate-900">
+          <div className="flex gap-1 overflow-x-auto px-3 py-2">
+            {orderedResources.length === 0 && (
+              <p className="px-2 py-2 text-xs text-slate-400 dark:text-slate-500">
+                You have no resource permissions in this namespace.
+              </p>
+            )}
+            {orderedResources.map((resource) => {
+              const meta = RESOURCE_META[resource];
+              const Icon = meta?.icon ?? Boxes;
+              const active = activeTab === resource;
+              return (
+                <button
+                  key={resource}
+                  onClick={() => setActiveTab(resource)}
+                  className={`group inline-flex shrink-0 items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition-all duration-150 focus:outline-none ${
+                    active
+                      ? 'bg-brand-50 dark:bg-brand-500/15 text-brand-700 dark:text-brand-200 ring-1 ring-inset ring-brand-200 dark:ring-brand-500/30'
+                      : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800 hover:text-slate-800 dark:hover:text-slate-100 dark:text-slate-100'
+                  }`}
+                >
+                  <Icon
+                    size={14}
+                    className={active ? 'text-brand-600 dark:text-brand-300' : 'text-slate-400 dark:text-slate-500 group-hover:text-slate-600 dark:text-slate-300'}
+                  />
+                  {meta?.label ?? resource}
+                </button>
+              );
+            })}
           </div>
         </div>
 
         {/* Items grid */}
-        <div className="flex flex-col gap-3 p-5">
+        <div className="grid grid-cols-1 gap-3 p-5 sm:grid-cols-2 xl:grid-cols-3">
           {filteredItems.length === 0 && !loading && (
-            <p className="text-sm text-gray-400">
-              {searchQuery ? 'No matching records found.' : 'No records available for this resource.'}
-            </p>
+            <div className="col-span-full">
+              <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60 px-6 py-10 text-center">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500">
+                  <SearchIcon size={16} />
+                </div>
+                <p className="text-sm font-medium text-slate-600 dark:text-slate-300">
+                  {searchQuery ? 'No matching records found.' : 'No records available.'}
+                </p>
+                <p className="text-xs text-slate-400 dark:text-slate-500">
+                  {searchQuery ? 'Try a different search term.' : 'The namespace is empty or no records match your access.'}
+                </p>
+              </div>
+            </div>
           )}
 
           {filteredItems.map((item, index) => {
@@ -412,73 +719,126 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
               .map((p) => p.path)
               .filter(Boolean) as string[];
 
-            // Status dot color
-            let dotColor = '';
-            let dotRing = '';
+            // Compute status indicator
+            let dotClass = '';
+            let statusLabel: React.ReactNode = null;
             if (activeTab === 'pods') {
-              dotColor = isHealthy ? 'bg-green-500' : 'bg-orange-400';
-              dotRing = isHealthy && restartCount > 0 ? 'ring-2 ring-orange-400' : '';
+              if (isHealthy) {
+                // Healthy pod — if it has restarted at least once, show an
+                // amber ring around the green dot so operators notice recent
+                // crash recovery at a glance.
+                dotClass =
+                  restartCount > 0
+                    ? 'status-dot bg-emerald-500 ring-2 ring-amber-400 ring-offset-2 ring-offset-white dark:ring-offset-slate-900'
+                    : 'status-dot status-dot-success';
+                statusLabel = (
+                  <Badge variant={restartCount > 0 ? 'warning' : 'success'}>
+                    <span
+                      className={`h-1.5 w-1.5 animate-live rounded-full ${
+                        restartCount > 0 ? 'bg-amber-500' : 'bg-emerald-500'
+                      }`}
+                    />
+                    {restartCount > 0 ? `Running · ${restartCount} restart${restartCount > 1 ? 's' : ''}` : 'Running'}
+                  </Badge>
+                );
+              } else {
+                dotClass = 'status-dot status-dot-warning';
+                statusLabel = <Badge variant="warning">Not Ready</Badge>;
+              }
             } else if (activeTab === 'deployments') {
-              dotColor =
-                desiredReplicas === 0
-                  ? 'bg-transparent border-2 border-gray-400'
-                  : allReplicasReady
-                  ? 'bg-green-500'
-                  : 'bg-orange-400';
+              if (desiredReplicas === 0) {
+                dotClass = 'status-dot status-dot-idle';
+                statusLabel = <Badge variant="default">Scaled to 0</Badge>;
+              } else if (allReplicasReady) {
+                dotClass = 'status-dot status-dot-success';
+                statusLabel = <Badge variant="success">Available</Badge>;
+              } else {
+                dotClass = 'status-dot status-dot-warning';
+                statusLabel = <Badge variant="warning">Progressing</Badge>;
+              }
             } else if (activeTab === 'cronjobs') {
-              dotColor = isSuspended ? 'bg-orange-400' : 'bg-green-500';
+              dotClass = isSuspended ? 'status-dot status-dot-warning' : 'status-dot status-dot-success';
+              statusLabel = isSuspended ? (
+                <Badge variant="warning">Suspended</Badge>
+              ) : (
+                <Badge variant="success">Active</Badge>
+              );
             }
 
             const showDot = ['pods', 'deployments', 'cronjobs'].includes(activeTab);
+            const createdAt = (item.metadata as { creationTimestamp?: string })?.creationTimestamp;
 
             return (
               <div
                 key={index}
-                className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm"
+                className="group relative flex flex-col gap-3 rounded-xl border border-slate-200 dark:border-slate-800/80 bg-white dark:bg-slate-900 p-4 shadow-card transition-all duration-150 hover:-translate-y-[1px] hover:border-brand-200 dark:border-brand-500/30 hover:shadow-elevated"
               >
-                <div className="flex items-center gap-2">
-                  {showDot && (
-                    <span
-                      className={`h-2.5 w-2.5 shrink-0 rounded-full ${dotColor} ${dotRing}`}
-                    />
-                  )}
-                  <span className="text-sm font-semibold text-gray-900">{name}</span>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    {showDot && <span className={dotClass} />}
+                    <span className="truncate font-mono text-[13px] font-semibold text-slate-900 dark:text-slate-100">
+                      {name}
+                    </span>
+                  </div>
+                  {statusLabel}
                 </div>
 
-                <p className="mt-1 text-xs text-gray-400">
-                  {(item.metadata as { creationTimestamp?: string })?.creationTimestamp ?? 'N/A'}
-                </p>
+                <div className="flex flex-col gap-1 text-[11px] text-slate-500 dark:text-slate-400">
+                  <div className="flex items-center gap-1.5">
+                    <Calendar size={11} className="text-slate-400 dark:text-slate-500" />
+                    <span>{createdAt ?? 'Created time unknown'}</span>
+                  </div>
 
-                {activeTab === 'pods' && (
-                  <p className="text-xs text-gray-500">Restarts: {restartCount}</p>
-                )}
-                {activeTab === 'deployments' && (
-                  <p className="text-xs text-gray-500">
-                    Replicas: {desiredReplicas} | Ready: {readyReplicas} | Available:{' '}
-                    {(item.status as { availableReplicas?: number })?.availableReplicas ?? 0}
-                  </p>
-                )}
-                {activeTab === 'ingresses' && (
-                  <>
-                    <p className="text-xs text-gray-500">
-                      Hosts: {ingressHosts.length > 0 ? ingressHosts.join(', ') : 'N/A'}
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      Paths: {ingressPaths.length > 0 ? ingressPaths.join(', ') : 'N/A'}
-                    </p>
-                  </>
-                )}
-                {activeTab === 'cronjobs' && (
-                  <>
-                    <p className="text-xs text-gray-500">Schedule: {cronSchedule}</p>
-                    <p className="text-xs text-gray-500">Last schedule: {lastSchedule}</p>
-                    <p className="text-xs text-gray-500">
-                      Status: {isSuspended ? 'Disabled' : 'Enabled'}
-                    </p>
-                  </>
-                )}
+                  {activeTab === 'pods' && (
+                    <div className="flex items-center gap-1.5">
+                      <RefreshCw size={11} className="text-slate-400 dark:text-slate-500" />
+                      <span>Restarts: <span className="font-medium text-slate-700 dark:text-slate-200">{restartCount}</span></span>
+                    </div>
+                  )}
+                  {activeTab === 'deployments' && (
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="rounded-md bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-slate-700 dark:text-slate-200">
+                        desired {desiredReplicas}
+                      </span>
+                      <span className="rounded-md bg-emerald-50 px-1.5 py-0.5 font-mono text-[10px] text-emerald-700 ring-1 ring-inset ring-emerald-200">
+                        ready {readyReplicas}
+                      </span>
+                      <span className="rounded-md bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-slate-700 dark:text-slate-200">
+                        available {(item.status as { availableReplicas?: number })?.availableReplicas ?? 0}
+                      </span>
+                    </div>
+                  )}
+                  {activeTab === 'ingresses' && (
+                    <>
+                      <div className="truncate">
+                        <span className="text-slate-400 dark:text-slate-500">Hosts:</span>{' '}
+                        <span className="font-mono text-slate-700 dark:text-slate-200">
+                          {ingressHosts.length > 0 ? ingressHosts.join(', ') : 'N/A'}
+                        </span>
+                      </div>
+                      <div className="truncate">
+                        <span className="text-slate-400 dark:text-slate-500">Paths:</span>{' '}
+                        <span className="font-mono text-slate-700 dark:text-slate-200">
+                          {ingressPaths.length > 0 ? ingressPaths.join(', ') : 'N/A'}
+                        </span>
+                      </div>
+                    </>
+                  )}
+                  {activeTab === 'cronjobs' && (
+                    <>
+                      <div>
+                        <span className="text-slate-400 dark:text-slate-500">Schedule:</span>{' '}
+                        <span className="font-mono text-slate-700 dark:text-slate-200">{cronSchedule}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 dark:text-slate-500">Last run:</span>{' '}
+                        <span className="font-mono text-slate-700 dark:text-slate-200">{lastSchedule}</span>
+                      </div>
+                    </>
+                  )}
+                </div>
 
-                <div className="mt-3 flex flex-wrap gap-2">
+                <div className="mt-auto flex flex-wrap gap-2 pt-1">
                   {activeTab === 'pods' && (
                     <>
                       <Button
@@ -486,6 +846,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                         size="sm"
                         onClick={() => openLogModal(selectedNamespace ?? '', name)}
                       >
+                        <Terminal size={13} />
                         Logs
                       </Button>
                       <Button
@@ -493,8 +854,28 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                         size="sm"
                         onClick={() => openEventsModal('pods', selectedNamespace ?? '', name)}
                       >
+                        <Activity size={13} />
                         Events
                       </Button>
+                      {canExecPods && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            const containers = (
+                              (item.spec as {
+                                containers?: Array<{ name?: string }>;
+                              })?.containers ?? []
+                            )
+                              .map((c) => c.name)
+                              .filter(Boolean) as string[];
+                            setExecTarget({ name, containers });
+                          }}
+                        >
+                          <Terminal size={13} />
+                          Shell
+                        </Button>
+                      )}
                     </>
                   )}
                   {activeTab === 'deployments' && (
@@ -504,7 +885,16 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                         size="sm"
                         onClick={() => openYamlModal('deployments', selectedNamespace ?? '', name)}
                       >
+                        <FileCode2 size={13} />
                         YAML
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openDeploymentLogs(selectedNamespace ?? '', name)}
+                      >
+                        <Terminal size={13} />
+                        Logs
                       </Button>
                       <Button
                         variant="outline"
@@ -513,8 +903,34 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                           openEventsModal('deployments', selectedNamespace ?? '', name)
                         }
                       >
+                        <Activity size={13} />
                         Events
                       </Button>
+                      {canScaleDeployments && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setScaleTarget({ name, current: desiredReplicas });
+                            setScaleReplicas(desiredReplicas);
+                            setActionError(null);
+                          }}
+                        >
+                          <Scaling size={13} />
+                          Scale
+                        </Button>
+                      )}
+                      {canRestartDeployments && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={actionBusy === `restart:${name}`}
+                          onClick={() => setRestartTarget(name)}
+                        >
+                          <RotateCcw size={13} />
+                          {actionBusy === `restart:${name}` ? 'Restarting…' : 'Restart'}
+                        </Button>
+                      )}
                     </>
                   )}
                   {activeTab === 'services' && (
@@ -523,6 +939,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                       size="sm"
                       onClick={() => openYamlModal('services', selectedNamespace ?? '', name)}
                     >
+                      <FileCode2 size={13} />
                       YAML
                     </Button>
                   )}
@@ -532,6 +949,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                       size="sm"
                       onClick={() => openYamlModal('ingresses', selectedNamespace ?? '', name)}
                     >
+                      <FileCode2 size={13} />
                       YAML
                     </Button>
                   )}
@@ -542,6 +960,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                         size="sm"
                         onClick={() => openConfigMapDataModal(selectedNamespace ?? '', name)}
                       >
+                        <FileText size={13} />
                         Data
                       </Button>
                       <Button
@@ -549,6 +968,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                         size="sm"
                         onClick={() => openYamlModal('configmaps', selectedNamespace ?? '', name)}
                       >
+                        <FileCode2 size={13} />
                         YAML
                       </Button>
                     </>
@@ -559,6 +979,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                       size="sm"
                       onClick={() => openYamlModal('cronjobs', selectedNamespace ?? '', name)}
                     >
+                      <FileCode2 size={13} />
                       YAML
                     </Button>
                   )}
@@ -577,18 +998,25 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
         onKeyDown={handleModalSelectAll}
         footer={
           <>
-            {modalTitle.startsWith('Pod Logs') ? (
+            {modalTitle.startsWith('Pod Logs') || modalTitle.startsWith('Deployment Logs') ? (
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() =>
-                  connectLogs(selectedNamespace ?? '', modalTitle.split(' - ')[1] ?? '')
-                }
+                onClick={() => {
+                  const name = modalTitle.split(' - ')[1] ?? '';
+                  if (modalTitle.startsWith('Deployment Logs')) {
+                    openDeploymentLogs(selectedNamespace ?? '', name);
+                  } else {
+                    connectLogs(selectedNamespace ?? '', name);
+                  }
+                }}
               >
+                <RefreshCw size={14} />
                 Reconnect
               </Button>
             ) : (
               <Button variant="outline" size="sm" onClick={refreshModal}>
+                <RefreshCw size={14} />
                 Refresh
               </Button>
             )}
@@ -604,28 +1032,26 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
           </div>
         ) : (
           <div className="flex h-full flex-col gap-3">
-            {modalTitle.startsWith('Pod Logs') && (
-              <div className="flex flex-wrap items-center gap-4">
+            {(modalTitle.startsWith('Pod Logs') || modalTitle.startsWith('Deployment Logs')) && (
+              <div className="flex flex-wrap items-center gap-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 px-3 py-2">
                 <Toggle
                   checked={!logPaused}
                   onChange={(v) => setLogPaused(!v)}
                   label={logPaused ? 'Paused' : 'Live'}
                 />
-                <Toggle
-                  checked={autoScroll}
-                  onChange={setAutoScroll}
-                  label="Auto-scroll"
-                />
-                <Toggle
-                  checked={wordWrap}
-                  onChange={setWordWrap}
-                  label="Word wrap"
-                />
+                <Toggle checked={autoScroll} onChange={setAutoScroll} label="Auto-scroll" />
+                <Toggle checked={wordWrap} onChange={setWordWrap} label="Word wrap" />
+                {!logPaused && (
+                  <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] text-emerald-600">
+                    <span className="h-1.5 w-1.5 animate-live rounded-full bg-emerald-500" />
+                    Streaming
+                  </span>
+                )}
               </div>
             )}
             <pre
               ref={logContainerRef}
-              className="flex-1 overflow-auto rounded-lg bg-gray-950 p-4 font-mono text-xs leading-5 text-gray-100"
+              className="flex-1 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-4 font-mono text-xs leading-5 text-slate-100 shadow-inner"
               style={{ whiteSpace: wordWrap ? 'pre-wrap' : 'pre' }}
             >
               {modalContent || 'No data'}
@@ -633,6 +1059,178 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
           </div>
         )}
       </Modal>
+
+      {/* ── Restart confirm modal ─────────────────────────────────── */}
+      {restartTarget && (
+        <Modal
+          open={restartTarget !== null}
+          onClose={() => (actionBusy ? undefined : setRestartTarget(null))}
+          title={`Restart deployment · ${restartTarget}`}
+          size="sm"
+          footer={
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setRestartTarget(null)}
+                disabled={actionBusy !== null}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={actionBusy !== null}
+                onClick={async () => {
+                  if (!selectedNamespace || !restartTarget) return;
+                  const name = restartTarget;
+                  setActionBusy(`restart:${name}`);
+                  setActionError(null);
+                  try {
+                    await restartDeployment(selectedNamespace, name);
+                    showActionNotice(`Restart triggered for ${name}.`);
+                    setRestartTarget(null);
+                    await loadResources();
+                  } catch (err) {
+                    setActionError((err as Error).message || 'Restart failed.');
+                  } finally {
+                    setActionBusy(null);
+                  }
+                }}
+              >
+                {actionBusy ? 'Restarting…' : 'Restart'}
+              </Button>
+            </>
+          }
+        >
+          <p className="text-sm text-slate-700 dark:text-slate-200">
+            This triggers a rolling restart. All pods managed by this deployment are
+            replaced one at a time while service remains available.
+          </p>
+        </Modal>
+      )}
+
+      {/* ── Pod exec (shell) modal ─────────────────────────────────── */}
+      <PodExecModal
+        open={execTarget !== null}
+        onClose={() => setExecTarget(null)}
+        namespace={selectedNamespace ?? ''}
+        pod={execTarget?.name ?? ''}
+        containers={execTarget?.containers ?? []}
+      />
+
+      {/* ── Scale modal ───────────────────────────────────────────── */}
+      {scaleTarget && (
+        <Modal
+          open={scaleTarget !== null}
+          onClose={() => (scaleBusy ? undefined : setScaleTarget(null))}
+          title={`Scale · ${scaleTarget.name}`}
+          size="sm"
+          footer={
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setScaleTarget(null)}
+                disabled={scaleBusy}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={scaleBusy || scaleReplicas === scaleTarget.current}
+                onClick={async () => {
+                  if (!selectedNamespace || !scaleTarget) return;
+                  setScaleBusy(true);
+                  setActionError(null);
+                  try {
+                    await scaleDeployment(selectedNamespace, scaleTarget.name, scaleReplicas);
+                    showActionNotice(
+                      `Scaled ${scaleTarget.name}: ${scaleTarget.current} → ${scaleReplicas} replicas.`
+                    );
+                    setScaleTarget(null);
+                    await loadResources();
+                  } catch (err) {
+                    setActionError((err as Error).message || 'Scale failed.');
+                  } finally {
+                    setScaleBusy(false);
+                  }
+                }}
+              >
+                {scaleBusy ? 'Applying…' : 'Apply'}
+              </Button>
+            </>
+          }
+        >
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center justify-between gap-4 rounded-lg bg-slate-50 dark:bg-slate-800/40 px-3 py-2">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                  Current
+                </p>
+                <p className="font-mono text-lg font-semibold text-slate-900 dark:text-slate-100">
+                  {scaleTarget.current}
+                </p>
+              </div>
+              <span className="text-slate-400">→</span>
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-brand-600 dark:text-brand-300">
+                  Target
+                </p>
+                <div className="mt-0.5 flex items-center gap-1.5">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setScaleReplicas(Math.max(0, scaleReplicas - 1))}
+                  >
+                    <Minus size={12} />
+                  </Button>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={scaleReplicas}
+                    onChange={(e) =>
+                      setScaleReplicas(Math.max(0, Math.min(100, Number(e.target.value) || 0)))
+                    }
+                    onKeyDown={(e) => {
+                      // Shift+↑/↓ jumps by 10 for faster scaling in large deployments.
+                      if (!e.shiftKey) return;
+                      if (e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        setScaleReplicas((v) => Math.min(100, v + 10));
+                      } else if (e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        setScaleReplicas((v) => Math.max(0, v - 10));
+                      }
+                    }}
+                    className="w-16 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-center font-mono text-base font-semibold focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/15 dark:text-slate-100"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setScaleReplicas(Math.min(100, scaleReplicas + 1))}
+                  >
+                    <Plus size={12} />
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            {scaleReplicas === 0 && (
+              <Alert severity="warning">
+                Scaling to <strong>0</strong> stops all pods — the deployment goes offline.
+              </Alert>
+            )}
+            {scaleReplicas > scaleTarget.current + 5 && (
+              <Alert severity="info">
+                Large step: {scaleTarget.current} → {scaleReplicas}.
+              </Alert>
+            )}
+          </div>
+        </Modal>
+      )}
     </Layout>
   );
 };

@@ -4,13 +4,19 @@ Modern, production-ready Kubernetes visibility dashboard with strict application
 
 ## Highlights
 
-- **Read-only Kubernetes visibility** (Pods, Deployments, Services, ConfigMaps)
+- **Light / Dark / System theme** (user preference persisted; respects OS)
+- **⌘K / Ctrl+K command palette** (quick nav + namespace jump + theme switch)
+- **Prometheus `/metrics`**, dedicated `/livez` and `/readyz` endpoints
+- **Login brute-force protection** (5 fails per IP+user → 5-minute lock, audited)
+- **Security headers** including a strict CSP, `X-Frame-Options`, `Permissions-Policy`
+- **Kubernetes visibility** (Pods, Deployments, Services, ConfigMaps, Ingresses, CronJobs)
 - **Application-level RBAC**: user → groups → roles → per-namespace permissions
 - **Namespace discovery is permission-based** (no leakage)
 - **JWT authentication** with forced password change on first login
 - **Local users** (bcrypt) + **LDAP auth** (bind-based) + **Azure AD login** configurable via UI
 - **Audit logs** with pagination, filters, and CSV export
 - **WebSocket pod log streaming** with rate limiting
+- **Multi-cluster support** — save N clusters, switch via header, migration-safe
 - **Cluster connection management via UI only** (kubeconfig or token)
 - **Modern React + TypeScript UI**
 
@@ -63,14 +69,37 @@ kubectl apply -f deploy/service.yaml
 
 ## Environment Variables
 
-- `LOG_RETENTION_DAYS` (default: 30)  
-  Audit log retention in days (purged automatically). Set directly in `deploy/deployment.yaml`.
-- `TIMEZONE` (default: UTC)  
-  Used for audit log timestamps.
-- `DATA_PATH` (default: `/data/app.db`)  
-  SQLite DB location.
-- `STATIC_DIR` (default: `/app/public`)  
-  Served React build output.
+### Core
+- `LOG_RETENTION_DAYS` (default: 30) — Audit log retention in days (purged automatically).
+- `TIMEZONE` (default: UTC) — Used for audit log timestamps.
+- `DATA_PATH` (default: `/data/app.db`) — SQLite DB location.
+- `STATIC_DIR` (default: `/app/public`) — Served React build output.
+
+### Structured logging (slog)
+Logs go to stdout via Go's `log/slog`. In production set `LOG_FORMAT=json` so
+Filebeat / Fluent Bit / Vector can ship them straight to Elastic/Kibana or Loki.
+
+- `LOG_LEVEL` (default: `info`) — `debug` | `info` | `warn` | `error`
+- `LOG_FORMAT` (default: `text`) — `text` for humans, `json` for log shippers
+- `LOG_OUTPUT` (default: `stdout`) — `stdout` | `stderr`
+- `LOG_ADD_SOURCE` (default: `false`) — include `file:line` in every record
+- `LOG_INCLUDE_AUDIT` (default: `true`) — mirror DB audit entries to console
+  with event name `audit`, so you get the same records twice: durable in SQLite,
+  streamable to your log pipeline
+- `APP_ENV` (optional) — label attached to every log record (`env=prod`)
+- `APP_VERSION` (optional) — label attached to every log record (`version=1.0.7`)
+
+Example JSON record (`LOG_FORMAT=json`):
+
+```json
+{"time":"2026-10-01T10:12:33Z","level":"INFO","msg":"http.request",
+ "service":"openconsole","method":"GET","path":"/api/namespaces",
+ "status":200,"duration_ms":12,"remote_ip":"10.0.0.4",
+ "request_id":"q7Jk8-ab0t","user_agent":"curl/8.4.0"}
+```
+
+Each response carries an `X-Request-Id` header matching the `request_id` field,
+so request logs, audit events and the client can be correlated end-to-end.
 
 ---
 
@@ -100,7 +129,7 @@ Below is the recommended setup using a dedicated ServiceAccount in the `kubernet
 > For production environments it is strongly recommended to:
 >
 > - Create a dedicated ServiceAccount
-> - Assign a minimal read-only ClusterRole
+> - Assign a minimally-scoped ClusterRole (least-privilege for the actions you intend to grant through OpenConsole)
 > - Avoid granting permissions to the default ServiceAccount
 >
 > This reduces blast radius and aligns with least-privilege principles.
@@ -138,10 +167,20 @@ rules:
       - pods/log
     verbs: ["get"]
 
+  - apiGroups: [""]
+    resources:
+      - pods/exec
+    verbs: ["create"]  # required for the Pod Shell (pods:exec) action; omit if you do not grant that permission
+
   - apiGroups: ["apps"]
     resources:
       - deployments
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "patch"]  # patch required for rollout restart
+
+  - apiGroups: ["apps"]
+    resources:
+      - deployments/scale
+    verbs: ["get", "update"]  # required for the Scale action
 
   - apiGroups: ["networking.k8s.io"]
     resources:
@@ -221,14 +260,56 @@ current-context: openconsole-context
 ...
 ```
 
+# Pod Shell (exec)
+
+Interactive shell into a running container, gated by application permission
+`pods:exec`. Off by default on every role; admins opt in per role, per namespace.
+
+- `GET /ws/clusters/default/namespaces/{ns}/pods/{name}/exec?container=<c>&command=/bin/sh`
+  (WebSocket; binary stdin / combined stdout, JSON control frames for terminal resize).
+- Session UI uses xterm.js, remembers theme, supports container picker on
+  multi-container pods and shell picker (`/bin/sh`, `/bin/bash`, `/bin/ash`).
+- Idle timeout: **5 minutes** without stdin automatically closes the session.
+- Each session logs `pod.exec.start` and `pod.exec.end` (with duration and
+  outcome) to both the audit DB and the structured console log.
+- ClusterRole must grant `pods/exec: create` for this to work.
+
+Security notes:
+- Exec is the highest-risk action in OpenConsole; grant it narrowly.
+- Non-root pod admission policies in your cluster still apply.
+- Session recording of stdout is deferred to a later milestone; command events
+  (start/end) are already captured.
+
+# Deployment Write Actions (restart, scale)
+
+OpenConsole can **restart** (rolling restart) and **scale** Deployments when the
+caller has been granted the matching application-level permissions:
+
+- `deployments:restart` → `POST /api/namespaces/{ns}/deployments/{name}/restart`
+- `deployments:scale`   → `POST /api/namespaces/{ns}/deployments/{name}/scale`
+  with body `{"replicas": <int>}`
+
+Both actions are **off by default** on every role — admins opt in explicitly in
+*Admin → Roles → Role Permissions*, per role and per namespace.
+
+- Every call records an audit entry — success, denied, failed, and rate_limited
+  outcomes are all captured.
+- Per-user rate limit: 5 burst, 1 token every 6s. 429 with `Retry-After` when exceeded.
+- Scale accepts replicas between 0 and `MAX_REPLICAS` (env, default 100).
+- The ServiceAccount's ClusterRole must grant `apps.deployments: patch` and
+  `apps.deployments/scale: get,update` (see the ClusterRole example above).
+
+Request/audit correlation: every HTTP response carries `X-Request-Id`; the same
+id appears in the structured request log, the deployment.action log, and the
+audit entry.
+
 # Security Notes
 
-- This ServiceAccount is **read-only**
-- It cannot:
-  - exec into pods
-  - port-forward
-  - read secrets
-  - modify resources
+- Grant each verb (patch, update on scale, pods/exec, pods/log) only if the
+  matching application permission is also handed to at least one role.
+- OpenConsole's ServiceAccount should never be granted more than the actions
+  the UI will expose; secrets access and port-forward are intentionally not
+  used by the app.
 - Token rotation is recommended (every 6–12 months)
 - Do not store generated tokens in Git
 - Prefer one ServiceAccount per cluster

@@ -1,4 +1,5 @@
-import React, { useEffect, useId, useRef, useState } from 'react';
+import React, { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Check, ChevronDown, Search, X } from 'lucide-react';
 
 // ─── Button ─────────────────────────────────────────────────────────────────
@@ -12,17 +13,22 @@ interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const VARIANT_CLS: Record<ButtonVariant, string> = {
-  primary: 'bg-blue-600 text-white hover:bg-blue-700 border-transparent',
-  secondary: 'bg-slate-100 text-slate-700 hover:bg-slate-200 border-transparent',
-  outline: 'bg-white text-slate-700 border-gray-300 hover:bg-gray-50',
-  ghost: 'bg-transparent text-slate-600 border-transparent hover:bg-slate-100',
-  danger: 'bg-transparent text-red-600 border-transparent hover:bg-red-50',
+  primary:
+    'bg-gradient-to-b from-brand-500 to-brand-600 text-white border-transparent shadow-[0_1px_0_rgba(255,255,255,0.18)_inset,0_1px_2px_rgba(79,70,229,0.35)] hover:from-brand-500 hover:to-brand-700 active:from-brand-600 active:to-brand-700',
+  secondary:
+    'bg-slate-100 text-slate-800 hover:bg-slate-200 border-transparent dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700',
+  outline:
+    'bg-white text-slate-700 border-slate-300 hover:bg-slate-50 hover:border-slate-400 dark:bg-slate-900 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-800/60 dark:hover:border-slate-600',
+  ghost:
+    'bg-transparent text-slate-600 border-transparent hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100',
+  danger:
+    'bg-white text-rose-600 border-rose-200 hover:bg-rose-50 hover:border-rose-300 dark:bg-slate-900 dark:text-rose-300 dark:border-rose-500/30 dark:hover:bg-rose-500/10',
 };
 
 const SIZE_CLS: Record<ButtonSize, string> = {
-  sm: 'px-3 py-1.5 text-xs',
-  md: 'px-4 py-2 text-sm',
-  lg: 'px-5 py-2.5 text-sm',
+  sm: 'px-3 py-1.5 text-xs h-8',
+  md: 'px-4 py-2 text-sm h-9',
+  lg: 'px-5 py-2.5 text-sm h-10',
 };
 
 export const Button: React.FC<ButtonProps> = ({
@@ -34,7 +40,7 @@ export const Button: React.FC<ButtonProps> = ({
 }) => (
   <button
     {...props}
-    className={`inline-flex items-center justify-center gap-1.5 rounded-lg border font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50 ${VARIANT_CLS[variant]} ${SIZE_CLS[size]} ${className}`}
+    className={`inline-flex cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border font-medium transition-all duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:opacity-50 ${VARIANT_CLS[variant]} ${SIZE_CLS[size]} ${className}`}
   >
     {children}
   </button>
@@ -51,18 +57,20 @@ export const Input: React.FC<InputProps> = ({ label, error, className = '', id, 
   const autoId = useId();
   const inputId = id ?? autoId;
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-1.5">
       {label && (
-        <label htmlFor={inputId} className="text-sm font-medium text-gray-700">
+        <label htmlFor={inputId} className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
           {label}
         </label>
       )}
       <input
         id={inputId}
         {...props}
-        className={`block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 disabled:bg-gray-50 disabled:text-gray-500 ${error ? 'border-red-400' : ''} ${className}`}
+        className={`block w-full rounded-lg border px-3 py-2 text-sm shadow-sm transition-colors border-slate-300 bg-white text-slate-900 placeholder:text-slate-400 hover:border-slate-400 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/15 disabled:bg-slate-50 disabled:text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500 dark:hover:border-slate-600 dark:disabled:bg-slate-900/60 dark:disabled:text-slate-500 ${
+          error ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500/15' : ''
+        } ${className}`}
       />
-      {error && <p className="text-xs text-red-500">{error}</p>}
+      {error && <p className="text-xs text-rose-500">{error}</p>}
     </div>
   );
 };
@@ -78,14 +86,20 @@ interface AlertProps {
 }
 
 const ALERT_CLS: Record<AlertSeverity, string> = {
-  error: 'bg-red-50 border-red-200 text-red-800',
-  warning: 'bg-amber-50 border-amber-200 text-amber-800',
-  success: 'bg-green-50 border-green-200 text-green-800',
-  info: 'bg-blue-50 border-blue-200 text-blue-800',
+  error:
+    'bg-rose-50/70 border-rose-200 text-rose-800 ring-rose-500/5 dark:bg-rose-500/10 dark:border-rose-500/30 dark:text-rose-200',
+  warning:
+    'bg-amber-50/80 border-amber-200 text-amber-900 ring-amber-500/5 dark:bg-amber-500/10 dark:border-amber-500/30 dark:text-amber-200',
+  success:
+    'bg-emerald-50/80 border-emerald-200 text-emerald-800 ring-emerald-500/5 dark:bg-emerald-500/10 dark:border-emerald-500/30 dark:text-emerald-200',
+  info:
+    'bg-brand-50/80 border-brand-200 text-brand-800 ring-brand-500/5 dark:bg-brand-500/10 dark:border-brand-500/30 dark:text-brand-200',
 };
 
 export const Alert: React.FC<AlertProps> = ({ severity, children, className = '' }) => (
-  <div className={`rounded-lg border px-4 py-3 text-sm ${ALERT_CLS[severity]} ${className}`}>
+  <div
+    className={`rounded-xl border px-4 py-3 text-sm shadow-sm ring-1 ${ALERT_CLS[severity]} ${className}`}
+  >
     {children}
   </div>
 );
@@ -101,15 +115,22 @@ interface BadgeProps {
 }
 
 const BADGE_CLS: Record<BadgeVariant, string> = {
-  default: 'bg-gray-100 text-gray-700',
-  success: 'bg-green-100 text-green-700',
-  warning: 'bg-amber-100 text-amber-700',
-  error: 'bg-red-100 text-red-700',
-  info: 'bg-blue-100 text-blue-700',
+  default:
+    'bg-slate-100 text-slate-700 ring-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700',
+  success:
+    'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-200 dark:ring-emerald-500/30',
+  warning:
+    'bg-amber-50 text-amber-800 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-200 dark:ring-amber-500/30',
+  error:
+    'bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-500/15 dark:text-rose-200 dark:ring-rose-500/30',
+  info:
+    'bg-brand-50 text-brand-700 ring-brand-200 dark:bg-brand-500/15 dark:text-brand-200 dark:ring-brand-500/30',
 };
 
 export const Badge: React.FC<BadgeProps> = ({ variant = 'default', children, className = '' }) => (
-  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${BADGE_CLS[variant]} ${className}`}>
+  <span
+    className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${BADGE_CLS[variant]} ${className}`}
+  >
     {children}
   </span>
 );
@@ -125,7 +146,7 @@ const SPINNER_SIZE: Record<string, string> = { sm: 'h-4 w-4', md: 'h-6 w-6', lg:
 
 export const Spinner: React.FC<SpinnerProps> = ({ size = 'md', className = '' }) => (
   <div
-    className={`inline-block animate-spin rounded-full border-2 border-current border-t-transparent text-blue-600 ${SPINNER_SIZE[size]} ${className}`}
+    className={`inline-block animate-spin rounded-full border-2 border-current border-t-transparent text-brand-600 dark:text-brand-300 ${SPINNER_SIZE[size]} ${className}`}
     role="status"
     aria-label="Loading"
   />
@@ -154,9 +175,9 @@ export const Checkbox: React.FC<CheckboxProps> = ({ checked, onChange, label, di
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
         disabled={disabled}
-        className="h-4 w-4 cursor-pointer rounded border-gray-300 accent-blue-600 focus:ring-blue-500"
+        className="h-4 w-4 cursor-pointer rounded border-slate-300 dark:border-slate-700 accent-brand-600 focus:ring-brand-500"
       />
-      {label && <span className="text-sm text-gray-700">{label}</span>}
+      {label && <span className="text-sm text-slate-700 dark:text-slate-200">{label}</span>}
     </label>
   );
 };
@@ -182,12 +203,18 @@ export const Toggle: React.FC<ToggleProps> = ({ checked, onChange, label, classN
           onChange={(e) => onChange(e.target.checked)}
           className="sr-only"
         />
-        <div className={`h-5 w-9 rounded-full transition-colors ${checked ? 'bg-blue-600' : 'bg-gray-300'}`} />
         <div
-          className={`absolute top-[3px] h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-[19px]' : 'translate-x-[3px]'}`}
+          className={`h-5 w-9 rounded-full transition-colors duration-200 ${
+            checked ? 'bg-brand-600' : 'bg-slate-300'
+          }`}
+        />
+        <div
+          className={`absolute top-[3px] h-3.5 w-3.5 rounded-full bg-white dark:bg-slate-900 shadow transition-transform duration-200 ${
+            checked ? 'translate-x-[19px]' : 'translate-x-[3px]'
+          }`}
         />
       </div>
-      {label && <span className="text-sm text-gray-700">{label}</span>}
+      {label && <span className="text-sm text-slate-700 dark:text-slate-200">{label}</span>}
     </label>
   );
 };
@@ -203,16 +230,16 @@ export const NativeSelect: React.FC<NativeSelectProps> = ({ label, className = '
   const autoId = useId();
   const selectId = id ?? autoId;
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-1.5">
       {label && (
-        <label htmlFor={selectId} className="text-sm font-medium text-gray-700">
+        <label htmlFor={selectId} className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
           {label}
         </label>
       )}
       <select
         id={selectId}
         {...props}
-        className={`block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 ${className}`}
+        className={`block w-full cursor-pointer rounded-lg border px-3 py-2 text-sm shadow-sm transition-colors border-slate-300 bg-white text-slate-900 hover:border-slate-400 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/15 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-slate-600 ${className}`}
       >
         {children}
       </select>
@@ -269,20 +296,20 @@ export const ChipInput: React.FC<ChipInputProps> = ({
   );
 
   return (
-    <div className={`flex flex-col gap-1 ${className}`}>
+    <div className={`flex flex-col gap-1.5 ${className}`}>
       {label && (
-        <label htmlFor={id} className="text-sm font-medium text-gray-700">
+        <label htmlFor={id} className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
           {label}
         </label>
       )}
       <div
-        className="relative flex min-h-[38px] cursor-text flex-wrap items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-2 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20"
+        className="relative flex min-h-[40px] cursor-text flex-wrap items-center gap-1.5 rounded-lg border px-3 py-2 shadow-sm transition-colors border-slate-300 bg-white hover:border-slate-400 focus-within:border-brand-500 focus-within:ring-4 focus-within:ring-brand-500/15 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600"
         onClick={() => inputRef.current?.focus()}
       >
         {value.map((chip) => (
           <span
             key={chip}
-            className="inline-flex items-center gap-1 rounded bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800"
+            className="inline-flex items-center gap-1 rounded-md bg-brand-50 dark:bg-brand-500/15 px-2 py-0.5 text-xs font-medium text-brand-700 dark:text-brand-200 ring-1 ring-inset ring-brand-200 dark:ring-brand-500/30"
           >
             {chip}
             <button
@@ -291,7 +318,7 @@ export const ChipInput: React.FC<ChipInputProps> = ({
                 e.stopPropagation();
                 removeChip(chip);
               }}
-              className="text-blue-500 hover:text-blue-800 focus:outline-none"
+              className="rounded-sm text-brand-500 transition-colors hover:text-brand-800 focus:outline-none"
             >
               <X size={10} />
             </button>
@@ -309,10 +336,10 @@ export const ChipInput: React.FC<ChipInputProps> = ({
           onFocus={() => setShowSuggestions(true)}
           onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
           placeholder={value.length === 0 ? placeholder : ''}
-          className="min-w-[120px] flex-1 border-0 bg-transparent text-sm text-gray-900 outline-none placeholder:text-gray-400"
+          className="min-w-[120px] flex-1 border-0 bg-transparent text-sm outline-none text-slate-900 placeholder:text-slate-400 dark:text-slate-100 dark:placeholder:text-slate-500"
         />
         {showSuggestions && filtered.length > 0 && (
-          <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-48 overflow-auto rounded-lg border border-gray-200 bg-white shadow-lg">
+          <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-48 animate-slide-up overflow-auto rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-elevated">
             {filtered.map((s) => (
               <button
                 key={s}
@@ -321,7 +348,7 @@ export const ChipInput: React.FC<ChipInputProps> = ({
                   e.preventDefault();
                   addChip(s);
                 }}
-                className="flex w-full items-center px-3 py-2 text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-700"
+                className="flex w-full items-center px-3 py-2 text-sm text-slate-700 dark:text-slate-200 transition-colors hover:bg-brand-50 dark:bg-brand-500/15 hover:text-brand-700 dark:text-brand-200"
               >
                 {s}
               </button>
@@ -362,14 +389,36 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number; width: number } | null>(null);
   const id = useId();
+
+  // Portal the dropdown to document.body so it escapes any ancestor with
+  // overflow:hidden (table rows, cards, drawers). Measure the trigger button
+  // in viewport coords on every open/resize/scroll.
+  useLayoutEffect(() => {
+    if (!open || !buttonRef.current) return;
+    const update = () => {
+      const rect = buttonRef.current!.getBoundingClientRect();
+      setMenuPos({ top: rect.bottom + 4, left: rect.left, width: rect.width });
+    };
+    update();
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => {
+      window.removeEventListener('resize', update);
+      window.removeEventListener('scroll', update, true);
+    };
+  }, [open]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-        setSearch('');
-      }
+      const target = e.target as Node;
+      if (containerRef.current?.contains(target)) return;
+      if (menuRef.current?.contains(target)) return;
+      setOpen(false);
+      setSearch('');
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
@@ -390,25 +439,26 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
   };
 
   return (
-    <div ref={containerRef} className={`relative flex flex-col gap-1 ${className}`}>
+    <div ref={containerRef} className={`relative flex flex-col gap-1.5 ${className}`}>
       {label && (
-        <label htmlFor={id} className="text-sm font-medium text-gray-700">
+        <label htmlFor={id} className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
           {label}
         </label>
       )}
       <button
+        ref={buttonRef}
         id={id}
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex min-h-[38px] w-full flex-wrap items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-2 text-left text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+        className="flex min-h-[40px] w-full cursor-pointer flex-wrap items-center gap-1.5 rounded-lg border px-3 py-2 text-left text-sm shadow-sm transition-colors border-slate-300 bg-white text-slate-900 hover:border-slate-400 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/15 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-slate-600"
       >
         {value.length === 0 ? (
-          <span className="flex-1 text-gray-400">{placeholder}</span>
+          <span className="flex-1 text-slate-400 dark:text-slate-500">{placeholder}</span>
         ) : (
           value.map((v) => (
             <span
               key={v.id}
-              className="inline-flex items-center gap-1 rounded bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800"
+              className="inline-flex items-center gap-1 rounded-md bg-brand-50 dark:bg-brand-500/15 px-2 py-0.5 text-xs font-medium text-brand-700 dark:text-brand-200 ring-1 ring-inset ring-brand-200 dark:ring-brand-500/30"
             >
               {v.label}
               <button
@@ -417,44 +467,50 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
                   e.stopPropagation();
                   onChange(value.filter((item) => item.id !== v.id));
                 }}
-                className="text-blue-500 hover:text-blue-800"
+                className="rounded-sm text-brand-500 hover:text-brand-800"
               >
                 <X size={10} />
               </button>
             </span>
           ))
         )}
-        <ChevronDown size={14} className="ml-auto shrink-0 text-gray-400" />
+        <ChevronDown size={14} className="ml-auto shrink-0 text-slate-400 dark:text-slate-500" />
       </button>
 
-      {open && (
-        <div className="absolute left-0 right-0 top-full z-50 mt-1 rounded-lg border border-gray-200 bg-white shadow-lg">
-          <div className="border-b border-gray-100 p-2">
+      {open && menuPos && createPortal(
+        <div
+          ref={menuRef}
+          className="fixed z-[1000] animate-slide-up rounded-xl border border-slate-200 bg-white shadow-elevated dark:border-slate-800 dark:bg-slate-900"
+          style={{ top: menuPos.top, left: menuPos.left, width: menuPos.width }}
+        >
+          <div className="border-b border-slate-100 p-2 dark:border-slate-800">
             <div className="relative">
-              <Search size={14} className="absolute left-2.5 top-2 text-gray-400" />
+              <Search size={14} className="absolute left-2.5 top-2 text-slate-400 dark:text-slate-500" />
               <input
                 autoFocus
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search..."
-                className="w-full rounded border border-gray-200 py-1.5 pl-7 pr-3 text-sm outline-none focus:border-blue-400"
+                className="w-full rounded-md border py-1.5 pl-7 pr-3 text-sm outline-none border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-brand-400 focus:ring-2 focus:ring-brand-500/15 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500"
               />
             </div>
           </div>
           <div className="max-h-48 overflow-auto">
             {filtered.length === 0 ? (
-              <p className="px-3 py-2 text-sm text-gray-400">{noOptionsText}</p>
+              <p className="px-3 py-2 text-sm text-slate-400 dark:text-slate-500">{noOptionsText}</p>
             ) : (
               filtered.map((opt) => (
                 <button
                   key={opt.id}
                   type="button"
                   onClick={() => toggle(opt)}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-blue-50"
+                  className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-sm text-slate-700 transition-colors hover:bg-brand-50 dark:text-slate-200 dark:hover:bg-brand-500/15"
                 >
                   <div
-                    className={`flex h-4 w-4 items-center justify-center rounded border ${
-                      isSelected(opt) ? 'border-blue-600 bg-blue-600' : 'border-gray-300'
+                    className={`flex h-4 w-4 items-center justify-center rounded border transition-colors ${
+                      isSelected(opt)
+                        ? 'border-brand-600 bg-brand-600'
+                        : 'border-slate-300 dark:border-slate-700'
                     }`}
                   >
                     {isSelected(opt) && <Check size={10} className="text-white" />}
@@ -464,7 +520,8 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
               ))
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
@@ -479,31 +536,89 @@ interface ModalProps {
   children: React.ReactNode;
   footer?: React.ReactNode;
   onKeyDown?: React.KeyboardEventHandler<HTMLDivElement>;
+  /** 'full' = 95vw × 95vh for data-dense content; 'md' / 'sm' for confirmations. */
+  size?: 'full' | 'md' | 'sm';
 }
 
-export const Modal: React.FC<ModalProps> = ({ open, onClose, title, children, footer, onKeyDown }) => {
+export const Modal: React.FC<ModalProps> = ({
+  open,
+  onClose,
+  title,
+  children,
+  footer,
+  onKeyDown,
+  size = 'full',
+}) => {
+  useEffect(() => {
+    if (!open) return;
+    // Register as the active modal scope so page shortcuts suspend.
+    // Lazy import avoids a circular dep with the hook file.
+    let push: (() => void) | undefined;
+    let pop: (() => void) | undefined;
+    import('../hooks/useScopedShortcuts').then((m) => {
+      push = m.pushModalScope;
+      pop = m.popModalScope;
+      push();
+    });
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => {
+      document.removeEventListener('keydown', handler);
+      if (pop) pop();
+    };
+  }, [open, onClose]);
+
   if (!open) return null;
+
+  // Non-full modals clamp to the viewport so long content (shortcuts list,
+  // long error, long YAML preview) scrolls inside the body instead of
+  // pushing header/footer off-screen. The outer wrapper already provides
+  // 1rem padding; we leave 2rem total headroom.
+  const dialogStyle: React.CSSProperties =
+    size === 'sm'
+      ? { width: 'min(26rem, 95vw)', maxHeight: 'calc(100vh - 2rem)' }
+      : size === 'md'
+      ? { width: 'min(40rem, 95vw)', maxHeight: 'calc(100vh - 2rem)' }
+      : { width: '95vw', height: '95vh' };
+  const bodyClass =
+    size === 'full'
+      ? 'flex-1 overflow-hidden p-4'
+      : 'flex-1 min-h-0 overflow-auto p-5';
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
+    <div className="fixed inset-0 z-50 flex animate-fade-in items-center justify-center p-4">
+      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
       <div
-        className="relative z-10 flex flex-col rounded-xl bg-white shadow-2xl"
-        style={{ width: '95vw', height: '95vh' }}
+        className="relative z-10 flex animate-slide-up flex-col overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-elevated"
+        style={dialogStyle}
         onKeyDown={onKeyDown}
         tabIndex={0}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
       >
-        <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
-          <h2 className="text-base font-semibold text-gray-900">{title}</h2>
+        <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 px-5 py-3">
+          <h2 className="text-sm font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+            {title}
+          </h2>
           <button
             onClick={onClose}
-            className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 focus:outline-none"
+            className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/60 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+            aria-label="Close"
           >
             <X size={18} />
           </button>
         </div>
-        <div className="flex-1 overflow-hidden p-4">{children}</div>
+        <div className={bodyClass}>{children}</div>
         {footer && (
-          <div className="flex justify-end gap-2 border-t border-gray-200 px-6 py-4">{footer}</div>
+          <div className="flex justify-end gap-2 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 px-5 py-3">
+            {footer}
+          </div>
         )}
       </div>
     </div>

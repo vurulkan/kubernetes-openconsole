@@ -125,6 +125,18 @@ func migrate(ctx context.Context, conn *sql.DB) error {
 			resource_type TEXT NOT NULL,
 			resource_name TEXT NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS clusters (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL UNIQUE,
+			description TEXT NOT NULL DEFAULT '',
+			method TEXT NOT NULL DEFAULT '',
+			kubeconfig_enc BLOB NOT NULL DEFAULT '',
+			token_enc BLOB NOT NULL DEFAULT '',
+			server TEXT NOT NULL DEFAULT '',
+			ca_cert_enc BLOB NOT NULL DEFAULT '',
+			is_active INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);`,
 	}
 
 	for _, stmt := range stmts {
@@ -141,6 +153,9 @@ func migrate(ctx context.Context, conn *sql.DB) error {
 	}
 
 	alterStatements := []string{
+		// Multi-cluster phase 2: scope each permission to a cluster. NULL means
+		// "all clusters" so pre-existing rows keep working unchanged.
+		`ALTER TABLE namespace_permissions ADD COLUMN cluster_id INTEGER NULL`,
 		`ALTER TABLE ldap_config ADD COLUMN host TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE ldap_config ADD COLUMN port INTEGER NOT NULL DEFAULT 389`,
 		`ALTER TABLE ldap_config ADD COLUMN use_ssl INTEGER NOT NULL DEFAULT 0`,
@@ -163,6 +178,30 @@ func migrate(ctx context.Context, conn *sql.DB) error {
 
 	if _, err := conn.ExecContext(ctx, `INSERT OR IGNORE INTO kube_credentials (id, active) VALUES (1, 0);`); err != nil {
 		return fmt.Errorf("seed kube credentials: %w", err)
+	}
+
+	// Multi-cluster migration: if someone had configured the legacy single
+	// kube_credentials row and no cluster rows exist, copy that row into a
+	// cluster called "default" so the switcher never comes up empty.
+	var hasClusters int
+	if err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM clusters`).Scan(&hasClusters); err != nil {
+		return fmt.Errorf("count clusters: %w", err)
+	}
+	if hasClusters == 0 {
+		var method, server string
+		var kubeconfig, token, ca []byte
+		var active int
+		err := conn.QueryRowContext(ctx,
+			`SELECT method, kubeconfig_enc, token_enc, server, ca_cert_enc, active FROM kube_credentials WHERE id = 1`,
+		).Scan(&method, &kubeconfig, &token, &server, &ca, &active)
+		if err == nil && (method != "" || active != 0) {
+			_, _ = conn.ExecContext(ctx,
+				`INSERT INTO clusters (name, description, method, kubeconfig_enc, token_enc, server, ca_cert_enc, is_active)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+				"default", "Migrated from legacy single-cluster config.",
+				method, kubeconfig, token, server, ca, 1,
+			)
+		}
 	}
 
 	return nil

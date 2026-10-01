@@ -13,10 +13,11 @@ import (
 )
 
 type Manager struct {
-	mu       sync.RWMutex
-	client   *kubernetes.Clientset
-	ready    bool
-	lastError string
+	mu         sync.RWMutex
+	client     *kubernetes.Clientset
+	restConfig *rest.Config
+	ready      bool
+	lastError  string
 }
 
 func NewManager() *Manager {
@@ -40,10 +41,23 @@ func (m *Manager) ApplyCredentials(creds models.KubeCredentials) error {
 	}
 
 	m.client = client
+	m.restConfig = config
 	m.ready = true
 	m.lastError = ""
 
 	return nil
+}
+
+// RESTConfig returns the underlying *rest.Config for low-level operations such
+// as SPDY exec/attach streams. The returned value is nil when no cluster is
+// configured.
+func (m *Manager) RESTConfig() (*rest.Config, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.restConfig == nil {
+		return nil, false
+	}
+	return m.restConfig, true
 }
 
 func (m *Manager) Start(ctx context.Context) error {
