@@ -527,6 +527,33 @@ export const exportAuditLogs = (
     `/api/admin/audit-logs/export?user=${encodeURIComponent(user)}&action=${encodeURIComponent(action)}&namespace=${encodeURIComponent(namespace)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`
   );
 
+export type SessionRow = {
+  id: number;
+  jti: string;
+  userId: number;
+  username: string;
+  issuedAt: string;
+  lastUsedAt: string;
+  expiresAt: string;
+  revokedAt?: string | null;
+  ip: string;
+  userAgent: string;
+};
+
+export const listSessions = (activeOnly: boolean, userId?: number) => {
+  const qs = new URLSearchParams();
+  if (activeOnly) qs.set('activeOnly', '1');
+  if (userId) qs.set('userId', String(userId));
+  const q = qs.toString();
+  return apiRequest<{ items: SessionRow[] }>(`/api/admin/sessions${q ? `?${q}` : ''}`);
+};
+
+export const revokeSession = (id: number) =>
+  apiRequest(`/api/admin/sessions/${id}`, { method: 'DELETE' });
+
+export const revokeAllSessionsForUser = (userId: number) =>
+  apiRequest(`/api/admin/users/${userId}/revoke-sessions`, { method: 'POST' });
+
 export const checkHealth = async () => {
   try {
     const response = await fetch('/healthz');

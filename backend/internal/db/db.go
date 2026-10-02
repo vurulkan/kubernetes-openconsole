@@ -137,6 +137,23 @@ func migrate(ctx context.Context, conn *sql.DB) error {
 			is_active INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);`,
+		// session_tokens tracks every JWT this backend has issued, keyed by the
+		// jti claim. AuthMiddleware looks up the row to enforce admin-driven
+		// revocation; the JWT itself is still the primary auth artifact so that
+		// a DB blip can only degrade revocation, not log everyone out.
+		`CREATE TABLE IF NOT EXISTS session_tokens (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			jti TEXT NOT NULL UNIQUE,
+			user_id INTEGER NOT NULL,
+			issued_at DATETIME NOT NULL,
+			last_used_at DATETIME NOT NULL,
+			expires_at DATETIME NOT NULL,
+			revoked_at DATETIME NULL,
+			ip TEXT NOT NULL DEFAULT '',
+			user_agent TEXT NOT NULL DEFAULT ''
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_session_tokens_user ON session_tokens (user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_session_tokens_expires ON session_tokens (expires_at)`,
 	}
 
 	for _, stmt := range stmts {

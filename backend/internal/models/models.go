@@ -86,3 +86,19 @@ type AuditLog struct {
 	ResourceType string    `json:"resourceType"`
 	ResourceName string    `json:"resourceName"`
 }
+
+// SessionTokenRow is one row from session_tokens with the owner's username
+// joined in. RevokedAt is a pointer so JSON renders as null when the session
+// is still live, and as the revocation timestamp once it is killed.
+type SessionTokenRow struct {
+	ID         int        `json:"id"`
+	JTI        string     `json:"jti"`
+	UserID     int        `json:"userId"`
+	Username   string     `json:"username"`
+	IssuedAt   time.Time  `json:"issuedAt"`
+	LastUsedAt time.Time  `json:"lastUsedAt"`
+	ExpiresAt  time.Time  `json:"expiresAt"`
+	RevokedAt  *time.Time `json:"revokedAt,omitempty"`
+	IP         string     `json:"ip"`
+	UserAgent  string     `json:"userAgent"`
+}

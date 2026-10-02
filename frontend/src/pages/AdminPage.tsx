@@ -14,6 +14,7 @@ import {
 } from '../components/ui';
 import { UsersSection } from './admin/UsersSection';
 import { GroupsSection } from './admin/GroupsSection';
+import { SessionsSection } from './admin/SessionsSection';
 import { RolesSection } from './admin/RolesSection';
 import { useScopedShortcuts } from '../hooks/useScopedShortcuts';
 import { confirm } from '../components/ConfirmDialog';
@@ -104,6 +105,7 @@ const ADMIN_TABS: Array<{
   { label: 'Clusters', value: 'clusters', icon: Boxes },
   { label: 'Customization', value: 'customization', icon: ImageIcon },
   { label: 'Audit Logs', value: 'audit', icon: FileText },
+  { label: 'Sessions', value: 'sessions', icon: KeyRound },
 ];
 
 // ─── Section card ─────────────────────────────────────────────────────────────
@@ -2116,6 +2118,15 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   Next
                 </Button>
               </div>
+            </SectionCard>
+          )}
+
+          {tab === 'sessions' && (
+            <SectionCard
+              title="Sessions"
+              description="Every token issued by this backend. Revoke a single row to sign one browser out; revoke-all for a user kills every tab they have open."
+            >
+              <SessionsSection currentUserId={user.id} />
             </SectionCard>
           )}
         </div>

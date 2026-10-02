@@ -12,12 +12,16 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-func GenerateToken(secret []byte, userID int, username string, ttl time.Duration) (string, error) {
+// GenerateToken signs a JWT with the given jti so the server can later look
+// the session up in session_tokens and enforce revocation. jti may be empty
+// for backward compat (tokens signed before session tracking landed).
+func GenerateToken(secret []byte, userID int, username, jti string, ttl time.Duration) (string, error) {
 	now := time.Now().UTC()
 	claims := Claims{
 		UserID:   userID,
 		Username: username,
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        jti,
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
 		},

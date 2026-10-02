@@ -52,27 +52,67 @@ type Server struct {
 	// on activate/deactivate. 0 means "no active cluster", in which case
 	// permission checks fall back to wildcard matching.
 	activeClusterID atomic.Int64
+	// sessionToucher batches last_used_at writes so AuthMiddleware doesn't
+	// serialize every API call behind an UPDATE on SQLite's single writer.
+	sessionToucher *store.SessionToucher
 }
 
-func NewServer(store *store.Store, auditLogger *audit.Logger, kubeManager *kube.Manager, staticDir string, dataDir string, timeZone string) *Server {
+// sessionValidator is the AuthMiddleware adapter around *store.Store. Returning
+// (false, nil) from Validate rejects a token; errors propagate so middleware
+// can fail-open on a DB blip. Pre-tracking JWTs (no jti) never reach Validate
+// — middleware shortcuts them in.
+type sessionValidator struct {
+	s *store.Store
+	t *store.SessionToucher
+}
+
+func (v *sessionValidator) Validate(ctx context.Context, jti string) (bool, error) {
+	status, err := v.s.LookupSession(ctx, jti)
+	if err != nil {
+		return false, err
+	}
+	// Row missing = JWT issued before session tracking existed. Honor it
+	// until it expires naturally so the deployment doesn't log everyone out.
+	if !status.Found {
+		return true, nil
+	}
+	if status.Revoked || status.Expired {
+		return false, nil
+	}
+	return true, nil
+}
+
+func (v *sessionValidator) Touch(jti string) { v.t.Touch(jti) }
+
+// authValidator wires the Store + toucher into the shape AuthMiddleware wants.
+// Returned fresh each time so AuthMiddleware never holds a reference it could
+// outlive — in practice the Server lifetime is the process lifetime, so this
+// is cosmetic.
+func (s *Server) authValidator() auth.SessionValidator {
+	return &sessionValidator{s: s.store, t: s.sessionToucher}
+}
+
+func NewServer(st *store.Store, auditLogger *audit.Logger, kubeManager *kube.Manager, staticDir string, dataDir string, timeZone string) *Server {
 	location, err := time.LoadLocation(timeZone)
 	if err != nil {
 		location = time.UTC
 	}
+	toucher := store.NewSessionToucher(st)
 	s := &Server{
-		store:      store,
-		audit:      auditLogger,
-		kube:       kubeManager,
-		resources:  kube.NewResourceClient(kubeManager),
-		jwtKey:     store.SigningKey(),
-		logLimiters: make(map[int]*rate.Limiter),
-		staticDir:  staticDir,
-		dataDir:    dataDir,
-		timezone:   location,
+		store:          st,
+		audit:          auditLogger,
+		kube:           kubeManager,
+		resources:      kube.NewResourceClient(kubeManager),
+		jwtKey:         st.SigningKey(),
+		logLimiters:    make(map[int]*rate.Limiter),
+		staticDir:      staticDir,
+		dataDir:        dataDir,
+		timezone:       location,
+		sessionToucher: toucher,
 	}
 	// Seed the active cluster id from whatever row is currently is_active.
 	// Called sync so permission checks on early requests see a stable value.
-	if cluster, err := store.GetActiveCluster(context.Background()); err == nil && cluster != nil {
+	if cluster, err := st.GetActiveCluster(context.Background()); err == nil && cluster != nil {
 		s.activeClusterID.Store(int64(cluster.ID))
 	}
 	return s
@@ -127,14 +167,14 @@ func (s *Server) Router() http.Handler {
 		r.Get("/azure/start", s.handleAzureStart)
 		r.Get("/azure/callback", s.handleAzureCallback)
 		r.Get("/providers", s.handleAuthProviders)
-		r.With(auth.AuthMiddleware(s.jwtKey)).Get("/me", s.handleMe)
-		r.With(auth.AuthMiddleware(s.jwtKey)).Post("/change-password", s.handleChangePassword)
+		r.With(auth.AuthMiddleware(s.jwtKey, s.authValidator())).Get("/me", s.handleMe)
+		r.With(auth.AuthMiddleware(s.jwtKey, s.authValidator())).Post("/change-password", s.handleChangePassword)
 	})
 
 	r.Get("/api/customization/logo", s.handleGetLogo)
 
 	r.Group(func(r chi.Router) {
-		r.Use(auth.AuthMiddleware(s.jwtKey))
+		r.Use(auth.AuthMiddleware(s.jwtKey, s.authValidator()))
 		r.Get("/api/cluster/active", s.handleGetActiveCluster)
 		r.Get("/api/clusters/public", s.handleListClustersPublic)
 		r.Get("/api/namespaces", s.handleNamespaces)
@@ -172,7 +212,7 @@ func (s *Server) Router() http.Handler {
 	})
 
 	r.Group(func(r chi.Router) {
-		r.Use(auth.AuthMiddleware(s.jwtKey))
+		r.Use(auth.AuthMiddleware(s.jwtKey, s.authValidator()))
 		r.Use(s.requireAdmin)
 		r.Get("/api/admin/users", s.handleListUsers)
 		r.Post("/api/admin/users", s.handleCreateUser)
@@ -224,6 +264,13 @@ func (s *Server) Router() http.Handler {
 
 		r.Get("/api/admin/audit-logs", s.handleAuditLogs)
 		r.Get("/api/admin/audit-logs/export", s.handleAuditLogsExport)
+
+		// Session management (M4-B3 phase 1). List all/active, revoke a
+		// single session row, or revoke every session for a user. Audit
+		// entries carry session.revoke / session.revoke_all actions.
+		r.Get("/api/admin/sessions", s.handleListSessions)
+		r.Delete("/api/admin/sessions/{id}", s.handleRevokeSession)
+		r.Post("/api/admin/users/{id}/revoke-sessions", s.handleRevokeAllForUser)
 
 		r.Post("/api/admin/customization/logo", s.handleUploadLogo)
 		r.Delete("/api/admin/customization/logo", s.handleDeleteLogo)
@@ -507,16 +554,40 @@ func (s *Server) issueTokenForUser(w http.ResponseWriter, r *http.Request, user 
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	token, err := auth.GenerateToken(s.jwtKey, user.ID, user.Username, time.Duration(session.SessionMinutes)*time.Minute)
+	ttl := time.Duration(session.SessionMinutes) * time.Minute
+	jti, err := newSessionID()
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
+	}
+	token, err := auth.GenerateToken(s.jwtKey, user.ID, user.Username, jti, ttl)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	now := time.Now().UTC()
+	// Session row failure is logged but doesn't fail the login — the JWT is
+	// still valid; the admin loses revocation visibility for this session
+	// until the next login, which is the desired safety trade-off.
+	if err := s.store.CreateSession(r.Context(), jti, user.ID, now, now.Add(ttl), clientIP(r), r.UserAgent()); err != nil {
+		slog.Warn("could not record session", "user", user.Username, "error", err.Error())
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"token": token,
 		"user":  user,
 	})
+}
+
+// newSessionID returns a URL-safe 128-bit random string used as the JWT jti
+// claim and the primary key in session_tokens. 128 bits of entropy is enough
+// that we never need to worry about jti collisions.
+func newSessionID() (string, error) {
+	var buf [16]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf[:]), nil
 }
 
 func (s *Server) handleAuthProviders(w http.ResponseWriter, r *http.Request) {
@@ -635,10 +706,20 @@ func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load session settings")
 		return
 	}
-	token, err := auth.GenerateToken(s.jwtKey, user.ID, user.Username, time.Duration(session.SessionMinutes)*time.Minute)
+	ttl := time.Duration(session.SessionMinutes) * time.Minute
+	jti, err := newSessionID()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate session id")
+		return
+	}
+	token, err := auth.GenerateToken(s.jwtKey, user.ID, user.Username, jti, ttl)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to generate token")
 		return
+	}
+	now := time.Now().UTC()
+	if err := s.store.CreateSession(r.Context(), jti, user.ID, now, now.Add(ttl), clientIP(r), r.UserAgent()); err != nil {
+		slog.Warn("could not record azure session", "user", user.Username, "error", err.Error())
 	}
 	go s.audit.Record(context.Background(), models.AuditLog{
 		User:         user.Username,
@@ -721,6 +802,12 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.UpdateUserPassword(r.Context(), user.ID, hash, false); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
+	}
+	// Password change invalidates every session this user holds — including
+	// the one that made this call. The browser then falls back to the login
+	// screen on its next request, which is the intended UX.
+	if err := s.store.RevokeAllForUser(r.Context(), user.ID); err != nil {
+		slog.Warn("could not revoke sessions after password change", "user", user.Username, "error", err.Error())
 	}
 	s.recordAudit(r, "change_password", "-", "users", user.Username)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
