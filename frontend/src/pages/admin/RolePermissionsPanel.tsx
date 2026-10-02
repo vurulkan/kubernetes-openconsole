@@ -28,51 +28,64 @@ import {
 type ActionFamily = 'read' | 'write' | 'destructive';
 type ActionDef = { key: string; family: ActionFamily };
 
+// `edit` is destructive (full YAML write via server dry-run + apply). Scale /
+// restart are "write" because they only change the obvious thing. logs/exec
+// stay as read/destructive — exec can still mutate pod state via a shell.
 const RESOURCE_CATALOG: Array<{ resource: string; actions: ActionDef[] }> = [
   { resource: 'pods', actions: [
     { key: 'list', family: 'read' },
     { key: 'get', family: 'read' },
     { key: 'logs', family: 'read' },
     { key: 'exec', family: 'destructive' },
+    { key: 'edit', family: 'destructive' },
   ]},
   { resource: 'deployments', actions: [
     { key: 'list', family: 'read' },
     { key: 'get', family: 'read' },
     { key: 'restart', family: 'write' },
     { key: 'scale', family: 'write' },
+    { key: 'edit', family: 'destructive' },
   ]},
   { resource: 'daemonsets', actions: [
     { key: 'list', family: 'read' },
     { key: 'get', family: 'read' },
+    { key: 'edit', family: 'destructive' },
   ]},
   { resource: 'statefulsets', actions: [
     { key: 'list', family: 'read' },
     { key: 'get', family: 'read' },
     { key: 'scale', family: 'write' },
+    { key: 'edit', family: 'destructive' },
   ]},
   { resource: 'hpas', actions: [
     { key: 'list', family: 'read' },
     { key: 'get', family: 'read' },
+    { key: 'edit', family: 'destructive' },
   ]},
   { resource: 'services', actions: [
     { key: 'list', family: 'read' },
     { key: 'get', family: 'read' },
+    { key: 'edit', family: 'destructive' },
   ]},
   { resource: 'configmaps', actions: [
     { key: 'list', family: 'read' },
     { key: 'get', family: 'read' },
+    { key: 'edit', family: 'destructive' },
   ]},
   { resource: 'ingresses', actions: [
     { key: 'list', family: 'read' },
     { key: 'get', family: 'read' },
+    { key: 'edit', family: 'destructive' },
   ]},
   { resource: 'cronjobs', actions: [
     { key: 'list', family: 'read' },
     { key: 'get', family: 'read' },
+    { key: 'edit', family: 'destructive' },
   ]},
   { resource: 'jobs', actions: [
     { key: 'list', family: 'read' },
     { key: 'get', family: 'read' },
+    { key: 'edit', family: 'destructive' },
   ]},
 ];
 
@@ -108,9 +121,13 @@ function buildTemplateMatrix(template: Template): Record<string, Record<string, 
         on = a.family === 'read' || (resource === 'deployments' && (a.key === 'restart' || a.key === 'scale'))
           || (resource === 'statefulsets' && a.key === 'scale');
       } else if (template === 'sre') {
+        // SRE template now also grants edit on common workloads so YAML
+        // adjustments (changing an env var, bumping a limit) are possible
+        // without escalating to Admin.
         on = a.family === 'read'
-          || (resource === 'deployments' && (a.key === 'restart' || a.key === 'scale'))
-          || (resource === 'statefulsets' && a.key === 'scale')
+          || (resource === 'deployments' && (a.key === 'restart' || a.key === 'scale' || a.key === 'edit'))
+          || (resource === 'statefulsets' && (a.key === 'scale' || a.key === 'edit'))
+          || (resource === 'configmaps' && a.key === 'edit')
           || (resource === 'pods' && a.key === 'exec');
       }
       out[resource][a.key] = on;

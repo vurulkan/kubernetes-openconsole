@@ -24,6 +24,8 @@ import Layout from '../components/Layout';
 import LiveEventsPanel from '../components/LiveEventsPanel';
 import PodExecModal from '../components/PodExecModal';
 import { PodNotReadyBadge } from '../components/PodNotReadyBadge';
+import YamlEditModal, { YamlEditTarget } from '../components/YamlEditModal';
+import { useTheme } from '../components/ThemeProvider';
 import { Alert, Badge, Button, Input, Modal, Spinner, Toggle } from '../components/ui';
 import { useScopedShortcuts } from '../hooks/useScopedShortcuts';
 import { EVENTS_PANEL_EVENT_NAME } from '../hooks/useGlobalShortcuts';
@@ -155,6 +157,8 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
     }
   }, [viewMode]);
   const [restartTarget, setRestartTarget] = useState<string | null>(null);
+  const theme = useTheme();
+  const [yamlTarget, setYamlTarget] = useState<YamlEditTarget | null>(null);
   const [eventsOpen, setEventsOpen] = useState<boolean>(() => {
     try {
       return localStorage.getItem('dashboardEventsOpen') === '1';
@@ -562,11 +566,39 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
     }
   };
 
-  const openYamlModal = async (type: string, namespace: string, name: string) => {
-    setModalOpen(true);
-    setModalTitle(`${type.toUpperCase()} YAML - ${name}`);
-    setAutoScroll(false);
-    await fetchYaml(type, namespace, name);
+  const openYamlModal = (resource: string, namespace: string, name: string) => {
+    const fetchByResource: Record<string, (ns: string, n: string) => Promise<{ yaml: string }>> = {
+      deployments: getDeploymentYaml,
+      daemonsets: getDaemonSetYaml,
+      statefulsets: getStatefulSetYaml,
+      hpas: getHPAYaml,
+      services: getServiceYaml,
+      configmaps: getConfigMapYaml,
+      ingresses: getIngressYaml,
+      cronjobs: getCronJobYaml,
+      jobs: getJobYaml,
+    };
+    const label: Record<string, string> = {
+      deployments: 'Deployment',
+      daemonsets: 'DaemonSet',
+      statefulsets: 'StatefulSet',
+      hpas: 'HPA',
+      services: 'Service',
+      configmaps: 'ConfigMap',
+      ingresses: 'Ingress',
+      cronjobs: 'CronJob',
+      jobs: 'Job',
+    };
+    const fetcher = fetchByResource[resource];
+    if (!fetcher) return;
+    setYamlTarget({
+      resource,
+      resourceLabel: label[resource] ?? resource,
+      namespace,
+      name,
+      fetchYaml: fetcher,
+      canEdit: (allowedResources[resource] ?? []).includes('edit'),
+    });
   };
 
   const openConfigMapDataModal = async (namespace: string, name: string) => {
@@ -1674,6 +1706,13 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
         open={eventsOpen}
         onToggle={() => setEventsOpen(true)}
         onClose={() => setEventsOpen(false)}
+      />
+
+      <YamlEditModal
+        target={yamlTarget}
+        onClose={() => setYamlTarget(null)}
+        onApplied={() => void loadResources()}
+        theme={theme.effective}
       />
     </Layout>
   );

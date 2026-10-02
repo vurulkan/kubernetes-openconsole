@@ -200,16 +200,16 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
   const [newPermissionClusterId, setNewPermissionClusterId] = useState<number>(0);
   const [permissionFormError, setPermissionFormError] = useState<string | null>(null);
   const [permissionMatrix, setPermissionMatrix] = useState({
-    pods: { list: true, get: true, logs: false, exec: false },
-    deployments: { list: true, get: true, restart: false, scale: false },
-    daemonsets: { list: true, get: true },
-    statefulsets: { list: true, get: true, scale: false },
-    hpas: { list: true, get: true },
-    services: { list: true, get: true },
-    configmaps: { list: true, get: true },
-    ingresses: { list: true, get: true },
-    cronjobs: { list: true, get: true },
-    jobs: { list: true, get: true },
+    pods: { list: true, get: true, logs: false, exec: false, edit: false },
+    deployments: { list: true, get: true, restart: false, scale: false, edit: false },
+    daemonsets: { list: true, get: true, edit: false },
+    statefulsets: { list: true, get: true, scale: false, edit: false },
+    hpas: { list: true, get: true, edit: false },
+    services: { list: true, get: true, edit: false },
+    configmaps: { list: true, get: true, edit: false },
+    ingresses: { list: true, get: true, edit: false },
+    cronjobs: { list: true, get: true, edit: false },
+    jobs: { list: true, get: true, edit: false },
   });
   const [ldapConfig, setLdapConfig] = useState({
     enabled: false,

@@ -293,6 +293,24 @@ export const listHPAs = (namespace: string) =>
 export const getHPAYaml = (namespace: string, name: string) =>
   apiRequest<{ yaml: string }>(`/api/namespaces/${namespace}/hpas/${name}/yaml`);
 
+/**
+ * Generic apply — hits POST .../{resource}/{name}/apply with the typed YAML.
+ * dryRun=true returns the server-canonicalized object (defaulted fields,
+ * timestamps) without persisting; dryRun=false actually writes. The server
+ * records audit outcomes {success,denied,rate_limited,failed} either way.
+ */
+export const applyYaml = (
+  resource: string,
+  namespace: string,
+  name: string,
+  yaml: string,
+  dryRun: boolean,
+) =>
+  apiRequest<{ applied: string; dryRun: boolean }>(
+    `/api/namespaces/${namespace}/${resource}/${name}/apply`,
+    { method: 'POST', body: JSON.stringify({ yaml, dryRun }) },
+  );
+
 // ─── Clusters (multi-cluster) ────────────────────────────────────────────────
 
 export type ClusterListItem = {

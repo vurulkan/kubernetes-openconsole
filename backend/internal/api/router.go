@@ -199,6 +199,9 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/namespaces/{namespace}/hpas", s.handleHPAs)
 		r.Get("/api/namespaces/{namespace}/hpas/{name}", s.handleHPA)
 		r.Get("/api/namespaces/{namespace}/hpas/{name}/yaml", s.handleHPAYAML)
+		// Generic YAML apply (view-and-edit modal). One handler covers every
+		// workload in resourceGVR; permission check is {resource}:edit.
+		r.Post("/api/namespaces/{namespace}/{resource}/{name}/apply", s.handleYAMLApply)
 		r.Get("/api/namespaces/{namespace}/services", s.handleServices)
 		r.Get("/api/namespaces/{namespace}/services/{name}", s.handleService)
 		r.Get("/api/namespaces/{namespace}/services/{name}/yaml", s.handleServiceYAML)
@@ -873,16 +876,16 @@ func (s *Server) handleNamespacePermissions(w http.ResponseWriter, r *http.Reque
 	if user.IsAdmin {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"resources": map[string][]string{
-				"pods":         {"list", "get", "logs", "exec"},
-				"deployments":  {"list", "get", "restart", "scale"},
-				"daemonsets":   {"list", "get"},
-				"statefulsets": {"list", "get", "scale"},
-				"hpas":         {"list", "get"},
-				"services":     {"list", "get"},
-				"configmaps":   {"list", "get"},
-				"ingresses":    {"list", "get"},
-				"cronjobs":     {"list", "get"},
-				"jobs":         {"list", "get"},
+				"pods":         {"list", "get", "logs", "exec", "edit"},
+				"deployments":  {"list", "get", "restart", "scale", "edit"},
+				"daemonsets":   {"list", "get", "edit"},
+				"statefulsets": {"list", "get", "scale", "edit"},
+				"hpas":         {"list", "get", "edit"},
+				"services":     {"list", "get", "edit"},
+				"configmaps":   {"list", "get", "edit"},
+				"ingresses":    {"list", "get", "edit"},
+				"cronjobs":     {"list", "get", "edit"},
+				"jobs":         {"list", "get", "edit"},
 			},
 		})
 		return
