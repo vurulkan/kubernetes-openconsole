@@ -936,21 +936,17 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
             let statusLabel: React.ReactNode = null;
             if (activeTab === 'pods') {
               if (isHealthy) {
-                // Healthy pod — if it has restarted at least once, show an
-                // amber ring around the green dot so operators notice recent
-                // crash recovery at a glance.
-                dotClass =
-                  restartCount > 0
-                    ? 'status-dot bg-emerald-500 ring-1 ring-amber-400/50 ring-offset-2 ring-offset-white dark:ring-offset-slate-900'
-                    : 'status-dot status-dot-success';
+                // Running stays green regardless of restart count — the
+                // restart counter in the body already tells that story, and
+                // flipping the whole badge to amber for a long-ago restart
+                // was noisier than it was useful.
+                dotClass = 'status-dot status-dot-success';
                 statusLabel = (
-                  <Badge variant={restartCount > 0 ? 'warning' : 'success'}>
-                    <span
-                      className={`h-1.5 w-1.5 animate-live rounded-full ${
-                        restartCount > 0 ? 'bg-amber-500' : 'bg-emerald-500'
-                      }`}
-                    />
-                    {restartCount > 0 ? `Running · ${restartCount} restart${restartCount > 1 ? 's' : ''}` : 'Running'}
+                  <Badge variant="success">
+                    <span className="h-1.5 w-1.5 animate-live rounded-full bg-emerald-500" />
+                    {restartCount > 0
+                      ? `Running · ${restartCount} restart${restartCount > 1 ? 's' : ''}`
+                      : 'Running'}
                   </Badge>
                 );
               } else {

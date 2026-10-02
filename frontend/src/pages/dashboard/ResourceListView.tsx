@@ -110,11 +110,14 @@ export const ResourceListView: React.FC<Props> = ({
             const allReady = cs.length > 0 && cs.every((c) => c.ready);
             const running = (it.status as any)?.phase === 'Running';
             const healthy = allReady && running;
-            if (healthy && restarts > 0)
+            if (healthy)
               return (
-                <Badge variant="warning">Running · {restarts} restart{restarts > 1 ? 's' : ''}</Badge>
+                <Badge variant="success">
+                  {restarts > 0
+                    ? `Running · ${restarts} restart${restarts > 1 ? 's' : ''}`
+                    : 'Running'}
+                </Badge>
               );
-            if (healthy) return <Badge variant="success">Running</Badge>;
             return (
               <PodNotReadyBadge namespace={selectedNamespace} podName={nameOf(it)} />
             );
