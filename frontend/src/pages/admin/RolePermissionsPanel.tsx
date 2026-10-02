@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Copy,
   MoreHorizontal,
@@ -606,6 +606,84 @@ export const RolePermissionsPanel: React.FC<Props> = ({
   );
 };
 
+// ─── Namespaces strip (header of GrantCard) ────────────────────────────────
+//
+// Keeps the chip row on a single line to protect the card header's rhythm.
+// After the visible cap, remaining namespaces collapse into a "+N more"
+// badge that reveals them in a portaled popover on hover/focus — portal so
+// the popover escapes the card's overflow:hidden boundary.
+
+const NAMESPACE_VISIBLE = 5;
+
+const NamespacesStrip: React.FC<{ namespaces: string[] }> = ({ namespaces }) => {
+  const [hovered, setHovered] = useState(false);
+  const anchor = useRef<HTMLButtonElement | null>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+
+  const visible = namespaces.slice(0, NAMESPACE_VISIBLE);
+  const hiddenCount = Math.max(0, namespaces.length - NAMESPACE_VISIBLE);
+
+  useLayoutEffect(() => {
+    if (!hovered || !anchor.current) return;
+    const r = anchor.current.getBoundingClientRect();
+    setPos({ top: r.bottom + 4, left: r.left });
+  }, [hovered]);
+
+  return (
+    <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+      {visible.map((ns) => (
+        <span
+          key={ns}
+          className="shrink-0 truncate rounded bg-brand-50 px-1.5 py-0.5 font-mono text-[11px] font-medium text-brand-700 ring-1 ring-inset ring-brand-100 dark:bg-brand-500/15 dark:text-brand-200 dark:ring-brand-500/30"
+          title={ns}
+        >
+          {ns}
+        </span>
+      ))}
+      {hiddenCount > 0 && (
+        <button
+          type="button"
+          ref={anchor}
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
+          onFocus={() => setHovered(true)}
+          onBlur={() => setHovered(false)}
+          className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-600 ring-1 ring-inset ring-slate-200 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-700"
+          aria-label={`${hiddenCount} more namespaces`}
+        >
+          +{hiddenCount} more
+        </button>
+      )}
+      {namespaces.length > 1 && (
+        <span className="ml-1 hidden shrink-0 rounded bg-slate-50 px-1.5 py-0.5 font-mono text-[10px] text-slate-500 dark:bg-slate-900/60 dark:text-slate-400 sm:inline">
+          same grants
+        </span>
+      )}
+      {hovered && pos && createPortal(
+        <div
+          className="pointer-events-none fixed z-[60] max-w-sm rounded-lg border border-slate-200 bg-white p-2 shadow-elevated dark:border-slate-700 dark:bg-slate-900"
+          style={{ top: pos.top, left: pos.left }}
+        >
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+            {namespaces.length} namespaces
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {namespaces.map((ns) => (
+              <span
+                key={ns}
+                className="rounded bg-brand-50 px-1.5 py-0.5 font-mono text-[11px] text-brand-700 dark:bg-brand-500/15 dark:text-brand-200"
+              >
+                {ns}
+              </span>
+            ))}
+          </div>
+        </div>,
+        document.body,
+      )}
+    </div>
+  );
+};
+
 // ─── Grant card ─────────────────────────────────────────────────────────────
 
 const GrantCard: React.FC<{
@@ -653,31 +731,17 @@ const GrantCard: React.FC<{
 
   return (
     <article className="rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-      <header className="flex items-start justify-between gap-3 border-b border-slate-100 px-4 py-2.5 dark:border-slate-800/70">
-        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+      <header className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-2.5 dark:border-slate-800/70">
+        <div className="flex min-w-0 flex-1 items-center gap-x-2 overflow-hidden">
           {clusterId === 0 ? (
-            <Badge variant="info" className="h-5 text-[10px]">all clusters</Badge>
+            <Badge variant="info" className="h-5 shrink-0 text-[10px]">all clusters</Badge>
           ) : (
-            <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+            <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-700 dark:bg-slate-800 dark:text-slate-200">
               {clusterName || `#${clusterId}`}
             </span>
           )}
-          <span className="text-slate-300 dark:text-slate-700">/</span>
-          <div className="flex flex-wrap items-center gap-1">
-            {namespaces.map((ns) => (
-              <span
-                key={ns}
-                className="rounded bg-brand-50 px-1.5 py-0.5 font-mono text-[11px] font-medium text-brand-700 ring-1 ring-inset ring-brand-100 dark:bg-brand-500/15 dark:text-brand-200 dark:ring-brand-500/30"
-              >
-                {ns}
-              </span>
-            ))}
-            {namespaces.length > 1 && (
-              <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-                {namespaces.length} namespaces, same grants
-              </span>
-            )}
-          </div>
+          <span className="shrink-0 text-slate-300 dark:text-slate-700">/</span>
+          <NamespacesStrip namespaces={namespaces} />
         </div>
         <button
           type="button"

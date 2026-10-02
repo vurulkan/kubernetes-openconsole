@@ -619,7 +619,11 @@ export const Modal: React.FC<ModalProps> = ({
       // header and footer stay pinned.
       : 'flex-1 min-h-0 overflow-auto p-5';
 
-  return (
+  // Portal to document.body so position: fixed is viewport-relative. Without
+  // this, any ancestor with backdrop-filter / transform / filter would become
+  // the containing block and the dialog would feel "anchored" to the card
+  // that opened it instead of being viewport-centered.
+  return createPortal(
     <div className="fixed inset-0 z-50 flex animate-fade-in items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
       <div
@@ -650,6 +654,7 @@ export const Modal: React.FC<ModalProps> = ({
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };
