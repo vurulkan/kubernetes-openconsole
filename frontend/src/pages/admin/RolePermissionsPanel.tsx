@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Copy,
   MoreHorizontal,
+  Pencil,
   Plus,
   Search as SearchIcon,
   Trash2,
@@ -154,6 +155,13 @@ export const RolePermissionsPanel: React.FC<Props> = ({
     clusterId: number;
     namespaces: string[];
     matrix: Record<string, Record<string, boolean>>;
+    mode: 'add' | 'edit';
+    // When mode === 'edit', diff the submission against this group's
+    // existing rows so we can also DELETE rows the user unticked.
+    editingGroup?: {
+      namespaces: string[];
+      allPermissions: NamespacePermission[];
+    };
   } | null>(null);
 
   useEffect(() => {
@@ -199,9 +207,15 @@ export const RolePermissionsPanel: React.FC<Props> = ({
 
   const selectedRole = roles.find((r) => r.id === selectedRoleId) ?? null;
 
-  // Group grants by (cluster, namespace) → list of permissions.
+  // Group grants in two passes:
+  //   pass 1: (cluster, namespace) → list of permissions
+  //   pass 2: namespaces whose (resource, action) set is IDENTICAL within the
+  //           same cluster collapse into a single card listed with multiple
+  //           namespace chips in its header. "developer role on ns=a and ns=b
+  //           with the same grants" is now one card, not two.
   const groups = useMemo(() => {
-    const map = new Map<string, {
+    // Pass 1
+    const byNs = new Map<string, {
       clusterId: number;
       clusterName: string;
       namespace: string;
@@ -209,15 +223,52 @@ export const RolePermissionsPanel: React.FC<Props> = ({
     }>();
     permissions.forEach((p) => {
       const key = `${p.clusterId}:${p.namespace}`;
-      const bucket = map.get(key);
       const clusterName = p.clusterName || clusters.find((c) => c.id === p.clusterId)?.name || '';
+      const bucket = byNs.get(key);
       if (bucket) bucket.permissions.push(p);
-      else map.set(key, { clusterId: p.clusterId, clusterName, namespace: p.namespace, permissions: [p] });
+      else byNs.set(key, { clusterId: p.clusterId, clusterName, namespace: p.namespace, permissions: [p] });
     });
-    const arr = Array.from(map.values());
+
+    // Signature for identity-based merging: cluster + sorted "resource:action"
+    // tuples. Permissions themselves keep their individual ids so delete still
+    // targets the right rows.
+    type MergedGroup = {
+      clusterId: number;
+      clusterName: string;
+      namespaces: string[];
+      // one representative permission list (grants on the first ns); every
+      // other ns in `namespaces` has the same set, so this is enough for the
+      // chip grid. `allPermissions` carries every actual row for operations
+      // that need to delete across the whole group.
+      permissions: NamespacePermission[];
+      allPermissions: NamespacePermission[];
+    };
+    const byIdentity = new Map<string, MergedGroup>();
+    for (const bucket of byNs.values()) {
+      const sig = `${bucket.clusterId}|${bucket.permissions
+        .map((p) => `${p.resource}:${p.action}`)
+        .sort()
+        .join(',')}`;
+      const existing = byIdentity.get(sig);
+      if (existing) {
+        existing.namespaces.push(bucket.namespace);
+        existing.allPermissions.push(...bucket.permissions);
+      } else {
+        byIdentity.set(sig, {
+          clusterId: bucket.clusterId,
+          clusterName: bucket.clusterName,
+          namespaces: [bucket.namespace],
+          permissions: bucket.permissions,
+          allPermissions: [...bucket.permissions],
+        });
+      }
+    }
+
+    const arr = Array.from(byIdentity.values());
+    arr.forEach((g) => g.namespaces.sort());
     arr.sort((a, b) => {
       if (a.clusterId !== b.clusterId) return (a.clusterId || 0) - (b.clusterId || 0);
-      return a.namespace.localeCompare(b.namespace);
+      return a.namespaces[0].localeCompare(b.namespaces[0]);
     });
     return arr;
   }, [permissions, clusters]);
@@ -228,29 +279,19 @@ export const RolePermissionsPanel: React.FC<Props> = ({
     return roles.filter((r) => r.name.toLowerCase().includes(q));
   }, [roles, roleSearch]);
 
-  const handleRemovePermission = async (id: number) => {
-    try {
-      await deletePermission(id);
-      if (selectedRoleId) await refresh(selectedRoleId);
-    } catch (err) {
-      onError(err instanceof Error ? err.message : 'Delete failed');
-    }
-  };
-
-  const handleClearRow = async (clusterId: number, namespace: string) => {
+  const handleClearGroup = async (group: { clusterId: number; namespaces: string[]; allPermissions: NamespacePermission[] }) => {
+    const nsLabel = group.namespaces.length === 1
+      ? `namespace "${group.namespaces[0]}"`
+      : `${group.namespaces.length} namespaces (${group.namespaces.slice(0, 3).join(', ')}${group.namespaces.length > 3 ? ', …' : ''})`;
     const ok = await confirm({
-      title: 'Clear all permissions for this row?',
-      message: `This removes every (resource, action) grant for cluster ${clusterId === 0 ? 'all' : clusterId}, namespace "${namespace}".`,
-      confirmText: 'Clear row',
+      title: 'Clear all permissions for this card?',
+      message: `This removes every (resource, action) grant on cluster ${group.clusterId === 0 ? 'all' : group.clusterId}, ${nsLabel}.`,
+      confirmText: 'Clear card',
       variant: 'danger',
     });
     if (!ok) return;
     try {
-      await Promise.all(
-        groups
-          .find((g) => g.clusterId === clusterId && g.namespace === namespace)?.permissions
-          .map((p) => deletePermission(p.id)) ?? []
-      );
+      await Promise.all(group.allPermissions.map((p) => deletePermission(p.id)));
       if (selectedRoleId) await refresh(selectedRoleId);
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Clear failed');
@@ -263,38 +304,110 @@ export const RolePermissionsPanel: React.FC<Props> = ({
     return s;
   }, [permissions]);
 
-  const openAddModal = (seed?: Partial<{ clusterId: number; namespaces: string[]; matrix: ReturnType<typeof emptyMatrix> }>) => {
+  const openAddModal = (seed?: Partial<{
+    clusterId: number;
+    namespaces: string[];
+    matrix: ReturnType<typeof emptyMatrix>;
+    mode: 'add' | 'edit';
+    editingGroup: { namespaces: string[]; allPermissions: NamespacePermission[] };
+  }>) => {
     setAddSeed({
       clusterId: seed?.clusterId ?? 0,
       namespaces: seed?.namespaces ?? [],
       matrix: seed?.matrix ?? emptyMatrix(),
+      mode: seed?.mode ?? 'add',
+      editingGroup: seed?.editingGroup,
     });
     setAddOpen(true);
   };
 
-  const applyAdd = async (payload: { clusterId: number; namespaces: string[]; matrix: Record<string, Record<string, boolean>> }) => {
+  const applyAdd = async (payload: {
+    clusterId: number;
+    namespaces: string[];
+    matrix: Record<string, Record<string, boolean>>;
+    mode: 'add' | 'edit';
+    editingGroup?: { namespaces: string[]; allPermissions: NamespacePermission[] };
+  }) => {
     if (!selectedRoleId) return;
-    const rows: Array<{ clusterId: number; namespace: string; resource: string; action: string }> = [];
+
+    // Desired set as "ns:resource:action" keys.
+    const desired = new Set<string>();
     for (const ns of payload.namespaces) {
       for (const [resource, actions] of Object.entries(payload.matrix)) {
         for (const [action, on] of Object.entries(actions)) {
-          if (!on) continue;
-          const key = `${payload.clusterId}:${ns}:${resource}:${action}`;
-          if (existingKeySet.has(key)) continue;
-          rows.push({ clusterId: payload.clusterId, namespace: ns, resource, action });
+          if (on) desired.add(`${ns}:${resource}:${action}`);
         }
       }
     }
-    if (rows.length === 0) {
+
+    const toAdd: Array<{ clusterId: number; namespace: string; resource: string; action: string }> = [];
+    const toDelete: number[] = [];
+
+    if (payload.mode === 'edit' && payload.editingGroup) {
+      // Diff against the group's current rows (not the whole role) so unrelated
+      // grants on other cards stay put.
+      const idByKey = new Map<string, number>();
+      const currentKeys = new Set<string>();
+      payload.editingGroup.allPermissions.forEach((p) => {
+        const k = `${p.namespace}:${p.resource}:${p.action}`;
+        currentKeys.add(k);
+        idByKey.set(k, p.id);
+      });
+      currentKeys.forEach((k) => {
+        if (!desired.has(k)) {
+          const id = idByKey.get(k);
+          if (id !== undefined) toDelete.push(id);
+        }
+      });
+      desired.forEach((k) => {
+        if (!currentKeys.has(k)) {
+          const [ns, resource, action] = k.split(':');
+          toAdd.push({ clusterId: payload.clusterId, namespace: ns, resource, action });
+        }
+      });
+    } else {
+      // Add mode: skip anything the role already has anywhere (prevents dup
+      // writes), using the whole-role existing key set.
+      desired.forEach((k) => {
+        const [ns, resource, action] = k.split(':');
+        const fullKey = `${payload.clusterId}:${ns}:${resource}:${action}`;
+        if (!existingKeySet.has(fullKey)) {
+          toAdd.push({ clusterId: payload.clusterId, namespace: ns, resource, action });
+        }
+      });
+    }
+
+    if (toAdd.length === 0 && toDelete.length === 0) {
       setAddOpen(false);
       return;
     }
     try {
-      await Promise.all(rows.map((r) => addRolePermission(selectedRoleId, r)));
+      // Deletes first; the UI then shows the final state in a single refresh.
+      await Promise.all(toDelete.map((id) => deletePermission(id)));
+      await Promise.all(toAdd.map((r) => addRolePermission(selectedRoleId, r)));
       await refresh(selectedRoleId);
       setAddOpen(false);
     } catch (err) {
-      onError(err instanceof Error ? err.message : 'Add failed');
+      onError(err instanceof Error ? err.message : 'Save failed');
+    }
+  };
+
+  // Remove every permission in `group` matching (resource, action). Called
+  // from the chip's X or shift-click — the chip represents the pair across
+  // every namespace listed in the card's header.
+  const handleRemoveFromGroup = async (
+    group: { allPermissions: NamespacePermission[] },
+    resource: string,
+    action: string,
+  ) => {
+    const ids = group.allPermissions
+      .filter((p) => p.resource === resource && p.action === action)
+      .map((p) => p.id);
+    try {
+      await Promise.all(ids.map((id) => deletePermission(id)));
+      if (selectedRoleId) await refresh(selectedRoleId);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : 'Remove failed');
     }
   };
 
@@ -431,19 +544,36 @@ export const RolePermissionsPanel: React.FC<Props> = ({
               <div className="flex flex-col gap-3">
                 {groups.map((g) => (
                   <GrantCard
-                    key={`${g.clusterId}:${g.namespace}`}
+                    key={`${g.clusterId}:${g.namespaces.join(',')}`}
                     clusterId={g.clusterId}
                     clusterName={g.clusterName}
-                    namespace={g.namespace}
+                    namespaces={g.namespaces}
                     permissions={g.permissions}
-                    onRemove={handleRemovePermission}
-                    onClearRow={() => handleClearRow(g.clusterId, g.namespace)}
+                    onRemoveAction={(resource, action) => handleRemoveFromGroup(g, resource, action)}
+                    onClearCard={() => handleClearGroup(g)}
+                    onEdit={() => {
+                      // Seed the modal with THIS card's current state so the
+                      // user can tick/untick and the diff is applied on save.
+                      const matrix = emptyMatrix();
+                      g.permissions.forEach((p) => {
+                        if (matrix[p.resource]) matrix[p.resource][p.action] = true;
+                      });
+                      openAddModal({
+                        clusterId: g.clusterId,
+                        namespaces: g.namespaces,
+                        matrix,
+                        mode: 'edit',
+                        editingGroup: { namespaces: g.namespaces, allPermissions: g.allPermissions },
+                      });
+                    }}
                     onDuplicateTo={() => {
                       const matrix = emptyMatrix();
                       g.permissions.forEach((p) => {
                         if (matrix[p.resource]) matrix[p.resource][p.action] = true;
                       });
-                      openAddModal({ clusterId: g.clusterId, matrix });
+                      // Duplicate = fresh add; namespaces left empty so the
+                      // operator picks the targets.
+                      openAddModal({ clusterId: g.clusterId, namespaces: [], matrix, mode: 'add' });
                     }}
                   />
                 ))}
@@ -481,12 +611,16 @@ export const RolePermissionsPanel: React.FC<Props> = ({
 const GrantCard: React.FC<{
   clusterId: number;
   clusterName: string;
-  namespace: string;
+  /** The card represents one OR more namespaces that share the identical set
+   *  of (resource, action) grants on the same cluster. */
+  namespaces: string[];
   permissions: NamespacePermission[];
-  onRemove: (id: number) => void | Promise<void>;
-  onClearRow: () => void;
+  /** Remove a (resource, action) pair from EVERY namespace in this card. */
+  onRemoveAction: (resource: string, action: string) => void | Promise<void>;
+  onClearCard: () => void;
+  onEdit: () => void;
   onDuplicateTo: () => void;
-}> = ({ clusterId, clusterName, namespace, permissions, onRemove, onClearRow, onDuplicateTo }) => {
+}> = ({ clusterId, clusterName, namespaces, permissions, onRemoveAction, onClearCard, onEdit, onDuplicateTo }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuAnchor = React.useRef<HTMLButtonElement | null>(null);
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
@@ -519,8 +653,8 @@ const GrantCard: React.FC<{
 
   return (
     <article className="rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-      <header className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-2.5 dark:border-slate-800/70">
-        <div className="flex items-center gap-2">
+      <header className="flex items-start justify-between gap-3 border-b border-slate-100 px-4 py-2.5 dark:border-slate-800/70">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           {clusterId === 0 ? (
             <Badge variant="info" className="h-5 text-[10px]">all clusters</Badge>
           ) : (
@@ -529,14 +663,28 @@ const GrantCard: React.FC<{
             </span>
           )}
           <span className="text-slate-300 dark:text-slate-700">/</span>
-          <span className="font-mono text-xs font-medium text-slate-900 dark:text-slate-100">{namespace}</span>
+          <div className="flex flex-wrap items-center gap-1">
+            {namespaces.map((ns) => (
+              <span
+                key={ns}
+                className="rounded bg-brand-50 px-1.5 py-0.5 font-mono text-[11px] font-medium text-brand-700 ring-1 ring-inset ring-brand-100 dark:bg-brand-500/15 dark:text-brand-200 dark:ring-brand-500/30"
+              >
+                {ns}
+              </span>
+            ))}
+            {namespaces.length > 1 && (
+              <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                {namespaces.length} namespaces, same grants
+              </span>
+            )}
+          </div>
         </div>
         <button
           type="button"
           ref={menuAnchor}
           onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v); }}
-          className="rounded p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-          aria-label="Row actions"
+          className="shrink-0 rounded p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+          aria-label="Card actions"
         >
           <MoreHorizontal size={14} />
         </button>
@@ -555,18 +703,20 @@ const GrantCard: React.FC<{
                   <span
                     key={a.key}
                     className={`group inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wide ${FAMILY_CLASS[a.family]}`}
-                    title={`Shift-click to remove · ${a.family}`}
+                    title={namespaces.length > 1
+                      ? `Shift-click removes ${resource}:${a.key} from ALL ${namespaces.length} namespaces in this card · ${a.family}`
+                      : `Shift-click to remove · ${a.family}`}
                     onClick={(e) => {
                       if (e.shiftKey) {
                         e.preventDefault();
-                        void onRemove(grant.id);
+                        void onRemoveAction(resource, a.key);
                       }
                     }}
                   >
                     {a.key}
                     <button
                       type="button"
-                      onClick={() => onRemove(grant.id)}
+                      onClick={() => onRemoveAction(resource, a.key)}
                       className="opacity-0 transition-opacity hover:text-rose-600 focus:opacity-100 group-hover:opacity-100"
                       aria-label={`Remove ${resource}:${a.key}`}
                     >
@@ -588,6 +738,14 @@ const GrantCard: React.FC<{
           <button
             type="button"
             className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+            onClick={() => { setMenuOpen(false); onEdit(); }}
+          >
+            <Pencil size={13} />
+            Edit permissions…
+          </button>
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
             onClick={() => { setMenuOpen(false); onDuplicateTo(); }}
           >
             <Copy size={13} />
@@ -596,10 +754,10 @@ const GrantCard: React.FC<{
           <button
             type="button"
             className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-rose-600 hover:bg-rose-50 dark:text-rose-300 dark:hover:bg-rose-500/15"
-            onClick={() => { setMenuOpen(false); void onClearRow(); }}
+            onClick={() => { setMenuOpen(false); void onClearCard(); }}
           >
             <Trash2 size={13} />
-            Clear row
+            Clear card
           </button>
         </div>,
         document.body
@@ -615,12 +773,20 @@ const AddPermissionsModal: React.FC<{
     clusterId: number;
     namespaces: string[];
     matrix: Record<string, Record<string, boolean>>;
+    mode: 'add' | 'edit';
+    editingGroup?: { namespaces: string[]; allPermissions: NamespacePermission[] };
   };
   clusters: ClusterListItem[];
   namespaces: string[];
   existing: Set<string>;
   onCancel: () => void;
-  onApply: (payload: { clusterId: number; namespaces: string[]; matrix: Record<string, Record<string, boolean>> }) => void | Promise<void>;
+  onApply: (payload: {
+    clusterId: number;
+    namespaces: string[];
+    matrix: Record<string, Record<string, boolean>>;
+    mode: 'add' | 'edit';
+    editingGroup?: { namespaces: string[]; allPermissions: NamespacePermission[] };
+  }) => void | Promise<void>;
 }> = ({ seed, clusters, namespaces, existing, onCancel, onApply }) => {
   const [clusterId, setClusterId] = useState(seed.clusterId);
   const [selectedNs, setSelectedNs] = useState<string[]>(seed.namespaces);
@@ -628,6 +794,7 @@ const AddPermissionsModal: React.FC<{
   const [template, setTemplate] = useState<Template | null>(null);
   const [applying, setApplying] = useState(false);
   const [nsFilter, setNsFilter] = useState('');
+  const isEdit = seed.mode === 'edit';
 
   const applyTemplate = (t: Template) => {
     setTemplate(t);
@@ -651,23 +818,42 @@ const AddPermissionsModal: React.FC<{
     });
   };
 
-  // Preview counter: how many NEW rows will be created, net of overlaps with
-  // what the role already has.
+  // Preview counter.
+  //   add mode: how many brand-new rows will be inserted; "skipped" counts
+  //             rows the role already has elsewhere (collision-free).
+  //   edit mode: how many rows will be ADDED vs REMOVED relative to the
+  //              group's current state. The group is the only thing the diff
+  //              is scoped to, so unrelated role grants aren't touched.
   const preview = useMemo(() => {
-    let total = 0;
-    let skipped = 0;
+    const desired = new Set<string>();
     for (const ns of selectedNs) {
       for (const [resource, actions] of Object.entries(matrix)) {
         for (const [action, on] of Object.entries(actions)) {
-          if (!on) continue;
-          const key = `${clusterId}:${ns}:${resource}:${action}`;
-          if (existing.has(key)) skipped++;
-          else total++;
+          if (on) desired.add(`${ns}:${resource}:${action}`);
         }
       }
     }
-    return { total, skipped };
-  }, [clusterId, selectedNs, matrix, existing]);
+    if (isEdit && seed.editingGroup) {
+      const current = new Set<string>();
+      seed.editingGroup.allPermissions.forEach((p) =>
+        current.add(`${p.namespace}:${p.resource}:${p.action}`)
+      );
+      let adds = 0;
+      let dels = 0;
+      desired.forEach((k) => { if (!current.has(k)) adds++; });
+      current.forEach((k) => { if (!desired.has(k)) dels++; });
+      return { mode: 'edit' as const, adds, dels };
+    }
+    let total = 0;
+    let skipped = 0;
+    desired.forEach((k) => {
+      const [ns, resource, action] = k.split(':');
+      const fullKey = `${clusterId}:${ns}:${resource}:${action}`;
+      if (existing.has(fullKey)) skipped++;
+      else total++;
+    });
+    return { mode: 'add' as const, total, skipped };
+  }, [clusterId, selectedNs, matrix, existing, isEdit, seed.editingGroup]);
 
   const filteredNamespaces = useMemo(() => {
     const q = nsFilter.trim().toLowerCase();
@@ -677,9 +863,9 @@ const AddPermissionsModal: React.FC<{
   return (
     <Modal
       open
-      size="full"
+      size="lg"
       onClose={applying ? () => {} : onCancel}
-      title="Add permissions"
+      title={isEdit ? 'Edit permissions' : 'Add permissions'}
       footer={
         <>
           <Button variant="outline" size="sm" onClick={onCancel} disabled={applying}>
@@ -688,17 +874,32 @@ const AddPermissionsModal: React.FC<{
           <Button
             variant="primary"
             size="sm"
-            disabled={applying || preview.total === 0}
+            disabled={
+              applying ||
+              (preview.mode === 'add'
+                ? preview.total === 0
+                : preview.adds === 0 && preview.dels === 0)
+            }
             onClick={async () => {
               setApplying(true);
               try {
-                await onApply({ clusterId, namespaces: selectedNs, matrix });
+                await onApply({
+                  clusterId,
+                  namespaces: selectedNs,
+                  matrix,
+                  mode: seed.mode,
+                  editingGroup: seed.editingGroup,
+                });
               } finally {
                 setApplying(false);
               }
             }}
           >
-            {applying ? 'Adding…' : `Add ${preview.total} permission${preview.total === 1 ? '' : 's'}`}
+            {applying
+              ? 'Saving…'
+              : preview.mode === 'edit'
+              ? `Save (${preview.adds} added, ${preview.dels} removed)`
+              : `Add ${preview.total} permission${preview.total === 1 ? '' : 's'}`}
           </Button>
         </>
       }
@@ -790,12 +991,14 @@ const AddPermissionsModal: React.FC<{
             <tbody>
               {RESOURCE_CATALOG.map(({ resource, actions }) => {
                 const allOn = actions.every((a) => matrix[resource]?.[a.key]);
+                const anyOn = actions.some((a) => matrix[resource]?.[a.key]);
                 return (
                   <tr key={resource} className="border-t border-slate-100 dark:border-slate-800">
                     <td className="px-3 py-2">
                       <label className="flex cursor-pointer items-center gap-2">
                         <Checkbox
                           checked={allOn}
+                          indeterminate={anyOn && !allOn}
                           onChange={(v) => toggleResource(resource, v)}
                         />
                         <span className="font-mono text-[12px] text-slate-800 dark:text-slate-100">
@@ -838,13 +1041,21 @@ const AddPermissionsModal: React.FC<{
           </table>
         </div>
 
-        <Alert severity={preview.total === 0 ? 'info' : 'success'}>
-          {preview.total === 0
-            ? 'Nothing to add. Pick a namespace and at least one action.'
-            : `Will create ${preview.total} new permission${preview.total === 1 ? '' : 's'}${
-                preview.skipped > 0 ? ` · ${preview.skipped} already granted, will be skipped` : ''
-              }.`}
-        </Alert>
+        {preview.mode === 'edit' ? (
+          <Alert severity={preview.adds === 0 && preview.dels === 0 ? 'info' : 'success'}>
+            {preview.adds === 0 && preview.dels === 0
+              ? 'No changes. Toggle a chip or add/remove a namespace to make an edit.'
+              : `${preview.adds} grant${preview.adds === 1 ? '' : 's'} will be added · ${preview.dels} will be removed.`}
+          </Alert>
+        ) : (
+          <Alert severity={preview.total === 0 ? 'info' : 'success'}>
+            {preview.total === 0
+              ? 'Nothing to add. Pick a namespace and at least one action.'
+              : `Will create ${preview.total} new permission${preview.total === 1 ? '' : 's'}${
+                  preview.skipped > 0 ? ` · ${preview.skipped} already granted, will be skipped` : ''
+                }.`}
+          </Alert>
+        )}
       </div>
     </Modal>
   );

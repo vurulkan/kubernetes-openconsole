@@ -160,10 +160,26 @@ interface CheckboxProps {
   label?: string;
   disabled?: boolean;
   className?: string;
+  /** When true the checkbox renders in the browser's native "mixed" state —
+   *  useful for a parent box whose children are partially selected. */
+  indeterminate?: boolean;
 }
 
-export const Checkbox: React.FC<CheckboxProps> = ({ checked, onChange, label, disabled, className = '' }) => {
+export const Checkbox: React.FC<CheckboxProps> = ({
+  checked,
+  onChange,
+  label,
+  disabled,
+  className = '',
+  indeterminate = false,
+}) => {
   const id = useId();
+  const ref = React.useRef<HTMLInputElement | null>(null);
+  // `indeterminate` isn't a React-controlled attribute, so we poke the DOM
+  // after each render — this is the canonical pattern for tri-state checkboxes.
+  React.useEffect(() => {
+    if (ref.current) ref.current.indeterminate = indeterminate && !checked;
+  }, [indeterminate, checked]);
   return (
     <label
       htmlFor={id}
@@ -171,6 +187,7 @@ export const Checkbox: React.FC<CheckboxProps> = ({ checked, onChange, label, di
     >
       <input
         id={id}
+        ref={ref}
         type="checkbox"
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
@@ -536,8 +553,9 @@ interface ModalProps {
   children: React.ReactNode;
   footer?: React.ReactNode;
   onKeyDown?: React.KeyboardEventHandler<HTMLDivElement>;
-  /** 'full' = 95vw × 95vh for data-dense content; 'md' / 'sm' for confirmations. */
-  size?: 'full' | 'md' | 'sm';
+  /** 'full' = 95vw × 95vh for data-dense content; 'lg' = 64rem for wide forms;
+   *  'md' / 'sm' for confirmations. */
+  size?: 'full' | 'lg' | 'md' | 'sm';
 }
 
 export const Modal: React.FC<ModalProps> = ({
@@ -560,6 +578,12 @@ export const Modal: React.FC<ModalProps> = ({
       pop = m.popModalScope;
       push();
     });
+    // Lock body scroll so wheeling over the backdrop doesn't move content
+    // behind the modal — that scroll makes the dialog appear to float away
+    // from where it was opened, which operators report as "opens too far
+    // down". Save the previous value so a nested modal unwinds cleanly.
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -569,6 +593,7 @@ export const Modal: React.FC<ModalProps> = ({
     document.addEventListener('keydown', handler);
     return () => {
       document.removeEventListener('keydown', handler);
+      document.body.style.overflow = prevOverflow;
       if (pop) pop();
     };
   }, [open, onClose]);
@@ -584,10 +609,14 @@ export const Modal: React.FC<ModalProps> = ({
       ? { width: 'min(26rem, 95vw)', maxHeight: 'calc(100vh - 2rem)' }
       : size === 'md'
       ? { width: 'min(40rem, 95vw)', maxHeight: 'calc(100vh - 2rem)' }
+      : size === 'lg'
+      ? { width: 'min(64rem, 95vw)', maxHeight: 'calc(100vh - 2rem)' }
       : { width: '95vw', height: '95vh' };
   const bodyClass =
     size === 'full'
       ? 'flex-1 overflow-hidden p-4'
+      // sm/md/lg all scroll inside the body when content overflows so the
+      // header and footer stay pinned.
       : 'flex-1 min-h-0 overflow-auto p-5';
 
   return (
