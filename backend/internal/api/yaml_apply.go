@@ -10,26 +10,33 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"k8s-dashboard/backend/internal/logging"
 	"k8s-dashboard/backend/internal/models"
 )
 
-// resourceGVR maps the Dashboard's resource URL segment to the GVR the
-// dynamic client needs. The subset here matches handleNamespacePermissions +
-// the admin bypass list — everything the UI already shows a YAML button for.
-var resourceGVR = map[string]schema.GroupVersionResource{
-	"pods":         {Group: "", Version: "v1", Resource: "pods"},
-	"services":     {Group: "", Version: "v1", Resource: "services"},
-	"configmaps":   {Group: "", Version: "v1", Resource: "configmaps"},
-	"deployments":  {Group: "apps", Version: "v1", Resource: "deployments"},
-	"daemonsets":   {Group: "apps", Version: "v1", Resource: "daemonsets"},
-	"statefulsets": {Group: "apps", Version: "v1", Resource: "statefulsets"},
-	"hpas":         {Group: "autoscaling", Version: "v2", Resource: "horizontalpodautoscalers"},
-	"ingresses":    {Group: "networking.k8s.io", Version: "v1", Resource: "ingresses"},
-	"cronjobs":     {Group: "batch", Version: "v1", Resource: "cronjobs"},
-	"jobs":         {Group: "batch", Version: "v1", Resource: "jobs"},
+// resourceTarget maps the URL segment to both the GVR (needed by the dynamic
+// client) and the Kind (needed when the YAML body is missing apiVersion/kind
+// and we have to fill it in). Keeping them together removes the common bug
+// where a Dashboard upgrade only remembered to update one of two tables.
+type resourceTarget struct {
+	GVR  schema.GroupVersionResource
+	Kind string
+}
+
+var resourceGVR = map[string]resourceTarget{
+	"pods":         {schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}, "Pod"},
+	"services":     {schema.GroupVersionResource{Group: "", Version: "v1", Resource: "services"}, "Service"},
+	"configmaps":   {schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}, "ConfigMap"},
+	"deployments":  {schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}, "Deployment"},
+	"daemonsets":   {schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "daemonsets"}, "DaemonSet"},
+	"statefulsets": {schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "statefulsets"}, "StatefulSet"},
+	"hpas":         {schema.GroupVersionResource{Group: "autoscaling", Version: "v2", Resource: "horizontalpodautoscalers"}, "HorizontalPodAutoscaler"},
+	"ingresses":    {schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "ingresses"}, "Ingress"},
+	"cronjobs":     {schema.GroupVersionResource{Group: "batch", Version: "v1", Resource: "cronjobs"}, "CronJob"},
+	"jobs":         {schema.GroupVersionResource{Group: "batch", Version: "v1", Resource: "jobs"}, "Job"},
 }
 
 type applyRequest struct {
@@ -49,7 +56,7 @@ type applyRequest struct {
 //        rather than full bodies keep the audit table small and non-leaky.
 func (s *Server) handleYAMLApply(w http.ResponseWriter, r *http.Request) {
 	resource := chi.URLParam(r, "resource")
-	gvr, ok := resourceGVR[resource]
+	target, ok := resourceGVR[resource]
 	if !ok {
 		writeError(w, http.StatusBadRequest, "unsupported resource type")
 		return
@@ -92,11 +99,10 @@ func (s *Server) handleYAMLApply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	beforeHash := shortHash(body.YAML)
-	result, err := s.resources.Apply(r.Context(), gvr, namespace, name, []byte(body.YAML), body.DryRun)
+	result, err := s.resources.Apply(r.Context(), target.GVR, target.Kind, namespace, name, []byte(body.YAML), body.DryRun)
 	if err != nil {
-		outcome := "failed"
 		if !body.DryRun {
-			// log + audit — dry-run failures are visible to the user already.
+			// log — dry-run failures are visible to the user already.
 			slog.ErrorContext(r.Context(), resource+".apply.failed",
 				slog.String("user", user.Username),
 				slog.String("namespace", namespace),
@@ -105,9 +111,14 @@ func (s *Server) handleYAMLApply(w http.ResponseWriter, r *http.Request) {
 				slog.String("request_id", requestID),
 			)
 		}
-		s.recordApplyAudit(user.Username, namespace, name, resource, outcome,
+		s.recordApplyAudit(user.Username, namespace, name, resource, "failed",
 			fmt.Sprintf("dry=%v from=%s err=%s", body.DryRun, beforeHash, err.Error()), requestID)
-		writeError(w, http.StatusBadGateway, err.Error())
+
+		// Map k8s API errors to the right HTTP status so a reverse proxy
+		// (Cloudflare, ingress-nginx) doesn't intercept a 5xx and show its
+		// own branded page for what is actually a user mistake (bad YAML,
+		// stale resourceVersion, missing field, etc.).
+		writeError(w, httpStatusFor(err), err.Error())
 		return
 	}
 
@@ -120,6 +131,42 @@ func (s *Server) handleYAMLApply(w http.ResponseWriter, r *http.Request) {
 		"applied": result.AppliedYAML,
 		"dryRun":  result.DryRun,
 	})
+}
+
+// httpStatusFor turns a k8s apierror (or a client-side validation we raised)
+// into the matching HTTP status. Anything we can't classify falls through to
+// 422 Unprocessable Entity so the browser receives a 4xx — Cloudflare and
+// friends happily pass that through as-is instead of overlaying their 5xx
+// error page.
+func httpStatusFor(err error) int {
+	if err == nil {
+		return http.StatusOK
+	}
+	switch {
+	case apierrors.IsNotFound(err):
+		return http.StatusNotFound
+	case apierrors.IsConflict(err):
+		return http.StatusConflict
+	case apierrors.IsForbidden(err):
+		return http.StatusForbidden
+	case apierrors.IsUnauthorized(err):
+		return http.StatusUnauthorized
+	case apierrors.IsAlreadyExists(err):
+		return http.StatusConflict
+	case apierrors.IsInvalid(err),
+		apierrors.IsBadRequest(err),
+		apierrors.IsRequestEntityTooLargeError(err):
+		return http.StatusBadRequest
+	case apierrors.IsTimeout(err), apierrors.IsServerTimeout(err):
+		return http.StatusGatewayTimeout
+	case apierrors.IsServiceUnavailable(err):
+		return http.StatusServiceUnavailable
+	case apierrors.IsInternalError(err):
+		return http.StatusInternalServerError
+	}
+	// Our own guardrails (name/namespace mismatch, missing resourceVersion,
+	// YAML parse error) all land here. They're all client-side problems.
+	return http.StatusUnprocessableEntity
 }
 
 func shortHash(s string) string {

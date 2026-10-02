@@ -30,9 +30,14 @@ type ApplyResult struct {
 // Optimistic concurrency: the YAML must carry metadata.resourceVersion as it
 // came from GET — a stale version makes the API server return 409 Conflict,
 // which the UI surfaces as "please re-open and retry".
+//
+// kind is the Kubernetes Kind for this GVR; the caller carries it alongside
+// the GVR so we can inject apiVersion/kind into submitted YAML that is
+// missing them (older cached YAML from pre-2.6.1 did not include TypeMeta).
 func (c *ResourceClient) Apply(
 	ctx context.Context,
 	gvr schema.GroupVersionResource,
+	kind string,
 	namespace, name string,
 	raw []byte,
 	dryRun bool,
@@ -56,6 +61,20 @@ func (c *ResourceClient) Apply(
 	obj := &unstructured.Unstructured{}
 	if err := obj.UnmarshalJSON(jsonBytes); err != nil {
 		return nil, fmt.Errorf("decode object: %w", err)
+	}
+
+	// If the YAML the user submitted is missing apiVersion/kind — common on
+	// older cached YAML before 2.6.1 populated TypeMeta — fall back to the
+	// GVK we were called with. The API server would otherwise reject the
+	// request with "object has no kind", which surfaces as a confusing 502
+	// on top of a reverse proxy.
+	if obj.GroupVersionKind().Empty() {
+		apiVersion := gvr.Version
+		if gvr.Group != "" {
+			apiVersion = gvr.Group + "/" + gvr.Version
+		}
+		obj.SetAPIVersion(apiVersion)
+		obj.SetKind(kind)
 	}
 
 	// Guardrails so the user can't rename or move a resource via apply —

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
 
 	"k8s-dashboard/backend/internal/logging"
@@ -61,6 +62,7 @@ func (s *Server) handleDaemonSetYAML(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item.ManagedFields = nil
+	item.TypeMeta = metav1.TypeMeta{Kind: "DaemonSet", APIVersion: "apps/v1"}
 	data, err := yaml.Marshal(item)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to render yaml")
@@ -108,6 +110,7 @@ func (s *Server) handleStatefulSetYAML(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item.ManagedFields = nil
+	item.TypeMeta = metav1.TypeMeta{Kind: "StatefulSet", APIVersion: "apps/v1"}
 	data, err := yaml.Marshal(item)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to render yaml")
@@ -223,6 +226,7 @@ func (s *Server) handleHPAYAML(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item.ManagedFields = nil
+	item.TypeMeta = metav1.TypeMeta{Kind: "HorizontalPodAutoscaler", APIVersion: "autoscaling/v2"}
 	data, err := yaml.Marshal(item)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to render yaml")

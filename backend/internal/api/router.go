@@ -1081,6 +1081,12 @@ func (s *Server) handlePodLogsWS(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// Typed client-go objects return with an empty TypeMeta (apiVersion/kind are
+// omitempty on marshal), so without this the YAML the UI shows is missing the
+// first two lines — which also makes a round-trip POST .../apply fail at the
+// API server with "object has no kind". Set TypeMeta explicitly before every
+// marshal.
+
 func (s *Server) handlePodYAML(w http.ResponseWriter, r *http.Request) {
 	namespace, ok := s.requirePermission(w, r, "pods", "get")
 	if !ok {
@@ -1092,6 +1098,7 @@ func (s *Server) handlePodYAML(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pod.ManagedFields = nil
+	pod.TypeMeta = metav1.TypeMeta{Kind: "Pod", APIVersion: "v1"}
 	data, err := yaml.Marshal(pod)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to render yaml")
@@ -1111,6 +1118,7 @@ func (s *Server) handleDeploymentYAML(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item.ManagedFields = nil
+	item.TypeMeta = metav1.TypeMeta{Kind: "Deployment", APIVersion: "apps/v1"}
 	data, err := yaml.Marshal(item)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to render yaml")
@@ -1130,6 +1138,7 @@ func (s *Server) handleServiceYAML(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item.ManagedFields = nil
+	item.TypeMeta = metav1.TypeMeta{Kind: "Service", APIVersion: "v1"}
 	data, err := yaml.Marshal(item)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to render yaml")
@@ -1149,6 +1158,7 @@ func (s *Server) handleConfigMapYAML(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item.ManagedFields = nil
+	item.TypeMeta = metav1.TypeMeta{Kind: "ConfigMap", APIVersion: "v1"}
 	data, err := yaml.Marshal(item)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to render yaml")
@@ -1209,6 +1219,7 @@ func (s *Server) handleCronJobYAML(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item.ManagedFields = nil
+	item.TypeMeta = metav1.TypeMeta{Kind: "CronJob", APIVersion: "batch/v1"}
 	data, err := yaml.Marshal(item)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to render yaml")
@@ -1243,6 +1254,7 @@ func (s *Server) handleJobYAML(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item.ManagedFields = nil
+	item.TypeMeta = metav1.TypeMeta{Kind: "Job", APIVersion: "batch/v1"}
 	data, err := yaml.Marshal(item)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to render yaml")
@@ -1263,6 +1275,7 @@ func (s *Server) handleIngressYAML(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item.ManagedFields = nil
+	item.TypeMeta = metav1.TypeMeta{Kind: "Ingress", APIVersion: "networking.k8s.io/v1"}
 	data, err := yaml.Marshal(item)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to render yaml")
