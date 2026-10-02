@@ -43,6 +43,24 @@ const LiveEventsPanel: React.FC<Props> = ({ namespace, open, onToggle, onClose }
     pausedRef.current = paused;
   }, [paused]);
 
+  // ESC closes the panel when it's open. Scoped to document; skipped while
+  // typing in an input so filter boxes elsewhere don't lose their escape.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      const t = e.target;
+      if (t instanceof HTMLElement) {
+        const tag = t.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable) return;
+      }
+      e.preventDefault();
+      onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
   useEffect(() => {
     if (!open) {
       socketRef.current?.close();

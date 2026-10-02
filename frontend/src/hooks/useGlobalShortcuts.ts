@@ -8,6 +8,7 @@ type Options = {
 
 const SHORTCUTS_EVENT = 'openconsole:open-shortcuts';
 const PALETTE_EVENT = 'openconsole:open-palette';
+const EVENTS_PANEL_EVENT = 'openconsole:toggle-events';
 
 export const dispatchOpenShortcuts = () => {
   window.dispatchEvent(new CustomEvent(SHORTCUTS_EVENT));
@@ -15,8 +16,12 @@ export const dispatchOpenShortcuts = () => {
 export const dispatchOpenPalette = () => {
   window.dispatchEvent(new CustomEvent(PALETTE_EVENT));
 };
+export const dispatchToggleEvents = () => {
+  window.dispatchEvent(new CustomEvent(EVENTS_PANEL_EVENT));
+};
 export const SHORTCUTS_EVENT_NAME = SHORTCUTS_EVENT;
 export const PALETTE_EVENT_NAME = PALETTE_EVENT;
+export const EVENTS_PANEL_EVENT_NAME = EVENTS_PANEL_EVENT;
 
 const isTypingTarget = (el: EventTarget | null): boolean => {
   if (!el || !(el instanceof HTMLElement)) return false;
@@ -122,6 +127,13 @@ export const useGlobalShortcuts = ({ isAdmin, setTheme }: Options) => {
       }
       if (key === 't') {
         armPending('t');
+        return;
+      }
+
+      // Single-key: toggle the Live Events panel.
+      if (key === 'e') {
+        e.preventDefault();
+        dispatchToggleEvents();
         return;
       }
     };

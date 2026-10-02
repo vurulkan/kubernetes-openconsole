@@ -23,7 +23,7 @@ import PodExecModal from '../components/PodExecModal';
 import { PodNotReadyBadge } from '../components/PodNotReadyBadge';
 import { Alert, Badge, Button, Input, Modal, Spinner, Toggle } from '../components/ui';
 import { useScopedShortcuts } from '../hooks/useScopedShortcuts';
-import { dispatchOpenPalette } from '../hooks/useGlobalShortcuts';
+import { dispatchOpenPalette, EVENTS_PANEL_EVENT_NAME } from '../hooks/useGlobalShortcuts';
 import { formatAge } from '../utils/age';
 import { ResourceListView } from './dashboard/ResourceListView';
 import {
@@ -141,6 +141,11 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
       /* ignore */
     }
   }, [eventsOpen]);
+  useEffect(() => {
+    const handler = () => setEventsOpen((v) => !v);
+    window.addEventListener(EVENTS_PANEL_EVENT_NAME, handler as EventListener);
+    return () => window.removeEventListener(EVENTS_PANEL_EVENT_NAME, handler as EventListener);
+  }, []);
 
   const showActionNotice = (msg: string) => {
     setActionNotice(msg);

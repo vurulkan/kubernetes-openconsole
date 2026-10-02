@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -14,6 +15,11 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 )
+
+// The informer indexer is backed by a Go map, so lister results come back in
+// an unspecified order. Sort by Name after copying from the lister so the UI
+// matches the alphabetical ordering the API server returns, which is what
+// users had before the informer rewrite.
 
 type ResourceClient struct {
 	manager *Manager
@@ -42,6 +48,7 @@ func (c *ResourceClient) ListNamespaces(ctx context.Context) ([]corev1.Namespace
 	if ic := c.cache(); ic != nil {
 		objs, err := ic.namespaceLister.List(labels.Everything())
 		if err == nil {
+			sort.Slice(objs, func(i, j int) bool { return objs[i].Name < objs[j].Name })
 			out := make([]corev1.Namespace, 0, len(objs))
 			for _, o := range objs {
 				out = append(out, *o)
@@ -64,6 +71,7 @@ func (c *ResourceClient) ListPods(ctx context.Context, namespace string) ([]core
 	if ic := c.cache(); ic != nil {
 		objs, err := ic.podLister.Pods(namespace).List(labels.Everything())
 		if err == nil {
+			sort.Slice(objs, func(i, j int) bool { return objs[i].Name < objs[j].Name })
 			out := make([]corev1.Pod, 0, len(objs))
 			for _, o := range objs {
 				out = append(out, *o)
@@ -94,6 +102,7 @@ func (c *ResourceClient) ListDeployments(ctx context.Context, namespace string) 
 	if ic := c.cache(); ic != nil {
 		objs, err := ic.deploymentLister.Deployments(namespace).List(labels.Everything())
 		if err == nil {
+			sort.Slice(objs, func(i, j int) bool { return objs[i].Name < objs[j].Name })
 			out := make([]appsv1.Deployment, 0, len(objs))
 			for _, o := range objs {
 				out = append(out, *o)
@@ -124,6 +133,7 @@ func (c *ResourceClient) ListServices(ctx context.Context, namespace string) ([]
 	if ic := c.cache(); ic != nil {
 		objs, err := ic.serviceLister.Services(namespace).List(labels.Everything())
 		if err == nil {
+			sort.Slice(objs, func(i, j int) bool { return objs[i].Name < objs[j].Name })
 			out := make([]corev1.Service, 0, len(objs))
 			for _, o := range objs {
 				out = append(out, *o)
@@ -154,6 +164,7 @@ func (c *ResourceClient) ListConfigMaps(ctx context.Context, namespace string) (
 	if ic := c.cache(); ic != nil {
 		objs, err := ic.configmapLister.ConfigMaps(namespace).List(labels.Everything())
 		if err == nil {
+			sort.Slice(objs, func(i, j int) bool { return objs[i].Name < objs[j].Name })
 			out := make([]corev1.ConfigMap, 0, len(objs))
 			for _, o := range objs {
 				out = append(out, *o)
@@ -184,6 +195,7 @@ func (c *ResourceClient) ListIngresses(ctx context.Context, namespace string) ([
 	if ic := c.cache(); ic != nil {
 		objs, err := ic.ingressLister.Ingresses(namespace).List(labels.Everything())
 		if err == nil {
+			sort.Slice(objs, func(i, j int) bool { return objs[i].Name < objs[j].Name })
 			out := make([]networkingv1.Ingress, 0, len(objs))
 			for _, o := range objs {
 				out = append(out, *o)
@@ -214,6 +226,7 @@ func (c *ResourceClient) ListCronJobs(ctx context.Context, namespace string) ([]
 	if ic := c.cache(); ic != nil {
 		objs, err := ic.cronjobLister.CronJobs(namespace).List(labels.Everything())
 		if err == nil {
+			sort.Slice(objs, func(i, j int) bool { return objs[i].Name < objs[j].Name })
 			out := make([]batchv1.CronJob, 0, len(objs))
 			for _, o := range objs {
 				out = append(out, *o)
@@ -248,6 +261,7 @@ func (c *ResourceClient) ListJobs(ctx context.Context, namespace string) ([]batc
 	if ic := c.cache(); ic != nil {
 		objs, err := ic.jobLister.Jobs(namespace).List(labels.Everything())
 		if err == nil {
+			sort.Slice(objs, func(i, j int) bool { return objs[i].Name < objs[j].Name })
 			out := make([]batchv1.Job, 0, len(objs))
 			for _, o := range objs {
 				out = append(out, *o)

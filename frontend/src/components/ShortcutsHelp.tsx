@@ -37,6 +37,8 @@ const GROUPS: Group[] = [
       { keys: ['r'], description: 'Refresh the current resource list' },
       { keys: ['/', '(.)'], description: 'Focus the search box (physical key)' },
       { keys: ['n'], description: 'Open palette (jump to namespace)' },
+      { keys: ['e'], description: 'Toggle Live Events panel' },
+      { keys: ['Esc'], description: 'Close Live Events panel (when open)' },
     ],
   },
   {
