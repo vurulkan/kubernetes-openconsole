@@ -2,7 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { Modal } from './ui';
 import { SHORTCUTS_EVENT_NAME, dispatchOpenShortcuts } from '../hooks/useGlobalShortcuts';
 
-type Row = { keys: string[]; description: string };
+// Rows normally render as a chord: keys separated by "then" (press one, then
+// the next within the chord timeout). When the two keys are physical-position
+// alternatives — [ matches the same key as ğ on a TR layout — set
+// `join: 'or'` so the separator reflects "either key works".
+type Row = { keys: string[]; description: string; join?: 'then' | 'or' };
 type Group = { title: string; rows: Row[] };
 
 const GROUPS: Group[] = [
@@ -32,11 +36,11 @@ const GROUPS: Group[] = [
   {
     title: 'Dashboard',
     rows: [
-      { keys: ['[', '(ğ)'], description: 'Previous resource tab (physical key)' },
-      { keys: [']', '(ü)'], description: 'Next resource tab (physical key)' },
+      { keys: ['[', 'ğ'], join: 'or', description: 'Previous resource tab' },
+      { keys: [']', 'ü'], join: 'or', description: 'Next resource tab' },
       { keys: ['r'], description: 'Refresh the current resource list' },
-      { keys: ['/', '(.)'], description: 'Focus the search box (physical key)' },
-      { keys: ['n'], description: 'Open palette (jump to namespace)' },
+      { keys: ['/', '.'], join: 'or', description: 'Focus the search box' },
+      { keys: ['n'], description: 'Focus the namespace filter' },
       { keys: ['e'], description: 'Toggle Live Events panel' },
       { keys: ['Esc'], description: 'Close Live Events panel (when open)' },
     ],
@@ -44,8 +48,8 @@ const GROUPS: Group[] = [
   {
     title: 'Admin',
     rows: [
-      { keys: ['[', '(ğ)'], description: 'Previous sub-section (physical key)' },
-      { keys: [']', '(ü)'], description: 'Next sub-section (physical key)' },
+      { keys: ['[', 'ğ'], join: 'or', description: 'Previous sub-section' },
+      { keys: [']', 'ü'], join: 'or', description: 'Next sub-section' },
     ],
   },
   {
@@ -91,13 +95,18 @@ export const ShortcutsHelp: React.FC = () => {
       size="md"
     >
       <p className="mb-4 text-xs text-slate-500 dark:text-slate-400">
-        Chord sequences (two keys separated by a space) must be pressed within
-        a second. Shortcuts never fire while typing in an input, so you can
-        safely use them anywhere else. Keys marked with a "physical key" note
-        are matched by position (so <kbd className="rounded border px-1 text-[10px] mx-0.5">[</kbd> and
-        <kbd className="rounded border px-1 text-[10px] mx-0.5">]</kbd> still work on a Turkish Q layout
-        where those positions produce <kbd className="rounded border px-1 text-[10px] mx-0.5">ğ</kbd> and
-        <kbd className="rounded border px-1 text-[10px] mx-0.5">ü</kbd>).
+        Keys joined by <span className="font-medium">then</span> are chord
+        sequences — press one, then the next within a second. Keys joined by
+        <span className="font-medium"> or </span> are alternatives: either one
+        works. The TR layout fallbacks (
+        <kbd className="rounded border px-1 text-[10px] mx-0.5">ğ</kbd> for{' '}
+        <kbd className="rounded border px-1 text-[10px] mx-0.5">[</kbd>,{' '}
+        <kbd className="rounded border px-1 text-[10px] mx-0.5">ü</kbd> for{' '}
+        <kbd className="rounded border px-1 text-[10px] mx-0.5">]</kbd>,{' '}
+        <kbd className="rounded border px-1 text-[10px] mx-0.5">.</kbd> for{' '}
+        <kbd className="rounded border px-1 text-[10px] mx-0.5">/</kbd>) are
+        matched by physical key position. Shortcuts never fire while typing in
+        an input.
       </p>
 
       <div className="flex flex-col gap-5">
@@ -120,7 +129,7 @@ export const ShortcutsHelp: React.FC = () => {
                       <React.Fragment key={i}>
                         {i > 0 && (
                           <span className="text-[10px] text-slate-400 dark:text-slate-500">
-                            then
+                            {row.join === 'or' ? 'or' : 'then'}
                           </span>
                         )}
                         <kbd className="rounded-md border border-slate-200 bg-white px-1.5 py-0.5 font-mono text-[11px] font-medium text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">

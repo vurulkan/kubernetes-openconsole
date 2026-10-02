@@ -23,7 +23,7 @@ import PodExecModal from '../components/PodExecModal';
 import { PodNotReadyBadge } from '../components/PodNotReadyBadge';
 import { Alert, Badge, Button, Input, Modal, Spinner, Toggle } from '../components/ui';
 import { useScopedShortcuts } from '../hooks/useScopedShortcuts';
-import { dispatchOpenPalette, EVENTS_PANEL_EVENT_NAME } from '../hooks/useGlobalShortcuts';
+import { EVENTS_PANEL_EVENT_NAME } from '../hooks/useGlobalShortcuts';
 import { formatAge } from '../utils/age';
 import { ResourceListView } from './dashboard/ResourceListView';
 import {
@@ -455,7 +455,14 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
           el?.select();
         },
       },
-      { key: 'n', handler: () => dispatchOpenPalette() },
+      {
+        key: 'n',
+        handler: () => {
+          const el = document.querySelector<HTMLInputElement>('input[data-shortcut="namespace-search"]');
+          el?.focus();
+          el?.select();
+        },
+      },
     ],
     true
   );
@@ -651,6 +658,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
         value={namespaceSearch}
         onChange={(e) => setNamespaceSearch(e.target.value)}
         placeholder="Search namespaces…"
+        data-shortcut="namespace-search"
         className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm placeholder:text-slate-400 dark:placeholder:text-slate-500 dark:text-slate-500 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/15"
       />
       <div className="scrollbar-thin flex flex-col gap-0.5 overflow-auto pr-1">
