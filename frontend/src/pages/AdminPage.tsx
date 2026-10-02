@@ -16,6 +16,7 @@ import { UsersSection } from './admin/UsersSection';
 import { GroupsSection } from './admin/GroupsSection';
 import { SessionsSection } from './admin/SessionsSection';
 import { RolePermissionsPanel } from './admin/RolePermissionsPanel';
+import { useTranslation } from 'react-i18next';
 import { RolesSection } from './admin/RolesSection';
 import { useScopedShortcuts } from '../hooks/useScopedShortcuts';
 import { confirm } from '../components/ConfirmDialog';
@@ -137,6 +138,7 @@ const Divider: React.FC<{ className?: string }> = ({ className = '' }) => (
 
 const AdminPage: React.FC<{ user: User }> = ({ user }) => {
   const navigate = useNavigate();
+  const { t: tr } = useTranslation();
   const [tab, setTab] = useState(() => localStorage.getItem('adminActiveTab') || 'users');
   // Role Permissions UI switcher — new layout is default, classic persists via
   // localStorage. The toggle sits inside the Roles tab header; the classic
@@ -962,13 +964,22 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
       panelTitle="Admin"
       panel={
         <nav className="flex flex-col gap-0.5 p-2">
-          {ADMIN_TABS.map((t) => {
-            const Icon = t.icon;
-            const active = tab === t.value;
+          {ADMIN_TABS.map((entry) => {
+            const Icon = entry.icon;
+            const active = tab === entry.value;
+            // Map our existing tab keys to the i18n namespace; a few older
+            // slugs don't line up 1:1 so a tiny lookup keeps JSON tidy.
+            const i18nKey: Record<string, string> = {
+              users: 'users', groups: 'groups', roles: 'roles',
+              ldap: 'ldap', 'azure-ad': 'azure', session: 'session',
+              clusters: 'clusters', customization: 'customization',
+              audit: 'audit', sessions: 'sessions',
+            };
+            const label = tr(`admin.tabs.${i18nKey[entry.value] ?? entry.value}`, { defaultValue: entry.label });
             return (
               <button
-                key={t.value}
-                onClick={() => setTab(t.value)}
+                key={entry.value}
+                onClick={() => setTab(entry.value)}
                 className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors ${
                   active
                     ? 'bg-brand-50 dark:bg-brand-500/15 font-medium text-brand-700 dark:text-brand-200 ring-1 ring-inset ring-brand-200 dark:ring-brand-500/30'
@@ -979,7 +990,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   size={15}
                   className={active ? 'text-brand-600 dark:text-brand-300' : 'text-slate-400 dark:text-slate-500'}
                 />
-                {t.label}
+                {label}
               </button>
             );
           })}
@@ -1784,7 +1795,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   </NativeSelect>
                   {newClusterMethod === 'kubeconfig' && (
                     <div className="flex flex-col gap-1">
-                      <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                         Kubeconfig file
                       </span>
                       <label className="inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">
@@ -1954,7 +1965,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                     </NativeSelect>
                     {editCluster.method === 'kubeconfig' && (
                       <div className="flex flex-col gap-1">
-                        <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                           New Kubeconfig
                         </span>
                         <label className="inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">

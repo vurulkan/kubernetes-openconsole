@@ -26,6 +26,8 @@ import PodExecModal from '../components/PodExecModal';
 import { PodNotReadyBadge } from '../components/PodNotReadyBadge';
 import YamlEditModal, { YamlEditTarget } from '../components/YamlEditModal';
 import { useTheme } from '../components/ThemeProvider';
+import SavedViewsMenu from '../components/SavedViewsMenu';
+import { useTranslation } from 'react-i18next';
 import { Alert, Badge, Button, Input, Modal, Spinner, Toggle } from '../components/ui';
 import { useScopedShortcuts } from '../hooks/useScopedShortcuts';
 import { EVENTS_PANEL_EVENT_NAME } from '../hooks/useGlobalShortcuts';
@@ -158,6 +160,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   }, [viewMode]);
   const [restartTarget, setRestartTarget] = useState<string | null>(null);
   const theme = useTheme();
+  const { t } = useTranslation();
   const [yamlTarget, setYamlTarget] = useState<YamlEditTarget | null>(null);
   const [eventsOpen, setEventsOpen] = useState<boolean>(() => {
     try {
@@ -275,12 +278,36 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
     [allowedResources]
   );
 
+  // Search input supports two concepts in a single box:
+  //   • plain text  → matches the resource name (what we had before)
+  //   • label:k=v   → matches metadata.labels[k] == v exactly
+  //   • label:k     → matches any resource with the label key present
+  // Multiple tokens are AND'd. "foo label:tier=front label:app"
+  // keeps rows whose name contains "foo" AND has tier=front AND has an
+  // "app" label.
   const filteredItems = useMemo(() => {
-    if (!searchQuery.trim()) return items;
-    const query = searchQuery.trim().toLowerCase();
+    const q = searchQuery.trim();
+    if (!q) return items;
+    const tokens = q.split(/\s+/);
     return items.filter((item) => {
       const name = (item.metadata as { name?: string })?.name ?? '';
-      return name.toLowerCase().includes(query);
+      const labels = ((item.metadata as { labels?: Record<string, string> })?.labels) ?? {};
+      for (const t of tokens) {
+        if (t.toLowerCase().startsWith('label:')) {
+          const spec = t.slice('label:'.length);
+          const eq = spec.indexOf('=');
+          if (eq >= 0) {
+            const key = spec.slice(0, eq);
+            const val = spec.slice(eq + 1);
+            if (labels[key] !== val) return false;
+          } else {
+            if (!(spec in labels)) return false;
+          }
+        } else {
+          if (!name.toLowerCase().includes(t.toLowerCase())) return false;
+        }
+      }
+      return true;
     });
   }, [items, searchQuery]);
 
@@ -768,13 +795,13 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
         <div>
           <div className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400">
             <Activity size={14} className="text-brand-600 dark:text-brand-300" />
-            <span className="uppercase tracking-wider">Overview</span>
+            <span className="uppercase tracking-wider">{t('dashboard.overview')}</span>
           </div>
           <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
-            Cluster Resources
+            {t('dashboard.title')}
           </h1>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            Pick a namespace to inspect its authorized resources. Unauthorized resources are hidden.
+            {t('dashboard.subtitle')}
           </p>
         </div>
 
@@ -826,11 +853,12 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                 className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500"
               />
               <Input
-                placeholder={activeTab ? `Search ${activeTab}…` : 'Search…'}
+                placeholder={activeTab ? `Search ${activeTab} · try label:app=foo…` : 'Search…'}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-9 w-56 pl-8"
+                className="h-9 w-64 pl-8"
                 data-shortcut="dashboard-search"
+                title="Supports plain name search AND label:key=value / label:key tokens, space-separated"
               />
             </div>
           </div>
@@ -841,6 +869,20 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                 Auto-refresh 10s
               </span>
             )}
+            <SavedViewsMenu
+              current={{
+                namespace: selectedNamespace,
+                tab: activeTab,
+                search: searchQuery,
+                viewMode,
+              }}
+              onRestore={(v) => {
+                if (v.namespace) setSelectedNamespace(v.namespace);
+                if (v.tab) setActiveTab(v.tab);
+                setSearchQuery(v.search);
+                setViewMode(v.viewMode);
+              }}
+            />
             <Button
               variant="ghost"
               size="sm"
@@ -848,7 +890,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
               disabled={loading || !activeTab}
             >
               <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-              Refresh
+              {t('dashboard.refresh')}
             </Button>
           </div>
         </div>
@@ -879,7 +921,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                     size={14}
                     className={active ? 'text-brand-600 dark:text-brand-300' : 'text-slate-400 dark:text-slate-500 group-hover:text-slate-600 dark:text-slate-300'}
                   />
-                  {meta?.label ?? resource}
+                  {t(`resources.${resource}`, { defaultValue: meta?.label ?? resource })}
                 </button>
               );
             })}
@@ -890,6 +932,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                   type="button"
                   onClick={() => setViewMode('card')}
                   aria-pressed={viewMode === 'card'}
+                  aria-label="Card view"
                   title="Card view"
                   className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
                     viewMode === 'card'
@@ -903,6 +946,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                   type="button"
                   onClick={() => setViewMode('list')}
                   aria-pressed={viewMode === 'list'}
+                  aria-label="List view"
                   title="List view"
                   className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
                     viewMode === 'list'

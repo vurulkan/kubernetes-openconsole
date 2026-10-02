@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { Home, Keyboard, LogOut, Menu, Settings, ShieldCheck, X } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { Button } from './ui';
 import { ThemeToggle } from './ThemeProvider';
 import ClusterSwitcher from './ClusterSwitcher';
+import LocaleSwitcher from './LocaleSwitcher';
 import { dispatchOpenShortcuts } from '../hooks/useGlobalShortcuts';
 import { User } from '../services/api';
 
@@ -64,6 +66,11 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, children }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const { t } = useTranslation();
+  const RAIL_LABELS: Record<string, string> = {
+    dashboard: t('nav.dashboard'),
+    admin: t('nav.admin'),
+  };
 
   const handleLogout = () => {
     localStorage.removeItem('authToken');
@@ -102,7 +109,7 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, children }) => {
             className="hidden items-center gap-1.5 rounded-md border border-slate-200 bg-white/60 px-2 py-1 text-[10px] font-medium text-slate-500 transition-colors hover:border-slate-300 hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200 md:inline-flex"
           >
             <Keyboard size={12} className="shrink-0" />
-            Shortcuts
+            {t('nav.shortcuts')}
             <kbd className="rounded border border-slate-200 bg-white px-1 font-mono text-[10px] dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
               ?
             </kbd>
@@ -116,6 +123,7 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, children }) => {
               ⌘K
             </kbd>
           </span>
+          <LocaleSwitcher className="hidden sm:inline-flex" />
           <ThemeToggle className="hidden sm:inline-flex" />
           <div className="hidden items-center gap-2 pr-2 sm:flex">
             <div className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-50 dark:bg-brand-500/15 text-xs font-semibold text-brand-700 dark:text-brand-200 ring-1 ring-inset ring-brand-200 dark:ring-brand-500/30">
@@ -134,7 +142,7 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, children }) => {
           </div>
           <Button variant="primary" size="sm" onClick={handleLogout}>
             <LogOut size={14} className="shrink-0" />
-            Sign out
+            {t('nav.logout')}
           </Button>
         </div>
       </header>
@@ -173,8 +181,8 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, children }) => {
                     ? 'bg-brand-600/20 text-brand-200 ring-1 ring-inset ring-brand-500/40'
                     : 'text-slate-400 dark:text-slate-500 hover:bg-slate-800/80 hover:text-white'
                 }`}
-                aria-label={item.label}
-                title={item.label}
+                aria-label={RAIL_LABELS[item.key] ?? item.label}
+                title={RAIL_LABELS[item.key] ?? item.label}
               >
                 {active && (
                   <span className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-0.5 rounded-r bg-brand-400" />

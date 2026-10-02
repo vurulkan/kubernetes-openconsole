@@ -1010,6 +1010,33 @@ const AddPermissionsModal: React.FC<{
               value={nsFilter}
               onChange={(e) => setNsFilter(e.target.value)}
             />
+            {/* Bulk selection buttons — "Select matching" picks every ns the
+                current filter is showing, "Clear selection" drops them all.
+                Composable with the filter: type "boh", select, type "pos",
+                select — ends up with both prefixes without new syntax. */}
+            <div className="mt-1 flex items-center gap-2 text-[11px]">
+              <button
+                type="button"
+                onClick={() =>
+                  setSelectedNs((prev) =>
+                    Array.from(new Set([...prev, ...filteredNamespaces]))
+                  )
+                }
+                disabled={filteredNamespaces.length === 0}
+                className="font-medium text-brand-600 hover:underline disabled:text-slate-300 disabled:no-underline dark:text-brand-300 dark:disabled:text-slate-600"
+              >
+                + Select {filteredNamespaces.length} matching
+              </button>
+              <span className="text-slate-300 dark:text-slate-700">·</span>
+              <button
+                type="button"
+                onClick={() => setSelectedNs([])}
+                disabled={selectedNs.length === 0}
+                className="font-medium text-slate-500 hover:text-rose-600 hover:underline disabled:text-slate-300 disabled:no-underline dark:text-slate-400 dark:hover:text-rose-300 dark:disabled:text-slate-600"
+              >
+                Clear selection
+              </button>
+            </div>
             <div className="mt-2 flex max-h-32 flex-wrap gap-1 overflow-auto rounded-md border border-slate-200 p-2 dark:border-slate-700">
               {filteredNamespaces.map((n) => {
                 const picked = selectedNs.includes(n);
