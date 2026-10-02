@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ChevronsUpDown } from 'lucide-react';
 
 export type Column<T> = {
   key: string;
@@ -8,6 +8,8 @@ export type Column<T> = {
   width?: string;
   className?: string;
   align?: 'left' | 'right' | 'center';
+  /** Opt a column into sort. Return any Comparable (string | number | Date-ish). */
+  sortValue?: (row: T) => string | number | undefined | null;
 };
 
 type Props<T> = {
@@ -17,7 +19,14 @@ type Props<T> = {
   onRowClick?: (row: T) => void;
   pageSize?: number;
   emptyMessage?: string;
+  /**
+   * localStorage key for persisting the sort state between visits. If omitted,
+   * sorting resets to "no sort" on each mount.
+   */
+  sortStorageKey?: string;
 };
+
+type SortState = { key: string; dir: 'asc' | 'desc' } | null;
 
 const alignClass = (a?: 'left' | 'right' | 'center') => {
   if (a === 'right') return 'text-right';
@@ -38,13 +47,74 @@ export function DataTable<T>({
   onRowClick,
   pageSize = 25,
   emptyMessage = 'No data.',
+  sortStorageKey,
 }: Props<T>) {
   const [page, setPage] = useState(0);
-  const total = rows.length;
+
+  // Sort state persisted per-table via sortStorageKey so a user who likes
+  // "Age desc" on the Pods list keeps it on refresh.
+  const [sort, setSort] = useState<SortState>(() => {
+    if (!sortStorageKey) return null;
+    try {
+      const raw = localStorage.getItem('dt:' + sortStorageKey);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.key === 'string' && (parsed.dir === 'asc' || parsed.dir === 'desc')) {
+        return parsed;
+      }
+    } catch (err) {
+      /* ignore */
+    }
+    return null;
+  });
+  React.useEffect(() => {
+    if (!sortStorageKey) return;
+    try {
+      if (sort) {
+        localStorage.setItem('dt:' + sortStorageKey, JSON.stringify(sort));
+      } else {
+        localStorage.removeItem('dt:' + sortStorageKey);
+      }
+    } catch (err) {
+      /* ignore */
+    }
+  }, [sort, sortStorageKey]);
+
+  const sortedRows = useMemo(() => {
+    if (!sort) return rows;
+    const col = columns.find((c) => c.key === sort.key);
+    if (!col?.sortValue) return rows;
+    const dir = sort.dir === 'asc' ? 1 : -1;
+    const compare = (a: T, b: T) => {
+      const va = col.sortValue!(a);
+      const vb = col.sortValue!(b);
+      if (va == null && vb == null) return 0;
+      if (va == null) return 1 * dir; // nulls last on asc, first on desc
+      if (vb == null) return -1 * dir;
+      if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
+      return String(va).localeCompare(String(vb)) * dir;
+    };
+    return [...rows].sort(compare);
+  }, [rows, sort, columns]);
+
+  const total = sortedRows.length;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const start = page * pageSize;
   const end = Math.min(start + pageSize, total);
-  const slice = useMemo(() => rows.slice(start, end), [rows, start, end]);
+  const slice = useMemo(() => sortedRows.slice(start, end), [sortedRows, start, end]);
+
+  // Reset to page 0 when sort changes so the user actually sees the new top.
+  React.useEffect(() => {
+    setPage(0);
+  }, [sort?.key, sort?.dir]);
+
+  const toggleSort = (colKey: string) => {
+    setSort((cur) => {
+      if (!cur || cur.key !== colKey) return { key: colKey, dir: 'asc' };
+      if (cur.dir === 'asc') return { key: colKey, dir: 'desc' };
+      return null; // third click clears
+    });
+  };
 
   // Keep the cursor on-page when the underlying list shrinks (e.g. a delete).
   if (page > 0 && start >= total) {
@@ -57,15 +127,50 @@ export function DataTable<T>({
         <table className="w-full text-sm">
           <thead className="bg-slate-50/70 dark:bg-slate-800/40">
             <tr>
-              {columns.map((c) => (
-                <th
-                  key={c.key}
-                  className={`px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 ${alignClass(c.align)}`}
-                  style={c.width ? { width: c.width } : undefined}
-                >
-                  {c.header}
-                </th>
-              ))}
+              {columns.map((c) => {
+                const sortable = Boolean(c.sortValue);
+                const sortIcon = (() => {
+                  if (!sortable) return null;
+                  if (sort?.key !== c.key)
+                    return (
+                      <ChevronsUpDown
+                        size={11}
+                        className="text-slate-300 group-hover:text-slate-500 dark:text-slate-600 dark:group-hover:text-slate-300"
+                      />
+                    );
+                  return sort.dir === 'asc' ? (
+                    <ChevronUp size={11} className="text-brand-600 dark:text-brand-300" />
+                  ) : (
+                    <ChevronDown size={11} className="text-brand-600 dark:text-brand-300" />
+                  );
+                })();
+                return (
+                  <th
+                    key={c.key}
+                    className={`px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 ${alignClass(c.align)}`}
+                    style={c.width ? { width: c.width } : undefined}
+                  >
+                    {sortable ? (
+                      <button
+                        type="button"
+                        onClick={() => toggleSort(c.key)}
+                        className={`group inline-flex items-center gap-1 ${
+                          c.align === 'right'
+                            ? 'float-right'
+                            : c.align === 'center'
+                            ? 'mx-auto'
+                            : ''
+                        } hover:text-slate-700 dark:hover:text-slate-200 focus:outline-none`}
+                      >
+                        {c.header}
+                        {sortIcon}
+                      </button>
+                    ) : (
+                      c.header
+                    )}
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">

@@ -136,11 +136,12 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
   const navigate = useNavigate();
   const [tab, setTab] = useState(() => localStorage.getItem('adminActiveTab') || 'users');
 
-  // Admin page shortcuts: [ / ] cycle sub-sections.
+  // Admin page shortcuts: [ / ] cycle sub-sections (physical key — works on
+  // Turkish Q where the same keys produce ğ / ü).
   useScopedShortcuts(
     [
       {
-        key: '[',
+        code: 'BracketLeft',
         handler: () => {
           const idx = ADMIN_TABS.findIndex((t) => t.value === tab);
           const next = ADMIN_TABS[(idx - 1 + ADMIN_TABS.length) % ADMIN_TABS.length];
@@ -148,7 +149,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
         },
       },
       {
-        key: ']',
+        code: 'BracketRight',
         handler: () => {
           const idx = ADMIN_TABS.findIndex((t) => t.value === tab);
           const next = ADMIN_TABS[(idx + 1) % ADMIN_TABS.length];

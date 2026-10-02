@@ -3,6 +3,7 @@ import { Boxes, Home, Search, Settings, ShieldCheck } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { User } from '../services/api';
 import { useTheme } from './ThemeProvider';
+import { PALETTE_EVENT_NAME } from '../hooks/useGlobalShortcuts';
 
 type CommandKind = 'nav' | 'namespace' | 'theme';
 
@@ -53,6 +54,19 @@ export const CommandPalette: React.FC<Props> = ({ user, namespaces, onPickNamesp
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
   }, [open]);
+
+  // Allow other components / hooks to open the palette via a custom event.
+  // Dashboard's "n" shortcut dispatches this; dispatchOpenPalette() is the
+  // public helper from useGlobalShortcuts.
+  useEffect(() => {
+    const open = () => {
+      setOpen(true);
+      setQuery('');
+      setCursor(0);
+    };
+    window.addEventListener(PALETTE_EVENT_NAME, open as EventListener);
+    return () => window.removeEventListener(PALETTE_EVENT_NAME, open as EventListener);
+  }, []);
 
   useEffect(() => {
     if (!open) return;

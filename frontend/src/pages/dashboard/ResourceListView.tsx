@@ -61,6 +61,7 @@ export const ResourceListView: React.FC<Props> = ({
     const nameCol: Column<Item> = {
       key: 'name',
       header: 'Name',
+      sortValue: (it) => nameOf(it).toLowerCase(),
       cell: (it) => (
         <span className="truncate font-mono text-[12.5px] font-medium text-slate-900 dark:text-slate-100">
           {nameOf(it)}
@@ -72,6 +73,12 @@ export const ResourceListView: React.FC<Props> = ({
       header: 'Age',
       align: 'right',
       width: '80px',
+      // Age sort uses creationTimestamp parsed to epoch ms, so "newer first"
+      // works for free. Falls back to 0 when the field is absent.
+      sortValue: (it) => {
+        const ts = createdAt(it);
+        return ts ? Date.parse(ts) : 0;
+      },
       cell: (it) => (
         <span
           className="font-mono text-xs text-slate-500 dark:text-slate-400"
@@ -88,6 +95,12 @@ export const ResourceListView: React.FC<Props> = ({
         {
           key: 'status',
           header: 'Status',
+          sortValue: (it) => {
+            const cs = ((it.status as any)?.containerStatuses as Array<{ ready?: boolean }>) ?? [];
+            const allReady = cs.length > 0 && cs.every((c) => c.ready);
+            const running = (it.status as any)?.phase === 'Running';
+            return allReady && running ? 1 : 0;
+          },
           cell: (it) => {
             const cs =
               ((it.status as any)?.containerStatuses as Array<{ ready?: boolean; restartCount?: number }>) ??
@@ -109,6 +122,10 @@ export const ResourceListView: React.FC<Props> = ({
           header: 'Ready',
           align: 'center',
           width: '80px',
+          sortValue: (it) => {
+            const cs = ((it.status as any)?.containerStatuses as Array<{ ready?: boolean }>) ?? [];
+            return cs.filter((c) => c.ready).length;
+          },
           cell: (it) => {
             const cs = ((it.status as any)?.containerStatuses as Array<{ ready?: boolean }>) ?? [];
             const ready = cs.filter((c) => c.ready).length;
@@ -124,6 +141,10 @@ export const ResourceListView: React.FC<Props> = ({
           header: 'Restarts',
           align: 'center',
           width: '90px',
+          sortValue: (it) => {
+            const cs = ((it.status as any)?.containerStatuses as Array<{ restartCount?: number }>) ?? [];
+            return cs.reduce((s, c) => s + (c.restartCount ?? 0), 0);
+          },
           cell: (it) => {
             const cs = ((it.status as any)?.containerStatuses as Array<{ restartCount?: number }>) ?? [];
             const r = cs.reduce((s, c) => s + (c.restartCount ?? 0), 0);
@@ -175,6 +196,14 @@ export const ResourceListView: React.FC<Props> = ({
         {
           key: 'status',
           header: 'Status',
+          width: '130px',
+          sortValue: (it) => {
+            const desired = ((it.spec as any)?.replicas as number) ?? 0;
+            const ready = ((it.status as any)?.readyReplicas as number) ?? 0;
+            if (desired === 0) return 0;
+            if (ready >= desired) return 2;
+            return 1;
+          },
           cell: (it) => {
             const desired = ((it.spec as any)?.replicas as number) ?? 0;
             const ready = ((it.status as any)?.readyReplicas as number) ?? 0;
@@ -187,15 +216,23 @@ export const ResourceListView: React.FC<Props> = ({
           key: 'replicas',
           header: 'Replicas',
           align: 'center',
-          width: '110px',
+          // Wider than before and the subtitle is a second small line so a
+          // 10/10 count on a 1920px screen still fits on one row.
+          width: '140px',
+          sortValue: (it) => ((it.spec as any)?.replicas as number) ?? 0,
           cell: (it) => {
             const desired = ((it.spec as any)?.replicas as number) ?? 0;
             const ready = ((it.status as any)?.readyReplicas as number) ?? 0;
             const avail = ((it.status as any)?.availableReplicas as number) ?? 0;
             return (
-              <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
-                {ready}/{desired} · {avail} avail
-              </span>
+              <div className="flex flex-col items-center leading-tight">
+                <span className="font-mono text-xs text-slate-700 dark:text-slate-200 whitespace-nowrap">
+                  {ready}/{desired}
+                </span>
+                <span className="font-mono text-[10px] text-slate-400 dark:text-slate-500 whitespace-nowrap">
+                  {avail} avail
+                </span>
+              </div>
             );
           },
         },
@@ -242,6 +279,7 @@ export const ResourceListView: React.FC<Props> = ({
         {
           key: 'type',
           header: 'Type',
+          sortValue: (it) => (((it.spec as any)?.type as string) ?? '').toLowerCase(),
           cell: (it) => (
             <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
               {((it.spec as any)?.type as string) ?? '—'}
@@ -251,6 +289,7 @@ export const ResourceListView: React.FC<Props> = ({
         {
           key: 'cluster-ip',
           header: 'Cluster IP',
+          sortValue: (it) => ((it.spec as any)?.clusterIP as string) ?? '',
           cell: (it) => (
             <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
               {((it.spec as any)?.clusterIP as string) ?? '—'}
@@ -295,6 +334,7 @@ export const ResourceListView: React.FC<Props> = ({
           header: 'Keys',
           align: 'center',
           width: '80px',
+          sortValue: (it) => Object.keys(((it.data as Record<string, string>) ?? {})).length,
           cell: (it) => {
             const data = (it.data as Record<string, string>) ?? {};
             return (
@@ -384,6 +424,7 @@ export const ResourceListView: React.FC<Props> = ({
         {
           key: 'schedule',
           header: 'Schedule',
+          sortValue: (it) => ((it.spec as any)?.schedule as string) ?? '',
           cell: (it) => (
             <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
               {((it.spec as any)?.schedule as string) ?? '—'}
@@ -393,6 +434,10 @@ export const ResourceListView: React.FC<Props> = ({
         {
           key: 'last',
           header: 'Last run',
+          sortValue: (it) => {
+            const t = (it.status as any)?.lastScheduleTime as string | undefined;
+            return t ? Date.parse(t) : 0;
+          },
           cell: (it) => (
             <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
               {((it.status as any)?.lastScheduleTime as string) ?? 'Never'}
@@ -404,6 +449,7 @@ export const ResourceListView: React.FC<Props> = ({
           header: 'Status',
           align: 'center',
           width: '110px',
+          sortValue: (it) => (((it.spec as any)?.suspend as boolean) ? 0 : 1),
           cell: (it) =>
             ((it.spec as any)?.suspend as boolean) ? (
               <Badge variant="warning">Suspended</Badge>
@@ -434,6 +480,14 @@ export const ResourceListView: React.FC<Props> = ({
         {
           key: 'status',
           header: 'Status',
+          width: '130px',
+          sortValue: (it) => {
+            const st = (it.status as any) ?? {};
+            if ((st.failed ?? 0) > 0) return 0;
+            if ((st.active ?? 0) > 0) return 1;
+            if ((st.succeeded ?? 0) > 0) return 3;
+            return 2;
+          },
           cell: (it) => {
             const st = (it.status as any) ?? {};
             const succeeded = (st.succeeded as number) ?? 0;
@@ -450,6 +504,7 @@ export const ResourceListView: React.FC<Props> = ({
           header: 'Completions',
           align: 'center',
           width: '120px',
+          sortValue: (it) => ((it.status as any)?.succeeded as number) ?? 0,
           cell: (it) => {
             const succeeded = ((it.status as any)?.succeeded as number) ?? 0;
             const want = ((it.spec as any)?.completions as number) ?? 1;
@@ -496,6 +551,7 @@ export const ResourceListView: React.FC<Props> = ({
         rows={items}
         columns={columns}
         rowKey={(it) => nameOf(it) || JSON.stringify((it.metadata as any)?.uid ?? Math.random())}
+        sortStorageKey={`dashboard:${activeTab}`}
         emptyMessage={
           loading
             ? 'Loading…'

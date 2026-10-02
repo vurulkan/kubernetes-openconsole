@@ -32,18 +32,18 @@ const GROUPS: Group[] = [
   {
     title: 'Dashboard',
     rows: [
-      { keys: ['['], description: 'Previous resource tab' },
-      { keys: [']'], description: 'Next resource tab' },
+      { keys: ['[', '(ğ)'], description: 'Previous resource tab (physical key)' },
+      { keys: [']', '(ü)'], description: 'Next resource tab (physical key)' },
       { keys: ['r'], description: 'Refresh the current resource list' },
-      { keys: ['/'], description: 'Focus the search box' },
+      { keys: ['/', '(.)'], description: 'Focus the search box (physical key)' },
       { keys: ['n'], description: 'Open palette (jump to namespace)' },
     ],
   },
   {
     title: 'Admin',
     rows: [
-      { keys: ['['], description: 'Previous sub-section' },
-      { keys: [']'], description: 'Next sub-section' },
+      { keys: ['[', '(ğ)'], description: 'Previous sub-section (physical key)' },
+      { keys: [']', '(ü)'], description: 'Next sub-section (physical key)' },
     ],
   },
   {
@@ -91,7 +91,11 @@ export const ShortcutsHelp: React.FC = () => {
       <p className="mb-4 text-xs text-slate-500 dark:text-slate-400">
         Chord sequences (two keys separated by a space) must be pressed within
         a second. Shortcuts never fire while typing in an input, so you can
-        safely use them anywhere else.
+        safely use them anywhere else. Keys marked with a "physical key" note
+        are matched by position (so <kbd className="rounded border px-1 text-[10px] mx-0.5">[</kbd> and
+        <kbd className="rounded border px-1 text-[10px] mx-0.5">]</kbd> still work on a Turkish Q layout
+        where those positions produce <kbd className="rounded border px-1 text-[10px] mx-0.5">ğ</kbd> and
+        <kbd className="rounded border px-1 text-[10px] mx-0.5">ü</kbd>).
       </p>
 
       <div className="flex flex-col gap-5">

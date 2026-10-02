@@ -355,8 +355,10 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   // modal is open and while typing.
   useScopedShortcuts(
     [
+      // Physical-key bindings so Turkish Q layout (where [ / ] / / live under
+      // AltGr) still reaches these — same positions on US and TR layouts.
       {
-        key: '[',
+        code: 'BracketLeft',
         handler: () => {
           if (orderedResources.length === 0) return;
           const idx = orderedResources.indexOf(activeTab);
@@ -365,7 +367,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
         },
       },
       {
-        key: ']',
+        code: 'BracketRight',
         handler: () => {
           if (orderedResources.length === 0) return;
           const idx = orderedResources.indexOf(activeTab);
@@ -375,10 +377,8 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
       },
       { key: 'r', handler: () => void loadResources() },
       {
-        key: '/',
+        code: 'Slash',
         handler: () => {
-          // Focus the Dashboard's resource search input. We tag it with a
-          // data attribute to make this reliable across future layout tweaks.
           const el = document.querySelector<HTMLInputElement>('input[data-shortcut="dashboard-search"]');
           el?.focus();
           el?.select();

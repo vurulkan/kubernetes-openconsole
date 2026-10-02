@@ -2,11 +2,19 @@ import { useEffect } from 'react';
 
 type Binding = {
   /**
-   * The event.key value to match (case-insensitive). Examples: `[`, `]`, `/`,
-   * `r`, `p`, `w`. Modifiers (ctrl/cmd/alt/shift) are matched exactly: by
-   * default a binding fires only when NO modifier is held.
+   * The event.key value to match (case-insensitive). Examples: `r`, `p`, `w`.
+   * Modifiers (ctrl/cmd/alt/shift) are matched exactly: by default a binding
+   * fires only when NO modifier is held.
+   *
+   * Prefer `code` for keys whose character depends on keyboard layout —
+   * `[` / `]` / `/` on a Turkish Q layout produce `ğ` / `ü` / `.`, so a
+   * key-based binding breaks there. Code-based bindings compare against the
+   * physical key position (BracketLeft, BracketRight, Slash) and work on
+   * every layout.
    */
-  key: string;
+  key?: string;
+  /** Physical key code match, e.g. `BracketLeft`, `BracketRight`, `Slash`. */
+  code?: string;
   handler: (event: KeyboardEvent) => void;
   /** When true, allow the binding to fire even if an input is focused. */
   allowInInput?: boolean;
@@ -49,12 +57,25 @@ export const useScopedShortcuts = (bindings: Binding[], enabled = true) => {
     const handler = (e: KeyboardEvent) => {
       if (isModalScopeActive()) return;
       for (const b of bindings) {
-        if (b.key.toLowerCase() !== e.key.toLowerCase()) continue;
+        // code wins over key when both are supplied — physical-key match is
+        // less layout-sensitive and usually what the author meant.
+        if (b.code) {
+          if (b.code !== e.code) continue;
+        } else if (b.key) {
+          if (b.key.toLowerCase() !== e.key.toLowerCase()) continue;
+        } else {
+          continue;
+        }
         if (!b.allowInInput && isTypingTarget(e.target)) continue;
         const metaHeld = e.metaKey || e.ctrlKey;
         if (Boolean(b.meta) !== metaHeld) continue;
-        if (Boolean(b.shift) !== e.shiftKey) continue;
-        if (!b.meta && (e.altKey)) continue;
+        // AltGr on Windows/Linux reports altKey=true + ctrlKey=true: treat it
+        // as "no modifier" for code-based bindings so Turkish Q users can
+        // reach the physical `[` / `]` positions.
+        const altGr = e.altKey && e.ctrlKey && b.code;
+        if (!altGr && (b.shift ? false : e.shiftKey)) continue;
+        if (b.shift && !e.shiftKey) continue;
+        if (!b.meta && !altGr && e.altKey) continue;
         e.preventDefault();
         b.handler(e);
         return;
