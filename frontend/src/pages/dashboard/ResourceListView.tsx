@@ -8,6 +8,7 @@ import {
   Terminal,
 } from 'lucide-react';
 import { Badge } from '../../components/ui';
+import { PodNotReadyBadge } from '../../components/PodNotReadyBadge';
 import { Column, DataTable, IconButton } from '../../components/DataTable';
 import { ageShort } from '../../utils/age';
 
@@ -114,7 +115,9 @@ export const ResourceListView: React.FC<Props> = ({
                 <Badge variant="warning">Running · {restarts} restart{restarts > 1 ? 's' : ''}</Badge>
               );
             if (healthy) return <Badge variant="success">Running</Badge>;
-            return <Badge variant="warning">Not Ready</Badge>;
+            return (
+              <PodNotReadyBadge namespace={selectedNamespace} podName={nameOf(it)} />
+            );
           },
         },
         {

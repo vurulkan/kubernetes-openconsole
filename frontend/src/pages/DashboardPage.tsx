@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import Layout from '../components/Layout';
 import PodExecModal from '../components/PodExecModal';
+import { PodNotReadyBadge } from '../components/PodNotReadyBadge';
 import { Alert, Badge, Button, Input, Modal, Spinner, Toggle } from '../components/ui';
 import { useScopedShortcuts } from '../hooks/useScopedShortcuts';
 import { dispatchOpenPalette } from '../hooks/useGlobalShortcuts';
@@ -884,7 +885,9 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                 );
               } else {
                 dotClass = 'status-dot status-dot-warning';
-                statusLabel = <Badge variant="warning">Not Ready</Badge>;
+                statusLabel = (
+                  <PodNotReadyBadge namespace={selectedNamespace ?? ''} podName={name} />
+                );
               }
             } else if (activeTab === 'deployments') {
               if (desiredReplicas === 0) {
