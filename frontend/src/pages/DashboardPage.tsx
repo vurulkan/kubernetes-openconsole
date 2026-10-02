@@ -5,7 +5,10 @@ import {
   Calendar,
   FileCode2,
   FileText,
+  Gauge,
   Globe,
+  Database,
+  HardDrive,
   LayoutGrid,
   List as ListIcon,
   ListChecks,
@@ -37,7 +40,14 @@ import {
   listConfigMaps,
   listIngresses,
   listCronJobs,
+  listDaemonSets,
+  listStatefulSets,
+  listHPAs,
   listJobs,
+  getDaemonSetYaml,
+  getStatefulSetYaml,
+  getHPAYaml,
+  scaleStatefulSet,
   getDeploymentYaml,
   getServiceYaml,
   getConfigMapYaml,
@@ -52,7 +62,18 @@ import {
 } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 
-const resourceOrder = ['pods', 'deployments', 'services', 'configmaps', 'ingresses', 'cronjobs', 'jobs'];
+const resourceOrder = [
+  'pods',
+  'deployments',
+  'daemonsets',
+  'statefulsets',
+  'hpas',
+  'services',
+  'configmaps',
+  'ingresses',
+  'cronjobs',
+  'jobs',
+];
 
 const RESOURCE_META: Record<
   string,
@@ -60,6 +81,9 @@ const RESOURCE_META: Record<
 > = {
   pods: { label: 'Pods', icon: Boxes },
   deployments: { label: 'Deployments', icon: LayoutGrid },
+  daemonsets: { label: 'DaemonSets', icon: HardDrive },
+  statefulsets: { label: 'StatefulSets', icon: Database },
+  hpas: { label: 'HPAs', icon: Gauge },
   services: { label: 'Services', icon: Globe },
   configmaps: { label: 'ConfigMaps', icon: FileText },
   ingresses: { label: 'Ingresses', icon: Globe },
@@ -100,6 +124,9 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   const [scaleTarget, setScaleTarget] = useState<{
     name: string;
     current: number;
+    // Only set when scaling a StatefulSet; deployment scaling leaves this
+    // undefined so the modal keeps the historical "scale a Deployment" flow.
+    kind?: 'statefulsets';
   } | null>(null);
   const [scaleReplicas, setScaleReplicas] = useState(1);
   const [scaleBusy, setScaleBusy] = useState(false);
@@ -109,6 +136,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
 
   const canRestartDeployments = (allowedResources.deployments ?? []).includes('restart');
   const canScaleDeployments = (allowedResources.deployments ?? []).includes('scale');
+  const canScaleStatefulSets = (allowedResources.statefulsets ?? []).includes('scale');
   const canExecPods = (allowedResources.pods ?? []).includes('exec');
   const [execTarget, setExecTarget] = useState<{ name: string; containers: string[] } | null>(null);
   const [viewMode, setViewMode] = useState<'card' | 'list'>(() => {
@@ -362,6 +390,9 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
       let result: { items: Array<Record<string, unknown>> } | null = null;
       if (activeTab === 'pods') result = await listPods(selectedNamespace);
       else if (activeTab === 'deployments') result = await listDeployments(selectedNamespace);
+      else if (activeTab === 'daemonsets') result = await listDaemonSets(selectedNamespace);
+      else if (activeTab === 'statefulsets') result = await listStatefulSets(selectedNamespace);
+      else if (activeTab === 'hpas') result = await listHPAs(selectedNamespace);
       else if (activeTab === 'services') result = await listServices(selectedNamespace);
       else if (activeTab === 'configmaps') result = await listConfigMaps(selectedNamespace);
       else if (activeTab === 'ingresses') result = await listIngresses(selectedNamespace);
@@ -515,6 +546,9 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
     try {
       let result: { yaml: string } = { yaml: '' };
       if (type === 'deployments') result = await getDeploymentYaml(namespace, name);
+      else if (type === 'daemonsets') result = await getDaemonSetYaml(namespace, name);
+      else if (type === 'statefulsets') result = await getStatefulSetYaml(namespace, name);
+      else if (type === 'hpas') result = await getHPAYaml(namespace, name);
       else if (type === 'services') result = await getServiceYaml(namespace, name);
       else if (type === 'configmaps') result = await getConfigMapYaml(namespace, name);
       else if (type === 'ingresses') result = await getIngressYaml(namespace, name);
@@ -862,6 +896,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
             canExecPods={canExecPods}
             canRestartDeployments={canRestartDeployments}
             canScaleDeployments={canScaleDeployments}
+            canScaleStatefulSets={canScaleStatefulSets}
             openYamlModal={openYamlModal}
             openEventsModal={openEventsModal}
             openLogModal={openLogModal}
@@ -872,6 +907,11 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
             onRestart={(name) => setRestartTarget(name)}
             onScale={(name, current) => {
               setScaleTarget({ name, current });
+              setScaleReplicas(current);
+              setActionError(null);
+            }}
+            onScaleStatefulSet={(name, current) => {
+              setScaleTarget({ name, current, kind: 'statefulsets' });
               setScaleReplicas(current);
               setActionError(null);
             }}
@@ -944,24 +984,17 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
             let statusLabel: React.ReactNode = null;
             if (activeTab === 'pods') {
               if (isHealthy) {
-                // Badge is always green "Running" — the restart count is
-                // already surfaced in the body. When the pod has restarted,
-                // keep an amber ring around the green dot (card dot AND the
-                // one inside the badge) as a quiet "recovered from crash"
-                // tell for operators scanning the grid.
+                // Badge is always a plain green "Running". The outer status
+                // dot (left of the pod name) grows an amber ring when the
+                // pod has restarted; that's the only visual tell, so the
+                // badge looks identical regardless of restart count.
                 dotClass =
                   restartCount > 0
                     ? 'status-dot bg-emerald-500 ring-1 ring-amber-400/50 ring-offset-2 ring-offset-white dark:ring-offset-slate-900'
                     : 'status-dot status-dot-success';
                 statusLabel = (
                   <Badge variant="success">
-                    <span
-                      className={`h-1.5 w-1.5 animate-live rounded-full bg-emerald-500 ${
-                        restartCount > 0
-                          ? 'ring-1 ring-amber-400/60 ring-offset-1 ring-offset-emerald-50 dark:ring-offset-emerald-500/15'
-                          : ''
-                      }`}
-                    />
+                    <span className="h-1.5 w-1.5 animate-live rounded-full bg-emerald-500" />
                     Running
                   </Badge>
                 );
@@ -982,6 +1015,52 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                 dotClass = 'status-dot status-dot-warning';
                 statusLabel = <Badge variant="warning">Progressing</Badge>;
               }
+            } else if (activeTab === 'daemonsets') {
+              const dsStatus = (item.status as {
+                desiredNumberScheduled?: number;
+                numberReady?: number;
+              }) ?? {};
+              const desired = dsStatus.desiredNumberScheduled ?? 0;
+              const ready = dsStatus.numberReady ?? 0;
+              if (desired === 0) {
+                dotClass = 'status-dot status-dot-idle';
+                statusLabel = <Badge variant="default">No nodes</Badge>;
+              } else if (ready >= desired) {
+                dotClass = 'status-dot status-dot-success';
+                statusLabel = <Badge variant="success">Ready {ready}/{desired}</Badge>;
+              } else {
+                dotClass = 'status-dot status-dot-warning';
+                statusLabel = <Badge variant="warning">Ready {ready}/{desired}</Badge>;
+              }
+            } else if (activeTab === 'statefulsets') {
+              const ssStatus = (item.status as { replicas?: number; readyReplicas?: number }) ?? {};
+              const ssDesired = (item.spec as { replicas?: number })?.replicas ?? ssStatus.replicas ?? 0;
+              const ssReady = ssStatus.readyReplicas ?? 0;
+              if (ssDesired === 0) {
+                dotClass = 'status-dot status-dot-idle';
+                statusLabel = <Badge variant="default">Scaled to 0</Badge>;
+              } else if (ssReady >= ssDesired) {
+                dotClass = 'status-dot status-dot-success';
+                statusLabel = <Badge variant="success">Available {ssReady}/{ssDesired}</Badge>;
+              } else {
+                dotClass = 'status-dot status-dot-warning';
+                statusLabel = <Badge variant="warning">Progressing {ssReady}/{ssDesired}</Badge>;
+              }
+            } else if (activeTab === 'hpas') {
+              const hpaStatus = (item.status as {
+                currentReplicas?: number;
+                desiredReplicas?: number;
+              }) ?? {};
+              const hpaMin = (item.spec as { minReplicas?: number })?.minReplicas;
+              const hpaMax = (item.spec as { maxReplicas?: number })?.maxReplicas ?? 0;
+              dotClass = 'status-dot status-dot-success';
+              statusLabel = (
+                <Badge variant="info">
+                  {hpaStatus.currentReplicas ?? 0}/{hpaStatus.desiredReplicas ?? 0}
+                  {' · '}
+                  {hpaMin ?? 1}–{hpaMax}
+                </Badge>
+              );
             } else if (activeTab === 'cronjobs') {
               dotClass = isSuspended ? 'status-dot status-dot-warning' : 'status-dot status-dot-success';
               statusLabel = isSuspended ? (
@@ -1014,7 +1093,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
               }
             }
 
-            const showDot = ['pods', 'deployments', 'cronjobs', 'jobs'].includes(activeTab);
+            const showDot = ['pods', 'deployments', 'daemonsets', 'statefulsets', 'hpas', 'cronjobs', 'jobs'].includes(activeTab);
             const createdAt = (item.metadata as { creationTimestamp?: string })?.creationTimestamp;
 
             return (
@@ -1213,6 +1292,53 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                         </Button>
                       )}
                     </>
+                  )}
+                  {activeTab === 'daemonsets' && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => openYamlModal('daemonsets', selectedNamespace ?? '', name)}
+                    >
+                      <FileCode2 size={13} />
+                      YAML
+                    </Button>
+                  )}
+                  {activeTab === 'statefulsets' && (
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openYamlModal('statefulsets', selectedNamespace ?? '', name)}
+                      >
+                        <FileCode2 size={13} />
+                        YAML
+                      </Button>
+                      {canScaleStatefulSets && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            const current = ((item.spec as { replicas?: number })?.replicas) ?? 0;
+                            setScaleTarget({ name, current, kind: 'statefulsets' });
+                            setScaleReplicas(current);
+                            setActionError(null);
+                          }}
+                        >
+                          <Scaling size={13} />
+                          Scale
+                        </Button>
+                      )}
+                    </>
+                  )}
+                  {activeTab === 'hpas' && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => openYamlModal('hpas', selectedNamespace ?? '', name)}
+                    >
+                      <FileCode2 size={13} />
+                      YAML
+                    </Button>
                   )}
                   {activeTab === 'services' && (
                     <Button
@@ -1452,7 +1578,11 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                   setScaleBusy(true);
                   setActionError(null);
                   try {
-                    await scaleDeployment(selectedNamespace, scaleTarget.name, scaleReplicas);
+                    if (scaleTarget.kind === 'statefulsets') {
+                      await scaleStatefulSet(selectedNamespace, scaleTarget.name, scaleReplicas);
+                    } else {
+                      await scaleDeployment(selectedNamespace, scaleTarget.name, scaleReplicas);
+                    }
                     showActionNotice(
                       `Scaled ${scaleTarget.name}: ${scaleTarget.current} → ${scaleReplicas} replicas.`
                     );

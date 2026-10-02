@@ -183,6 +183,9 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
   const [permissionMatrix, setPermissionMatrix] = useState({
     pods: { list: true, get: true, logs: false, exec: false },
     deployments: { list: true, get: true, restart: false, scale: false },
+    daemonsets: { list: true, get: true },
+    statefulsets: { list: true, get: true, scale: false },
+    hpas: { list: true, get: true },
     services: { list: true, get: true },
     configmaps: { list: true, get: true },
     ingresses: { list: true, get: true },

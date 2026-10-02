@@ -23,6 +23,7 @@ type Props = {
   canExecPods: boolean;
   canRestartDeployments: boolean;
   canScaleDeployments: boolean;
+  canScaleStatefulSets: boolean;
   openYamlModal: (type: string, ns: string, name: string) => void | Promise<void>;
   openEventsModal: (type: 'pods' | 'deployments', ns: string, name: string) => void | Promise<void>;
   openLogModal: (ns: string, name: string) => void;
@@ -32,6 +33,7 @@ type Props = {
   onExec: (name: string, containers: string[]) => void;
   onRestart: (name: string) => void;
   onScale: (name: string, current: number) => void;
+  onScaleStatefulSet: (name: string, current: number) => void;
 };
 
 const nameOf = (item: Item) => ((item.metadata as any)?.name as string) ?? 'Unnamed';
@@ -46,6 +48,7 @@ export const ResourceListView: React.FC<Props> = ({
   canExecPods,
   canRestartDeployments,
   canScaleDeployments,
+  canScaleStatefulSets,
   openYamlModal,
   openEventsModal,
   openLogModal,
@@ -55,6 +58,7 @@ export const ResourceListView: React.FC<Props> = ({
   onExec,
   onRestart,
   onScale,
+  onScaleStatefulSet,
 }) => {
   // Column assembly per-tab. Name always left; actions always right; age is
   // the last data column before actions so it's where operators expect it.
@@ -532,6 +536,193 @@ export const ResourceListView: React.FC<Props> = ({
       ];
     }
 
+    if (activeTab === 'daemonsets') {
+      return [
+        nameCol,
+        {
+          key: 'status',
+          header: 'Status',
+          width: '130px',
+          sortValue: (it) => {
+            const desired = ((it.status as any)?.desiredNumberScheduled as number) ?? 0;
+            const ready = ((it.status as any)?.numberReady as number) ?? 0;
+            if (desired === 0) return 0;
+            if (ready >= desired) return 2;
+            return 1;
+          },
+          cell: (it) => {
+            const desired = ((it.status as any)?.desiredNumberScheduled as number) ?? 0;
+            const ready = ((it.status as any)?.numberReady as number) ?? 0;
+            if (desired === 0) return <Badge variant="default">No nodes</Badge>;
+            if (ready >= desired) return <Badge variant="success">Ready {ready}/{desired}</Badge>;
+            return <Badge variant="warning">Ready {ready}/{desired}</Badge>;
+          },
+        },
+        {
+          key: 'nodes',
+          header: 'Nodes',
+          align: 'center',
+          width: '110px',
+          sortValue: (it) => ((it.status as any)?.desiredNumberScheduled as number) ?? 0,
+          cell: (it) => {
+            const desired = ((it.status as any)?.desiredNumberScheduled as number) ?? 0;
+            const current = ((it.status as any)?.currentNumberScheduled as number) ?? 0;
+            return (
+              <span className="font-mono text-xs text-slate-700 dark:text-slate-200">
+                {current}/{desired}
+              </span>
+            );
+          },
+        },
+        ageCol,
+        {
+          key: 'actions',
+          header: '',
+          align: 'right',
+          width: '70px',
+          cell: (it) => (
+            <div className="flex justify-end gap-1">
+              <IconButton label="YAML" onClick={() => openYamlModal('daemonsets', selectedNamespace, nameOf(it))}>
+                <FileCode2 size={13} />
+              </IconButton>
+            </div>
+          ),
+        },
+      ];
+    }
+
+    if (activeTab === 'statefulsets') {
+      return [
+        nameCol,
+        {
+          key: 'status',
+          header: 'Status',
+          width: '140px',
+          sortValue: (it) => {
+            const desired = ((it.spec as any)?.replicas as number) ?? 0;
+            const ready = ((it.status as any)?.readyReplicas as number) ?? 0;
+            if (desired === 0) return 0;
+            if (ready >= desired) return 2;
+            return 1;
+          },
+          cell: (it) => {
+            const desired = ((it.spec as any)?.replicas as number) ?? 0;
+            const ready = ((it.status as any)?.readyReplicas as number) ?? 0;
+            if (desired === 0) return <Badge variant="default">Scaled to 0</Badge>;
+            if (ready >= desired) return <Badge variant="success">Available {ready}/{desired}</Badge>;
+            return <Badge variant="warning">Progressing {ready}/{desired}</Badge>;
+          },
+        },
+        {
+          key: 'replicas',
+          header: 'Replicas',
+          align: 'center',
+          width: '110px',
+          sortValue: (it) => ((it.spec as any)?.replicas as number) ?? 0,
+          cell: (it) => {
+            const desired = ((it.spec as any)?.replicas as number) ?? 0;
+            const ready = ((it.status as any)?.readyReplicas as number) ?? 0;
+            return (
+              <span className="font-mono text-xs text-slate-700 dark:text-slate-200 whitespace-nowrap">
+                {ready}/{desired}
+              </span>
+            );
+          },
+        },
+        ageCol,
+        {
+          key: 'actions',
+          header: '',
+          align: 'right',
+          width: '110px',
+          cell: (it) => {
+            const name = nameOf(it);
+            const desired = ((it.spec as any)?.replicas as number) ?? 0;
+            return (
+              <div className="flex justify-end gap-1">
+                <IconButton label="YAML" onClick={() => openYamlModal('statefulsets', selectedNamespace, name)}>
+                  <FileCode2 size={13} />
+                </IconButton>
+                {canScaleStatefulSets && (
+                  <IconButton label="Scale" onClick={() => onScaleStatefulSet(name, desired)}>
+                    <Scaling size={13} />
+                  </IconButton>
+                )}
+              </div>
+            );
+          },
+        },
+      ];
+    }
+
+    if (activeTab === 'hpas') {
+      return [
+        nameCol,
+        {
+          key: 'target',
+          header: 'Target',
+          sortValue: (it) => {
+            const ref = (it.spec as any)?.scaleTargetRef as { kind?: string; name?: string } | undefined;
+            return `${ref?.kind ?? ''}/${ref?.name ?? ''}`.toLowerCase();
+          },
+          cell: (it) => {
+            const ref = (it.spec as any)?.scaleTargetRef as { kind?: string; name?: string } | undefined;
+            return (
+              <span className="font-mono text-xs text-slate-700 dark:text-slate-200">
+                {ref?.kind ?? '—'}/{ref?.name ?? '—'}
+              </span>
+            );
+          },
+        },
+        {
+          key: 'range',
+          header: 'Min/Max',
+          align: 'center',
+          width: '110px',
+          sortValue: (it) => ((it.spec as any)?.maxReplicas as number) ?? 0,
+          cell: (it) => {
+            const min = ((it.spec as any)?.minReplicas as number) ?? 1;
+            const max = ((it.spec as any)?.maxReplicas as number) ?? 0;
+            return (
+              <span className="font-mono text-xs text-slate-700 dark:text-slate-200 whitespace-nowrap">
+                {min}–{max}
+              </span>
+            );
+          },
+        },
+        {
+          key: 'current',
+          header: 'Current',
+          align: 'center',
+          width: '110px',
+          sortValue: (it) => ((it.status as any)?.currentReplicas as number) ?? 0,
+          cell: (it) => {
+            const cur = ((it.status as any)?.currentReplicas as number) ?? 0;
+            const des = ((it.status as any)?.desiredReplicas as number) ?? 0;
+            return (
+              <span className="font-mono text-xs text-slate-700 dark:text-slate-200 whitespace-nowrap">
+                {cur}/{des}
+              </span>
+            );
+          },
+        },
+        ageCol,
+        {
+          key: 'actions',
+          header: '',
+          align: 'right',
+          width: '70px',
+          cell: (it) => (
+            <div className="flex justify-end gap-1">
+              <IconButton label="YAML" onClick={() => openYamlModal('hpas', selectedNamespace, nameOf(it))}>
+                <FileCode2 size={13} />
+              </IconButton>
+            </div>
+          ),
+        },
+      ];
+    }
+
     return [nameCol, ageCol];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -540,6 +731,7 @@ export const ResourceListView: React.FC<Props> = ({
     canExecPods,
     canRestartDeployments,
     canScaleDeployments,
+    canScaleStatefulSets,
   ]);
 
   return (

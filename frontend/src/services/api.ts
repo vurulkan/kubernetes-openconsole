@@ -267,6 +267,32 @@ export const restartDeployment = (namespace: string, name: string) =>
     { method: 'POST' }
   );
 
+// ─── Workload coverage (2.4.0) ───────────────────────────────────────────────
+
+export const listDaemonSets = (namespace: string) =>
+  apiRequest<{ items: Array<Record<string, unknown>> }>(`/api/namespaces/${namespace}/daemonsets`);
+
+export const getDaemonSetYaml = (namespace: string, name: string) =>
+  apiRequest<{ yaml: string }>(`/api/namespaces/${namespace}/daemonsets/${name}/yaml`);
+
+export const listStatefulSets = (namespace: string) =>
+  apiRequest<{ items: Array<Record<string, unknown>> }>(`/api/namespaces/${namespace}/statefulsets`);
+
+export const getStatefulSetYaml = (namespace: string, name: string) =>
+  apiRequest<{ yaml: string }>(`/api/namespaces/${namespace}/statefulsets/${name}/yaml`);
+
+export const scaleStatefulSet = (namespace: string, name: string, replicas: number) =>
+  apiRequest<{ status: string; previous: number; replicas: number }>(
+    `/api/namespaces/${namespace}/statefulsets/${name}/scale`,
+    { method: 'POST', body: JSON.stringify({ replicas }) }
+  );
+
+export const listHPAs = (namespace: string) =>
+  apiRequest<{ items: Array<Record<string, unknown>> }>(`/api/namespaces/${namespace}/hpas`);
+
+export const getHPAYaml = (namespace: string, name: string) =>
+  apiRequest<{ yaml: string }>(`/api/namespaces/${namespace}/hpas/${name}/yaml`);
+
 // ─── Clusters (multi-cluster) ────────────────────────────────────────────────
 
 export type ClusterListItem = {

@@ -189,6 +189,16 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/namespaces/{namespace}/deployments/{name}/events", s.handleDeploymentEvents)
 		r.Post("/api/namespaces/{namespace}/deployments/{name}/restart", s.handleDeploymentRestart)
 		r.Post("/api/namespaces/{namespace}/deployments/{name}/scale", s.handleDeploymentScale)
+		r.Get("/api/namespaces/{namespace}/daemonsets", s.handleDaemonSets)
+		r.Get("/api/namespaces/{namespace}/daemonsets/{name}", s.handleDaemonSet)
+		r.Get("/api/namespaces/{namespace}/daemonsets/{name}/yaml", s.handleDaemonSetYAML)
+		r.Get("/api/namespaces/{namespace}/statefulsets", s.handleStatefulSets)
+		r.Get("/api/namespaces/{namespace}/statefulsets/{name}", s.handleStatefulSet)
+		r.Get("/api/namespaces/{namespace}/statefulsets/{name}/yaml", s.handleStatefulSetYAML)
+		r.Post("/api/namespaces/{namespace}/statefulsets/{name}/scale", s.handleStatefulSetScale)
+		r.Get("/api/namespaces/{namespace}/hpas", s.handleHPAs)
+		r.Get("/api/namespaces/{namespace}/hpas/{name}", s.handleHPA)
+		r.Get("/api/namespaces/{namespace}/hpas/{name}/yaml", s.handleHPAYAML)
 		r.Get("/api/namespaces/{namespace}/services", s.handleServices)
 		r.Get("/api/namespaces/{namespace}/services/{name}", s.handleService)
 		r.Get("/api/namespaces/{namespace}/services/{name}/yaml", s.handleServiceYAML)
@@ -863,13 +873,16 @@ func (s *Server) handleNamespacePermissions(w http.ResponseWriter, r *http.Reque
 	if user.IsAdmin {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"resources": map[string][]string{
-				"pods":        {"list", "get", "logs", "exec"},
-				"deployments": {"list", "get", "restart", "scale"},
-				"services":    {"list", "get"},
-				"configmaps":  {"list", "get"},
-				"ingresses":   {"list", "get"},
-				"cronjobs":    {"list", "get"},
-				"jobs":        {"list", "get"},
+				"pods":         {"list", "get", "logs", "exec"},
+				"deployments":  {"list", "get", "restart", "scale"},
+				"daemonsets":   {"list", "get"},
+				"statefulsets": {"list", "get", "scale"},
+				"hpas":         {"list", "get"},
+				"services":     {"list", "get"},
+				"configmaps":   {"list", "get"},
+				"ingresses":    {"list", "get"},
+				"cronjobs":     {"list", "get"},
+				"jobs":         {"list", "get"},
 			},
 		})
 		return

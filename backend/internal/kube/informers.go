@@ -7,6 +7,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	appslisters "k8s.io/client-go/listers/apps/v1"
+	autoscalinglisters "k8s.io/client-go/listers/autoscaling/v2"
 	batchlisters "k8s.io/client-go/listers/batch/v1"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	networkinglisters "k8s.io/client-go/listers/networking/v1"
@@ -110,14 +111,17 @@ type InformerCache struct {
 	syncedMu sync.RWMutex
 	synced   bool
 
-	podLister        corelisters.PodLister
-	deploymentLister appslisters.DeploymentLister
-	serviceLister    corelisters.ServiceLister
-	configmapLister  corelisters.ConfigMapLister
-	ingressLister    networkinglisters.IngressLister
-	cronjobLister    batchlisters.CronJobLister
-	jobLister        batchlisters.JobLister
-	namespaceLister  corelisters.NamespaceLister
+	podLister         corelisters.PodLister
+	deploymentLister  appslisters.DeploymentLister
+	daemonsetLister   appslisters.DaemonSetLister
+	statefulsetLister appslisters.StatefulSetLister
+	hpaLister         autoscalinglisters.HorizontalPodAutoscalerLister
+	serviceLister     corelisters.ServiceLister
+	configmapLister   corelisters.ConfigMapLister
+	ingressLister     networkinglisters.IngressLister
+	cronjobLister     batchlisters.CronJobLister
+	jobLister         batchlisters.JobLister
+	namespaceLister   corelisters.NamespaceLister
 }
 
 func newInformerCache(client *kubernetes.Clientset, bus *EventBus) *InformerCache {
@@ -134,6 +138,12 @@ func newInformerCache(client *kubernetes.Clientset, bus *EventBus) *InformerCach
 	ic.podLister = podInf.Lister()
 	deployInf := factory.Apps().V1().Deployments()
 	ic.deploymentLister = deployInf.Lister()
+	dsInf := factory.Apps().V1().DaemonSets()
+	ic.daemonsetLister = dsInf.Lister()
+	ssInf := factory.Apps().V1().StatefulSets()
+	ic.statefulsetLister = ssInf.Lister()
+	hpaInf := factory.Autoscaling().V2().HorizontalPodAutoscalers()
+	ic.hpaLister = hpaInf.Lister()
 	svcInf := factory.Core().V1().Services()
 	ic.serviceLister = svcInf.Lister()
 	cmInf := factory.Core().V1().ConfigMaps()
@@ -169,6 +179,9 @@ func newInformerCache(client *kubernetes.Clientset, bus *EventBus) *InformerCach
 	}
 	attach(podInf.Informer(), "Pod")
 	attach(deployInf.Informer(), "Deployment")
+	attach(dsInf.Informer(), "DaemonSet")
+	attach(ssInf.Informer(), "StatefulSet")
+	attach(hpaInf.Informer(), "HorizontalPodAutoscaler")
 	attach(svcInf.Informer(), "Service")
 	attach(cmInf.Informer(), "ConfigMap")
 	attach(ingInf.Informer(), "Ingress")

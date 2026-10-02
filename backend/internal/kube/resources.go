@@ -8,6 +8,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -308,6 +309,131 @@ func (c *ResourceClient) RestartDeployment(ctx context.Context, namespace, name 
 		return "", err
 	}
 	return stamp, nil
+}
+
+// ListDaemonSets, ListStatefulSets, ListHPAs — same lister-first,
+// live-fallback shape as the rest of the resource queries. HPAs come from
+// autoscaling/v2 because that is the version the dashboard renders metrics
+// for; the (deprecated) v1 object is auto-converted by the API server when
+// an operator writes a v2 object.
+
+func (c *ResourceClient) ListDaemonSets(ctx context.Context, namespace string) ([]appsv1.DaemonSet, error) {
+	client, ok := c.manager.Client()
+	if !ok || !c.manager.Ready() {
+		return nil, fmt.Errorf("kubernetes client not ready")
+	}
+	if ic := c.cache(); ic != nil {
+		objs, err := ic.daemonsetLister.DaemonSets(namespace).List(labels.Everything())
+		if err == nil {
+			sort.Slice(objs, func(i, j int) bool { return objs[i].Name < objs[j].Name })
+			out := make([]appsv1.DaemonSet, 0, len(objs))
+			for _, o := range objs {
+				out = append(out, *o)
+			}
+			return out, nil
+		}
+	}
+	result, err := client.AppsV1().DaemonSets(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return result.Items, nil
+}
+
+func (c *ResourceClient) GetDaemonSet(ctx context.Context, namespace, name string) (*appsv1.DaemonSet, error) {
+	client, ok := c.manager.Client()
+	if !ok || !c.manager.Ready() {
+		return nil, fmt.Errorf("kubernetes client not ready")
+	}
+	return client.AppsV1().DaemonSets(namespace).Get(ctx, name, metav1.GetOptions{})
+}
+
+func (c *ResourceClient) ListStatefulSets(ctx context.Context, namespace string) ([]appsv1.StatefulSet, error) {
+	client, ok := c.manager.Client()
+	if !ok || !c.manager.Ready() {
+		return nil, fmt.Errorf("kubernetes client not ready")
+	}
+	if ic := c.cache(); ic != nil {
+		objs, err := ic.statefulsetLister.StatefulSets(namespace).List(labels.Everything())
+		if err == nil {
+			sort.Slice(objs, func(i, j int) bool { return objs[i].Name < objs[j].Name })
+			out := make([]appsv1.StatefulSet, 0, len(objs))
+			for _, o := range objs {
+				out = append(out, *o)
+			}
+			return out, nil
+		}
+	}
+	result, err := client.AppsV1().StatefulSets(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return result.Items, nil
+}
+
+func (c *ResourceClient) GetStatefulSet(ctx context.Context, namespace, name string) (*appsv1.StatefulSet, error) {
+	client, ok := c.manager.Client()
+	if !ok || !c.manager.Ready() {
+		return nil, fmt.Errorf("kubernetes client not ready")
+	}
+	return client.AppsV1().StatefulSets(namespace).Get(ctx, name, metav1.GetOptions{})
+}
+
+func (c *ResourceClient) ListHPAs(ctx context.Context, namespace string) ([]autoscalingv2.HorizontalPodAutoscaler, error) {
+	client, ok := c.manager.Client()
+	if !ok || !c.manager.Ready() {
+		return nil, fmt.Errorf("kubernetes client not ready")
+	}
+	if ic := c.cache(); ic != nil {
+		objs, err := ic.hpaLister.HorizontalPodAutoscalers(namespace).List(labels.Everything())
+		if err == nil {
+			sort.Slice(objs, func(i, j int) bool { return objs[i].Name < objs[j].Name })
+			out := make([]autoscalingv2.HorizontalPodAutoscaler, 0, len(objs))
+			for _, o := range objs {
+				out = append(out, *o)
+			}
+			return out, nil
+		}
+	}
+	result, err := client.AutoscalingV2().HorizontalPodAutoscalers(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return result.Items, nil
+}
+
+func (c *ResourceClient) GetHPA(ctx context.Context, namespace, name string) (*autoscalingv2.HorizontalPodAutoscaler, error) {
+	client, ok := c.manager.Client()
+	if !ok || !c.manager.Ready() {
+		return nil, fmt.Errorf("kubernetes client not ready")
+	}
+	return client.AutoscalingV2().HorizontalPodAutoscalers(namespace).Get(ctx, name, metav1.GetOptions{})
+}
+
+// ScaleStatefulSet mirrors ScaleDeployment on the Scale subresource. The
+// previous replica count is returned so audit entries can log before+after.
+func (c *ResourceClient) ScaleStatefulSet(ctx context.Context, namespace, name string, replicas int32) (int32, error) {
+	client, ok := c.manager.Client()
+	if !ok || !c.manager.Ready() {
+		return 0, fmt.Errorf("kubernetes client not ready")
+	}
+	current, err := client.AppsV1().StatefulSets(namespace).GetScale(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return 0, err
+	}
+	previous := current.Spec.Replicas
+	updated := &autoscalingv1.Scale{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            current.Name,
+			Namespace:       current.Namespace,
+			ResourceVersion: current.ResourceVersion,
+		},
+		Spec: autoscalingv1.ScaleSpec{Replicas: replicas},
+	}
+	if _, err := client.AppsV1().StatefulSets(namespace).UpdateScale(ctx, name, updated, metav1.UpdateOptions{}); err != nil {
+		return previous, err
+	}
+	return previous, nil
 }
 
 // ScaleDeployment updates the replicas of a Deployment via its Scale
