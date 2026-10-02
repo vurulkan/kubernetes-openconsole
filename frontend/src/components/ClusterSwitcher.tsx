@@ -4,6 +4,7 @@ import { Check, ChevronsUpDown, Server } from 'lucide-react';
 import { activateCluster, listClustersPublic } from '../services/api';
 import { User } from '../services/api';
 import { confirm } from './ConfirmDialog';
+import { CLUSTER_SWITCHER_EVENT_NAME } from '../hooks/useGlobalShortcuts';
 
 type Props = {
   user: User;
@@ -20,6 +21,7 @@ export const ClusterSwitcher: React.FC<Props> = ({ user }) => {
   const [clusters, setClusters] = useState<ClusterRow[]>([]);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<number | null>(null);
+  const [focusedIdx, setFocusedIdx] = useState<number>(0);
   const ref = useRef<HTMLDivElement | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -76,6 +78,68 @@ export const ClusterSwitcher: React.FC<Props> = ({ user }) => {
 
   const active = clusters.find((c) => c.isActive);
   const label = active?.name ?? 'no cluster';
+
+  // Global `c` shortcut opens the menu (only for admins — the switcher is
+  // read-only for non-admins so there's nothing to open).
+  useEffect(() => {
+    if (!user.isAdmin) return;
+    const handler = () => {
+      if (clusters.length === 0) return;
+      setOpen(true);
+      // Default focus to the currently-active row so Enter is a no-op and
+      // arrow keys land somewhere sensible even on first open.
+      const idx = clusters.findIndex((c) => c.isActive);
+      setFocusedIdx(idx >= 0 ? idx : 0);
+    };
+    window.addEventListener(CLUSTER_SWITCHER_EVENT_NAME, handler as EventListener);
+    return () => window.removeEventListener(CLUSTER_SWITCHER_EVENT_NAME, handler as EventListener);
+  }, [user.isAdmin, clusters]);
+
+  // In-menu keyboard navigation: digits pick a cluster by index (1..9),
+  // arrows move, Enter commits the focused row, Esc closes. Only wired while
+  // the menu is open so none of these keys leak into page-level shortcuts.
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setOpen(false);
+        return;
+      }
+      if (clusters.length === 0) return;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setFocusedIdx((i) => (i + 1) % clusters.length);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setFocusedIdx((i) => (i - 1 + clusters.length) % clusters.length);
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const target = clusters[focusedIdx];
+        if (target && !target.isActive) void activate(target.id);
+        else setOpen(false);
+        return;
+      }
+      // Digit selection: 1-based so '1' maps to clusters[0]. Capped at 9 —
+      // beyond that users scroll with arrows (which keep working).
+      if (/^[1-9]$/.test(e.key)) {
+        const idx = Number(e.key) - 1;
+        if (idx < clusters.length) {
+          e.preventDefault();
+          const target = clusters[idx];
+          setFocusedIdx(idx);
+          if (!target.isActive) void activate(target.id);
+          else setOpen(false);
+        }
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [open, clusters, focusedIdx]);
 
   const activate = async (id: number) => {
     setBusy(id);
@@ -136,10 +200,11 @@ export const ClusterSwitcher: React.FC<Props> = ({ user }) => {
             Clusters
           </div>
           <ul className="max-h-72 overflow-auto pb-1">
-            {clusters.map((c) => (
+            {clusters.map((c, idx) => (
               <li key={c.id}>
                 <button
                   type="button"
+                  onMouseEnter={() => setFocusedIdx(idx)}
                   onClick={() => {
                     if (!user.isAdmin) return;
                     if (c.isActive) {
@@ -152,9 +217,16 @@ export const ClusterSwitcher: React.FC<Props> = ({ user }) => {
                   className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors ${
                     c.isActive
                       ? 'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-200'
+                      : focusedIdx === idx
+                      ? 'bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100'
                       : 'text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800'
                   } ${!user.isAdmin && !c.isActive ? 'cursor-not-allowed opacity-50' : ''}`}
                 >
+                  {idx < 9 && (
+                    <kbd className="rounded border border-slate-200 bg-white px-1 text-[9px] font-mono text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
+                      {idx + 1}
+                    </kbd>
+                  )}
                   <span className="flex-1 truncate font-mono">{c.name}</span>
                   {c.isActive && <Check size={14} className="text-brand-600 dark:text-brand-300" />}
                   {busy === c.id && (

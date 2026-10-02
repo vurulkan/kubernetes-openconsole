@@ -43,6 +43,16 @@ const GROUPS: Group[] = [
       { keys: ['n'], description: 'Focus the namespace filter' },
       { keys: ['e'], description: 'Toggle Live Events panel' },
       { keys: ['Esc'], description: 'Close Live Events panel (when open)' },
+      { keys: ['c'], description: 'Open cluster switcher (admin only)' },
+    ],
+  },
+  {
+    title: 'Cluster switcher',
+    rows: [
+      { keys: ['1', '9'], join: 'or', description: 'Pick cluster by index (1–9)' },
+      { keys: ['↑', '↓'], join: 'or', description: 'Move focus' },
+      { keys: ['↵'], description: 'Activate focused cluster' },
+      { keys: ['Esc'], description: 'Close without switching' },
     ],
   },
   {

@@ -9,6 +9,7 @@ type Options = {
 const SHORTCUTS_EVENT = 'openconsole:open-shortcuts';
 const PALETTE_EVENT = 'openconsole:open-palette';
 const EVENTS_PANEL_EVENT = 'openconsole:toggle-events';
+const CLUSTER_SWITCHER_EVENT = 'openconsole:open-cluster-switcher';
 
 export const dispatchOpenShortcuts = () => {
   window.dispatchEvent(new CustomEvent(SHORTCUTS_EVENT));
@@ -19,9 +20,13 @@ export const dispatchOpenPalette = () => {
 export const dispatchToggleEvents = () => {
   window.dispatchEvent(new CustomEvent(EVENTS_PANEL_EVENT));
 };
+export const dispatchOpenClusterSwitcher = () => {
+  window.dispatchEvent(new CustomEvent(CLUSTER_SWITCHER_EVENT));
+};
 export const SHORTCUTS_EVENT_NAME = SHORTCUTS_EVENT;
 export const PALETTE_EVENT_NAME = PALETTE_EVENT;
 export const EVENTS_PANEL_EVENT_NAME = EVENTS_PANEL_EVENT;
+export const CLUSTER_SWITCHER_EVENT_NAME = CLUSTER_SWITCHER_EVENT;
 
 const isTypingTarget = (el: EventTarget | null): boolean => {
   if (!el || !(el instanceof HTMLElement)) return false;
@@ -134,6 +139,14 @@ export const useGlobalShortcuts = ({ isAdmin, setTheme }: Options) => {
       if (key === 'e') {
         e.preventDefault();
         dispatchToggleEvents();
+        return;
+      }
+      // Single-key: open the cluster switcher dropdown. Inside the menu
+      // 1..9 pick a cluster by index, arrows navigate, Enter commits, Esc
+      // closes — all handled by ClusterSwitcher itself.
+      if (key === 'c') {
+        e.preventDefault();
+        dispatchOpenClusterSwitcher();
         return;
       }
     };

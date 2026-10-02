@@ -15,6 +15,7 @@ import {
 import { UsersSection } from './admin/UsersSection';
 import { GroupsSection } from './admin/GroupsSection';
 import { SessionsSection } from './admin/SessionsSection';
+import { RolePermissionsPanel } from './admin/RolePermissionsPanel';
 import { RolesSection } from './admin/RolesSection';
 import { useScopedShortcuts } from '../hooks/useScopedShortcuts';
 import { confirm } from '../components/ConfirmDialog';
@@ -137,6 +138,24 @@ const Divider: React.FC<{ className?: string }> = ({ className = '' }) => (
 const AdminPage: React.FC<{ user: User }> = ({ user }) => {
   const navigate = useNavigate();
   const [tab, setTab] = useState(() => localStorage.getItem('adminActiveTab') || 'users');
+  // Role Permissions UI switcher — new layout is default, classic persists via
+  // localStorage. The toggle sits inside the Roles tab header; the classic
+  // code path stays intact so a single click reverts the whole experience.
+  const [rolePermissionsLayout, setRolePermissionsLayout] = useState<'new' | 'classic'>(() => {
+    try {
+      const v = localStorage.getItem('rolePermissionsLayout');
+      return v === 'classic' ? 'classic' : 'new';
+    } catch (err) {
+      return 'new';
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('rolePermissionsLayout', rolePermissionsLayout);
+    } catch (err) {
+      /* ignore */
+    }
+  }, [rolePermissionsLayout]);
 
   // Admin page shortcuts: [ / ] cycle sub-sections (physical key — works on
   // Turkish Q where the same keys produce ğ / ü).
@@ -1106,7 +1125,27 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                 }}
               />
 
+              {rolePermissionsLayout === 'new' ? (
+                <SectionCard title="Role Permissions">
+                  <RolePermissionsPanel
+                    roles={roles}
+                    clusters={clustersList}
+                    namespaces={namespaceOptions}
+                    onError={setError}
+                    onSwitchClassic={() => setRolePermissionsLayout('classic')}
+                  />
+                </SectionCard>
+              ) : (
               <SectionCard title="Role Permissions">
+                <div className="mb-3 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setRolePermissionsLayout('new')}
+                    className="text-[11px] font-medium text-slate-500 underline-offset-4 hover:text-brand-600 hover:underline dark:text-slate-400 dark:hover:text-brand-300"
+                  >
+                    Switch to new view
+                  </button>
+                </div>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                   <NativeSelect
                     label="Role"
@@ -1285,6 +1324,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   )}
                 </div>
               </SectionCard>
+              )}
             </div>
           )}
 
