@@ -633,7 +633,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
         placeholder="Search namespaces…"
         className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm placeholder:text-slate-400 dark:placeholder:text-slate-500 dark:text-slate-500 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/15"
       />
-      <div className="flex flex-col gap-0.5 overflow-auto">
+      <div className="scrollbar-thin flex flex-col gap-0.5 overflow-auto pr-1">
         {filteredNamespaces.length === 0 && (
           <p className="rounded-md px-3 py-2 text-xs text-slate-400 dark:text-slate-500">
             {namespaces.length === 0

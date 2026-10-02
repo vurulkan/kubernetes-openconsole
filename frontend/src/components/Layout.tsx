@@ -203,7 +203,7 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, children }) => {
             </span>
           </div>
         )}
-        <div className="flex-1 overflow-auto">{panel}</div>
+        <div className="scrollbar-thin flex-1 overflow-auto">{panel}</div>
       </aside>
 
       {/* ── Mobile panel inside drawer ─────────────────────────────── */}
@@ -221,7 +221,7 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, children }) => {
               <X size={16} />
             </button>
           </div>
-          <div className="flex-1 overflow-auto" onClick={closeDrawer}>
+          <div className="scrollbar-thin flex-1 overflow-auto" onClick={closeDrawer}>
             {panel}
           </div>
         </aside>
