@@ -11,6 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -22,10 +23,31 @@ func NewResourceClient(manager *Manager) *ResourceClient {
 	return &ResourceClient{manager: manager}
 }
 
+// cache returns the InformerCache if it exists and the initial sync has
+// completed. During the warmup window (or when no cluster is active) the
+// callers fall back to a direct API call so the UI doesn't see an empty list.
+func (c *ResourceClient) cache() *InformerCache {
+	ic := c.manager.Informers()
+	if ic == nil || !ic.Synced() {
+		return nil
+	}
+	return ic
+}
+
 func (c *ResourceClient) ListNamespaces(ctx context.Context) ([]corev1.Namespace, error) {
 	client, ok := c.manager.Client()
 	if !ok || !c.manager.Ready() {
 		return nil, fmt.Errorf("kubernetes client not ready")
+	}
+	if ic := c.cache(); ic != nil {
+		objs, err := ic.namespaceLister.List(labels.Everything())
+		if err == nil {
+			out := make([]corev1.Namespace, 0, len(objs))
+			for _, o := range objs {
+				out = append(out, *o)
+			}
+			return out, nil
+		}
 	}
 	result, err := client.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -38,6 +60,16 @@ func (c *ResourceClient) ListPods(ctx context.Context, namespace string) ([]core
 	client, ok := c.manager.Client()
 	if !ok || !c.manager.Ready() {
 		return nil, fmt.Errorf("kubernetes client not ready")
+	}
+	if ic := c.cache(); ic != nil {
+		objs, err := ic.podLister.Pods(namespace).List(labels.Everything())
+		if err == nil {
+			out := make([]corev1.Pod, 0, len(objs))
+			for _, o := range objs {
+				out = append(out, *o)
+			}
+			return out, nil
+		}
 	}
 	result, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -59,6 +91,16 @@ func (c *ResourceClient) ListDeployments(ctx context.Context, namespace string) 
 	if !ok || !c.manager.Ready() {
 		return nil, fmt.Errorf("kubernetes client not ready")
 	}
+	if ic := c.cache(); ic != nil {
+		objs, err := ic.deploymentLister.Deployments(namespace).List(labels.Everything())
+		if err == nil {
+			out := make([]appsv1.Deployment, 0, len(objs))
+			for _, o := range objs {
+				out = append(out, *o)
+			}
+			return out, nil
+		}
+	}
 	result, err := client.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
@@ -78,6 +120,16 @@ func (c *ResourceClient) ListServices(ctx context.Context, namespace string) ([]
 	client, ok := c.manager.Client()
 	if !ok || !c.manager.Ready() {
 		return nil, fmt.Errorf("kubernetes client not ready")
+	}
+	if ic := c.cache(); ic != nil {
+		objs, err := ic.serviceLister.Services(namespace).List(labels.Everything())
+		if err == nil {
+			out := make([]corev1.Service, 0, len(objs))
+			for _, o := range objs {
+				out = append(out, *o)
+			}
+			return out, nil
+		}
 	}
 	result, err := client.CoreV1().Services(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -99,6 +151,16 @@ func (c *ResourceClient) ListConfigMaps(ctx context.Context, namespace string) (
 	if !ok || !c.manager.Ready() {
 		return nil, fmt.Errorf("kubernetes client not ready")
 	}
+	if ic := c.cache(); ic != nil {
+		objs, err := ic.configmapLister.ConfigMaps(namespace).List(labels.Everything())
+		if err == nil {
+			out := make([]corev1.ConfigMap, 0, len(objs))
+			for _, o := range objs {
+				out = append(out, *o)
+			}
+			return out, nil
+		}
+	}
 	result, err := client.CoreV1().ConfigMaps(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
@@ -119,6 +181,16 @@ func (c *ResourceClient) ListIngresses(ctx context.Context, namespace string) ([
 	if !ok || !c.manager.Ready() {
 		return nil, fmt.Errorf("kubernetes client not ready")
 	}
+	if ic := c.cache(); ic != nil {
+		objs, err := ic.ingressLister.Ingresses(namespace).List(labels.Everything())
+		if err == nil {
+			out := make([]networkingv1.Ingress, 0, len(objs))
+			for _, o := range objs {
+				out = append(out, *o)
+			}
+			return out, nil
+		}
+	}
 	result, err := client.NetworkingV1().Ingresses(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
@@ -138,6 +210,16 @@ func (c *ResourceClient) ListCronJobs(ctx context.Context, namespace string) ([]
 	client, ok := c.manager.Client()
 	if !ok || !c.manager.Ready() {
 		return nil, fmt.Errorf("kubernetes client not ready")
+	}
+	if ic := c.cache(); ic != nil {
+		objs, err := ic.cronjobLister.CronJobs(namespace).List(labels.Everything())
+		if err == nil {
+			out := make([]batchv1.CronJob, 0, len(objs))
+			for _, o := range objs {
+				out = append(out, *o)
+			}
+			return out, nil
+		}
 	}
 	result, err := client.BatchV1().CronJobs(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -162,6 +244,16 @@ func (c *ResourceClient) ListJobs(ctx context.Context, namespace string) ([]batc
 	client, ok := c.manager.Client()
 	if !ok || !c.manager.Ready() {
 		return nil, fmt.Errorf("kubernetes client not ready")
+	}
+	if ic := c.cache(); ic != nil {
+		objs, err := ic.jobLister.Jobs(namespace).List(labels.Everything())
+		if err == nil {
+			out := make([]batchv1.Job, 0, len(objs))
+			for _, o := range objs {
+				out = append(out, *o)
+			}
+			return out, nil
+		}
 	}
 	result, err := client.BatchV1().Jobs(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {

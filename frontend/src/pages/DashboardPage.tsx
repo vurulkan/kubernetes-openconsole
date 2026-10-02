@@ -18,6 +18,7 @@ import {
   Terminal,
 } from 'lucide-react';
 import Layout from '../components/Layout';
+import LiveEventsPanel from '../components/LiveEventsPanel';
 import PodExecModal from '../components/PodExecModal';
 import { PodNotReadyBadge } from '../components/PodNotReadyBadge';
 import { Alert, Badge, Button, Input, Modal, Spinner, Toggle } from '../components/ui';
@@ -126,6 +127,20 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
     }
   }, [viewMode]);
   const [restartTarget, setRestartTarget] = useState<string | null>(null);
+  const [eventsOpen, setEventsOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('dashboardEventsOpen') === '1';
+    } catch (err) {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('dashboardEventsOpen', eventsOpen ? '1' : '0');
+    } catch (err) {
+      /* ignore */
+    }
+  }, [eventsOpen]);
 
   const showActionNotice = (msg: string) => {
     setActionNotice(msg);
@@ -1506,6 +1521,13 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
           </div>
         </Modal>
       )}
+
+      <LiveEventsPanel
+        namespace={selectedNamespace}
+        open={eventsOpen}
+        onToggle={() => setEventsOpen(true)}
+        onClose={() => setEventsOpen(false)}
+      />
     </Layout>
   );
 };

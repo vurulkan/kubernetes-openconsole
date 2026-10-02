@@ -18,15 +18,38 @@ type Manager struct {
 	restConfig *rest.Config
 	ready      bool
 	lastError  string
+	bus        *EventBus
+	informers  *InformerCache
 }
 
 func NewManager() *Manager {
-	return &Manager{}
+	return &Manager{bus: NewEventBus()}
+}
+
+// EventBus exposes the shared bus so API handlers can subscribe clients to
+// informer-driven events without reaching into informer internals.
+func (m *Manager) EventBus() *EventBus {
+	return m.bus
+}
+
+// Informers returns the active informer cache or nil when no cluster is
+// configured. Callers must check Synced() before trusting lister results.
+func (m *Manager) Informers() *InformerCache {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.informers
 }
 
 func (m *Manager) ApplyCredentials(creds models.KubeCredentials) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// Stop any prior informer factory so a credential swap doesn't leak
+	// goroutines bound to the previous cluster.
+	if m.informers != nil {
+		m.informers.stopAll()
+		m.informers = nil
+	}
 
 	config, err := buildConfig(creds)
 	if err != nil {
@@ -44,6 +67,17 @@ func (m *Manager) ApplyCredentials(creds models.KubeCredentials) error {
 	m.restConfig = config
 	m.ready = true
 	m.lastError = ""
+
+	// Only start informers when the credentials actually point somewhere.
+	// Deactivate uses an empty token-method payload, which we treat as "no
+	// cluster" and leave the cache nil.
+	if creds.Method == "" || (creds.Method == "token" && creds.Server == "") {
+		m.ready = false
+		return nil
+	}
+	ic := newInformerCache(client, m.bus)
+	go ic.start(context.Background())
+	m.informers = ic
 
 	return nil
 }

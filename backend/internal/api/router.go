@@ -166,6 +166,9 @@ func (s *Server) Router() http.Handler {
 		r.Get("/ws/namespaces/{namespace}/pods/{name}/exec", s.handlePodExecWS)
 		r.Get("/ws/namespaces/{namespace}/deployments/{name}/logs", s.handleDeploymentLogsWS)
 		r.Get("/ws/namespaces/{namespace}/jobs/{name}/logs", s.handleJobLogsWS)
+		// Live informer feed. ?namespace=<ns> filters; cluster-scoped events
+		// (Namespace, Node, cluster-level K8s Events) always pass through.
+		r.Get("/ws/events", s.handleEventsWS)
 	})
 
 	r.Group(func(r chi.Router) {
