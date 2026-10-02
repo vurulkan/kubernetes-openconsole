@@ -69,9 +69,21 @@ const RESOURCE_META: Record<
 const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   const navigate = useNavigate();
   const [namespaces, setNamespaces] = useState<string[]>([]);
-  const [selectedNamespace, setSelectedNamespace] = useState<string | null>(null);
+  const [selectedNamespace, setSelectedNamespace] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('dashboardNamespace');
+    } catch (err) {
+      return null;
+    }
+  });
   const [allowedResources, setAllowedResources] = useState<Record<string, string[]>>({});
-  const [activeTab, setActiveTab] = useState<string>('');
+  const [activeTab, setActiveTab] = useState<string>(() => {
+    try {
+      return localStorage.getItem('dashboardResourceTab') ?? '';
+    } catch (err) {
+      return '';
+    }
+  });
   const [items, setItems] = useState<Array<Record<string, unknown>>>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [namespaceSearch, setNamespaceSearch] = useState('');
@@ -230,7 +242,21 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
       }
       const result = await listNamespaces();
       setNamespaces(result.namespaces);
-      const defaultNamespace = result.namespaces[0] ?? null;
+      // Honor the previously-active namespace on refresh when it is still in
+      // the user's allowed list; fall back to the first otherwise so a
+      // deleted / permission-revoked / cluster-switched entry doesn't leave
+      // the dashboard stuck on an invisible selection.
+      const stored = (() => {
+        try {
+          return localStorage.getItem('dashboardNamespace');
+        } catch (err) {
+          return null;
+        }
+      })();
+      const defaultNamespace =
+        stored && result.namespaces.includes(stored)
+          ? stored
+          : result.namespaces[0] ?? null;
       setSelectedNamespace(defaultNamespace);
     } catch (err) {
       setError((err as Error).message || 'Failed to load namespaces.');
@@ -244,6 +270,30 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   useEffect(() => {
     void loadNamespaces();
   }, []);
+
+  // Persist the current namespace + resource tab across refreshes. Hydration
+  // happens in the useState initializers above; the loadNamespaces /
+  // loadPermissions passes validate the stored values against what the user
+  // can actually see on the active cluster, so a stale entry won't crash.
+  useEffect(() => {
+    try {
+      if (selectedNamespace) {
+        localStorage.setItem('dashboardNamespace', selectedNamespace);
+      }
+    } catch (err) {
+      /* ignore */
+    }
+  }, [selectedNamespace]);
+
+  useEffect(() => {
+    try {
+      if (activeTab) {
+        localStorage.setItem('dashboardResourceTab', activeTab);
+      }
+    } catch (err) {
+      /* ignore */
+    }
+  }, [activeTab]);
 
   // Switch namespace when the command palette writes a #ns:<name> hash.
   useEffect(() => {
