@@ -659,7 +659,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
         onChange={(e) => setNamespaceSearch(e.target.value)}
         placeholder="Search namespaces…"
         data-shortcut="namespace-search"
-        className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm placeholder:text-slate-400 dark:placeholder:text-slate-500 dark:text-slate-500 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/15"
+        className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 dark:placeholder:text-slate-500 dark:text-slate-100 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/15"
       />
       <div className="scrollbar-thin flex flex-col gap-0.5 overflow-auto pr-1">
         {filteredNamespaces.length === 0 && (
@@ -944,17 +944,25 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
             let statusLabel: React.ReactNode = null;
             if (activeTab === 'pods') {
               if (isHealthy) {
-                // Running stays green regardless of restart count — the
-                // restart counter in the body already tells that story, and
-                // flipping the whole badge to amber for a long-ago restart
-                // was noisier than it was useful.
-                dotClass = 'status-dot status-dot-success';
+                // Badge is always green "Running" — the restart count is
+                // already surfaced in the body. When the pod has restarted,
+                // keep an amber ring around the green dot (card dot AND the
+                // one inside the badge) as a quiet "recovered from crash"
+                // tell for operators scanning the grid.
+                dotClass =
+                  restartCount > 0
+                    ? 'status-dot bg-emerald-500 ring-1 ring-amber-400/50 ring-offset-2 ring-offset-white dark:ring-offset-slate-900'
+                    : 'status-dot status-dot-success';
                 statusLabel = (
                   <Badge variant="success">
-                    <span className="h-1.5 w-1.5 animate-live rounded-full bg-emerald-500" />
-                    {restartCount > 0
-                      ? `Running · ${restartCount} restart${restartCount > 1 ? 's' : ''}`
-                      : 'Running'}
+                    <span
+                      className={`h-1.5 w-1.5 animate-live rounded-full bg-emerald-500 ${
+                        restartCount > 0
+                          ? 'ring-1 ring-amber-400/60 ring-offset-1 ring-offset-emerald-50 dark:ring-offset-emerald-500/15'
+                          : ''
+                      }`}
+                    />
+                    Running
                   </Badge>
                 );
               } else {

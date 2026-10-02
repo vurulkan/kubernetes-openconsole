@@ -104,20 +104,11 @@ export const ResourceListView: React.FC<Props> = ({
           },
           cell: (it) => {
             const cs =
-              ((it.status as any)?.containerStatuses as Array<{ ready?: boolean; restartCount?: number }>) ??
-              [];
-            const restarts = cs.reduce((s, c) => s + (c.restartCount ?? 0), 0);
+              ((it.status as any)?.containerStatuses as Array<{ ready?: boolean }>) ?? [];
             const allReady = cs.length > 0 && cs.every((c) => c.ready);
             const running = (it.status as any)?.phase === 'Running';
             const healthy = allReady && running;
-            if (healthy)
-              return (
-                <Badge variant="success">
-                  {restarts > 0
-                    ? `Running · ${restarts} restart${restarts > 1 ? 's' : ''}`
-                    : 'Running'}
-                </Badge>
-              );
+            if (healthy) return <Badge variant="success">Running</Badge>;
             return (
               <PodNotReadyBadge namespace={selectedNamespace} podName={nameOf(it)} />
             );
