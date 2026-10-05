@@ -1,149 +1,157 @@
 # Kubernetes OpenConsole
 
-Modern, production-ready Kubernetes visibility dashboard with strict application-level authorization. Runs inside Kubernetes, reads cluster data using a single ServiceAccount identity per cluster, and enforces access strictly in the app layer (no Kubernetes RBAC for end users).
+Modern, production-ready Kubernetes visibility and operations console with strict application-level authorization. Runs inside Kubernetes, reads cluster data using a single ServiceAccount identity per cluster, and enforces every access decision in the app layer (not via Kubernetes RBAC).
 
 ## Highlights
 
-- **Light / Dark / System theme** (user preference persisted; respects OS)
-- **⌘K / Ctrl+K command palette** (quick nav + namespace jump + theme switch)
-- **Prometheus `/metrics`**, dedicated `/livez` and `/readyz` endpoints
-- **Login brute-force protection** (5 fails per IP+user → 5-minute lock, audited)
-- **Security headers** including a strict CSP, `X-Frame-Options`, `Permissions-Policy`
-- **Kubernetes visibility** (Pods, Deployments, Services, ConfigMaps, Ingresses, CronJobs)
-- **Application-level RBAC**: user → groups → roles → per-namespace permissions
-- **Namespace discovery is permission-based** (no leakage)
-- **JWT authentication** with forced password change on first login
-- **Local users** (bcrypt) + **LDAP auth** (bind-based) + **Azure AD login** configurable via UI
-- **Audit logs** with pagination, filters, and CSV export
-- **WebSocket pod log streaming** with rate limiting
-- **Multi-cluster support** — save N clusters, switch via header, migration-safe
-- **Cluster connection management via UI only** (kubeconfig or token)
-- **Modern React + TypeScript UI**
+### Observability & live data
+- **Informer-driven lister cache** — list endpoints read from a `client-go` SharedInformerFactory, so the UI is instant and the API server isn't hammered by polling.
+- **Live Events side panel** — streams `added` / `updated` / `deleted` plus native `corev1.Event` objects over a WebSocket. Filter by All / K8s events / Warnings.
+- **Prometheus `/metrics`**, dedicated `/livez` (process) and `/readyz` (DB + kube client) endpoints.
+
+### Workloads shown in the Dashboard
+Pods, Deployments, **DaemonSets**, **StatefulSets**, **HorizontalPodAutoscalers (v2)**, Services, ConfigMaps, Ingresses, CronJobs, Jobs — card view, list view, label filters, saved views.
+
+### Write operations (opt-in per role, per namespace)
+- **Deployment restart** (`deployments:restart`)
+- **Deployment / StatefulSet scale** (`deployments:scale`, `statefulsets:scale`)
+- **YAML view + edit + server dry-run + apply** for every workload above (`{resource}:edit`), powered by Monaco. Diff view, dry-run returns the server-canonicalized object, optimistic concurrency via `resourceVersion`.
+- **Pod shell** (`pods:exec`) over WebSocket with xterm.js.
+- **Pod / Deployment logs** (`pods:logs`) with rate limiting.
+
+Every write action records `{resource}.{action}.{success|denied|failed|rate_limited}` audit entries and the HTTP response carries `X-Request-Id` for correlation with the audit mirror in stdout.
+
+### Access & identity
+- **User → Groups → Roles → per-cluster, per-namespace permissions** (application-level RBAC, no Kubernetes RBAC for end users).
+- **Namespace discovery is permission-based** (no leakage of names you can't access).
+- **Multi-cluster** — save N clusters, switch via header dropdown or the `c` keyboard shortcut.
+- **Local users** (bcrypt) + **LDAP** (bind-based, searchable + importable) + **Azure AD** single-tenant login — all configurable via UI.
+- **JWT authentication** with forced password change on first login.
+- **Session management** (Admin → Sessions): list every active token, revoke individual sessions or every session for a user, change-password revokes everything.
+- **Login brute-force protection** (5 fails per IP+user → 5-minute lock, audited).
+
+### UX
+- **Light / Dark / System theme** (persisted; respects OS).
+- **Internationalization — English & Turkish** (locale switcher next to the theme toggle; defaults to browser language, persists user override). TR covers nav, Dashboard, Admin, audit, keyboard cheat sheet.
+- **Keyboard-first navigation**: `⌘K` / `Ctrl+K` command palette, `?` cheat sheet, chord shortcuts for nav/theme, `c` cluster switcher, `v` saved views, `e` live events panel, `n` namespace filter focus. TR keyboard positions (`ğ` / `ü` / `.`) are mapped to the US `[` / `]` / `/` by physical key, so the shortcuts don't break on a TR Q layout.
+- **Saved views** — persist (namespace, tab, search, viewMode) under a name in localStorage.
+- **Label filters in the search box** — `label:app=foo`, `label:tier`, name tokens, AND-combined.
+- **Audit logs** with pagination, filters, CSV export.
+- **Admin Role Permissions redesign** — role sidebar, grouped grant cards (namespaces that share identical grants merge), bulk Add Permissions modal with templates (Viewer / Developer / SRE / Admin), copy-from-role, inline edit.
+
+### Security headers
+- Strict CSP, `X-Frame-Options: DENY`, `Permissions-Policy`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`.
+- CSP allows `cdn.jsdelivr.net` and `worker-src blob:` so Monaco (lazy-loaded) can run; tighten these if you self-host Monaco in an air-gapped deploy.
 
 ## Architecture
 
-- **Backend**: Go + `client-go`. The backend communicates directly with the Kubernetes API server using client-go.
-- **Frontend**: React + TypeScript
-- **Database**: SQLite
-- **Deployment**: Docker + Kubernetes manifests
+- **Backend**: Go + `client-go` + chi router + slog + sqlite (modernc.org/sqlite).
+- **Frontend**: React 18 + TypeScript + Vite + Tailwind + Monaco (lazy, CDN) + react-i18next + xterm.js.
+- **Deployment**: single-container Docker image; Kubernetes manifests in `deploy/`.
 
-## Option A: Build Yourself
+## Build
+
+### Option A — your own image
 
 ```bash
-cd /path/to/kubernetes-openconsole
 docker build -t kubernetes-openconsole:local .
 ```
 
-## Option B: Use the Prebuilt Image (GHCR)
-
-Update `deploy/deployment.yaml` to use the published image:
+### Option B — prebuilt image (GHCR)
 
 ```yaml
-image: ghcr.io/vurulkan/kubernetes-openconsole:latest
+image: ghcr.io/vurulkan/kubernetes-openconsole:latest   # or :2.9.0 to pin
 ```
 
-## Run (local Docker)
+Published tags: `latest`, `2.0.0`, `2.1.0` → `2.9.0`. Always pin a specific version in production.
+
+## Run (local Docker, no cluster)
 
 ```bash
 docker run --rm -p 8080:8080 \
-  -e LOG_RETENTION_DAYS=30 \
-  -e TIMEZONE=Europe/Istanbul \
   -e DATA_PATH=/data/app.db \
   -e STATIC_DIR=/app/public \
+  -e TIMEZONE=Europe/Istanbul \
+  -e LOG_FORMAT=json \
+  -e LOG_LEVEL=info \
+  -e LOG_INCLUDE_AUDIT=true \
+  -e MAX_REPLICAS=100 \
   -v kubernetes-openconsole-data:/data \
-  kubernetes-openconsole:local
+  ghcr.io/vurulkan/kubernetes-openconsole:latest
 ```
 
-> If you prefer ephemeral storage: set `DATA_PATH=/tmp/app.db` without a volume mount.
+> Ephemeral storage: drop the volume and set `DATA_PATH=/tmp/app.db`.
 
-## Kubernetes Deploy
-
-Apply manifests in `deploy/`:
+## Kubernetes deploy
 
 ```bash
 kubectl apply -f deploy/namespace.yaml
 kubectl apply -f deploy/pvc.yaml
 kubectl apply -f deploy/deployment.yaml
 kubectl apply -f deploy/service.yaml
+# then the ServiceAccount + ClusterRole + binding (see "Kubernetes API Access" below)
 ```
 
-## Environment Variables
+The shipped `deploy/deployment.yaml` carries the recommended env, resource requests / limits, `/livez` liveness, `/readyz` readiness, and runs as non-root with `seccompProfile: RuntimeDefault`.
+
+## Environment variables
 
 ### Core
-- `LOG_RETENTION_DAYS` (default: 30) — Audit log retention in days (purged automatically).
-- `TIMEZONE` (default: UTC) — Used for audit log timestamps.
-- `DATA_PATH` (default: `/data/app.db`) — SQLite DB location.
-- `STATIC_DIR` (default: `/app/public`) — Served React build output.
+- `DATA_PATH` (default `/data/app.db`) — SQLite DB location.
+- `STATIC_DIR` (default `/app/public`) — Served React build output.
+- `TIMEZONE` (default `UTC`) — Used for audit log timestamps.
+- `LOG_RETENTION_DAYS` (default `30`) — Audit log retention (purged automatically).
+- `MAX_REPLICAS` (default `100`) — Hard upper bound the Scale endpoint accepts for Deployment / StatefulSet scaling.
 
 ### Structured logging (slog)
-Logs go to stdout via Go's `log/slog`. In production set `LOG_FORMAT=json` so
-Filebeat / Fluent Bit / Vector can ship them straight to Elastic/Kibana or Loki.
+Logs go to stdout via Go's `log/slog`. In production set `LOG_FORMAT=json` so Filebeat / Fluent Bit / Vector can ship them directly to Elastic / Kibana / Loki.
 
-- `LOG_LEVEL` (default: `info`) — `debug` | `info` | `warn` | `error`
-- `LOG_FORMAT` (default: `text`) — `text` for humans, `json` for log shippers
-- `LOG_OUTPUT` (default: `stdout`) — `stdout` | `stderr`
-- `LOG_ADD_SOURCE` (default: `false`) — include `file:line` in every record
-- `LOG_INCLUDE_AUDIT` (default: `true`) — mirror DB audit entries to console
-  with event name `audit`, so you get the same records twice: durable in SQLite,
-  streamable to your log pipeline
-- `APP_ENV` (optional) — label attached to every log record (`env=prod`)
-- `APP_VERSION` (optional) — label attached to every log record (`version=1.0.7`)
+- `LOG_LEVEL` (default `info`) — `debug` | `info` | `warn` | `error`.
+- `LOG_FORMAT` (default `text`) — `text` for humans, `json` for log shippers.
+- `LOG_OUTPUT` (default `stdout`) — `stdout` | `stderr`.
+- `LOG_ADD_SOURCE` (default `false`) — include `file:line` in every record.
+- `LOG_INCLUDE_AUDIT` (default `true`) — mirror DB audit entries to stdout with event name `audit`. Each audit line carries `request_id` so you can join it to the matching `http.request` entry in Elastic.
+- `APP_ENV`, `APP_VERSION` — optional static labels attached to every log record.
 
 Example JSON record (`LOG_FORMAT=json`):
 
 ```json
-{"time":"2026-10-01T10:12:33Z","level":"INFO","msg":"http.request",
- "service":"openconsole","method":"GET","path":"/api/namespaces",
- "status":200,"duration_ms":12,"remote_ip":"10.0.0.4",
- "request_id":"q7Jk8-ab0t","user_agent":"curl/8.4.0"}
+{"time":"2026-10-05T08:14:05Z","level":"INFO","msg":"audit",
+ "service":"openconsole","event":"deployment.scale.success",
+ "user":"mustafav","namespace":"payments","resource_type":"deployment",
+ "resource_name":"nginx (from=3 to=5)",
+ "request_id":"qXpB6yXONDiuXKX2"}
 ```
 
-Each response carries an `X-Request-Id` header matching the `request_id` field,
-so request logs, audit events and the client can be correlated end-to-end.
+Every HTTP response also carries an `X-Request-Id` header matching the `request_id` field.
+
+### Azure AD OAuth (only if used)
+Configured through **Admin → Azure AD** at runtime — no env vars.
+
+### LDAP (only if used)
+Configured through **Admin → LDAP** at runtime — no env vars.
 
 ---
 
-# Kubernetes API Access (ServiceAccount Setup)
+# Kubernetes API Access (ServiceAccount setup)
 
-Kubernetes OpenConsole runs with a single cluster identity and enforces authorization strictly at the application layer.
+OpenConsole runs with a single cluster identity and enforces authorization strictly at the application layer. It does **not** act as a Kubernetes security boundary — it only reflects the permissions granted to its ServiceAccount.
 
-It does **not** act as a Kubernetes security boundary.  
-It only reflects the permissions granted to its ServiceAccount.
+> ⚠️ **Quick Start (In-Cluster)**
+>
+> When OpenConsole runs inside the same cluster it monitors, it uses the mounted ServiceAccount token automatically. You can skip the kubeconfig steps below and go straight to **[First Login](#first-login)**.
+>
+> Not recommended for production: create a **dedicated** ServiceAccount with a minimally-scoped ClusterRole below rather than reusing `default`.
 
-Below is the recommended setup using a dedicated ServiceAccount in the `kubernetes-openconsole` namespace.
-
----
-
-> ⚠️ **Quick Start (In-Cluster Default)**
->
-> If OpenConsole is deployed inside the same Kubernetes cluster it will monitor,
-> it can automatically use the in-cluster configuration via the mounted
-> ServiceAccount token (typically the default ServiceAccount).
->
-> In that case, you may skip the kubeconfig generation steps below and proceed directly to:
->
-> 👉 **[First Login](#first-login)**
->
-> ⚠️ While this works for quick testing, it is **not recommended for production**.
->
-> For production environments it is strongly recommended to:
->
-> - Create a dedicated ServiceAccount
-> - Assign a minimally-scoped ClusterRole (least-privilege for the actions you intend to grant through OpenConsole)
-> - Avoid granting permissions to the default ServiceAccount
->
-> This reduces blast radius and aligns with least-privilege principles.
-
-
-## Create ServiceAccount
+## 1. Create the ServiceAccount
 
 ```bash
 kubectl create serviceaccount openconsole-reader -n kubernetes-openconsole
 ```
 
+## 2. Create the ClusterRole
 
-
-## Create ClusterRole (Read-Only + Logs + Events + Namespace List)
+Covers everything the Dashboard needs today, including the YAML edit flow (`update`), scale (`.../scale: update`), restart (`deployments: patch`), pod exec, pod logs, and the informer `watch`.
 
 Create `openconsole-clusterrole.yaml`:
 
@@ -153,6 +161,8 @@ kind: ClusterRole
 metadata:
   name: openconsole-readonly
 rules:
+  # Core API group — reads (list for everything the Dashboard tabs show,
+  # plus events for the Live Events panel).
   - apiGroups: [""]
     resources:
       - namespaces
@@ -162,47 +172,83 @@ rules:
       - events
     verbs: ["get", "list", "watch"]
 
+  # Pod logs (pods:logs application permission).
   - apiGroups: [""]
     resources:
       - pods/log
     verbs: ["get"]
 
+  # Pod shell (pods:exec application permission). Omit if you'll never
+  # grant pods:exec.
   - apiGroups: [""]
     resources:
       - pods/exec
-    verbs: ["create"]  # required for the Pod Shell (pods:exec) action; omit if you do not grant that permission
+    verbs: ["create"]
 
+  # Writes on core resources, for the YAML apply flow ({resource}:edit).
+  # Omit `update` on any resource whose edit permission you'll never grant.
+  - apiGroups: [""]
+    resources:
+      - pods
+      - services
+      - configmaps
+    verbs: ["update"]
+
+  # apps/v1 workloads.
   - apiGroups: ["apps"]
     resources:
       - deployments
-    verbs: ["get", "list", "watch", "patch"]  # patch required for rollout restart
+      - daemonsets
+      - statefulsets
+    verbs: ["get", "list", "watch"]
 
+  # deployments writes: patch for restart, update for YAML apply.
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+    verbs: ["patch", "update"]
+
+  # daemonsets / statefulsets YAML apply.
+  - apiGroups: ["apps"]
+    resources:
+      - daemonsets
+      - statefulsets
+    verbs: ["update"]
+
+  # Scale subresource (deployments:scale + statefulsets:scale).
   - apiGroups: ["apps"]
     resources:
       - deployments/scale
-    verbs: ["get", "update"]  # required for the Scale action
+      - statefulsets/scale
+    verbs: ["get", "update"]
 
+  # HorizontalPodAutoscaler v2 — the Dashboard renders metrics from v2.
+  - apiGroups: ["autoscaling"]
+    resources:
+      - horizontalpodautoscalers
+    verbs: ["get", "list", "watch", "update"]
+
+  # Ingress.
   - apiGroups: ["networking.k8s.io"]
     resources:
       - ingresses
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "update"]
 
+  # Batch.
   - apiGroups: ["batch"]
     resources:
       - cronjobs
       - jobs
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "update"]
 ```
 
-Apply it:
+Apply:
 
 ```bash
 kubectl apply -f openconsole-clusterrole.yaml
 ```
 
-
-
-## Bind ClusterRole to ServiceAccount
+## 3. Bind ClusterRole → ServiceAccount
 
 ```bash
 kubectl create clusterrolebinding openconsole-readonly-binding \
@@ -210,21 +256,28 @@ kubectl create clusterrolebinding openconsole-readonly-binding \
   --serviceaccount=kubernetes-openconsole:openconsole-reader
 ```
 
+## 4. Reference the ServiceAccount in the Deployment
 
+Already set in `deploy/deployment.yaml`:
 
-## Generate Access Token (Kubernetes 1.24+)
+```yaml
+spec:
+  template:
+    spec:
+      serviceAccountName: openconsole-reader
+```
+
+## 5. (Only for out-of-cluster use) Generate a token + minimal kubeconfig
+
+If OpenConsole runs outside the cluster it monitors, create a long-lived token and feed a kubeconfig into **Admin → Clusters** at the UI.
 
 ```bash
 kubectl create token openconsole-reader \
   -n kubernetes-openconsole \
-  --duration=8760h
+  --duration=8760h    # 1 year; adjust as needed
 ```
 
-> 8760h = 1 year. Adjust as needed.
-
-
-
-## Create Minimal kubeconfig
+Minimal kubeconfig:
 
 ```yaml
 apiVersion: v1
@@ -232,12 +285,12 @@ kind: Config
 clusters:
 - name: target-cluster
   cluster:
-    server: https://YOUR_API_SERVER # from your kubeconfig
-    certificate-authority-data: YOUR_CA_DATA # from your kubeconfig
+    server: https://YOUR_API_SERVER
+    certificate-authority-data: YOUR_CA_DATA
 users:
 - name: openconsole-reader
   user:
-    token: YOUR_GENERATED_TOKEN # previous step
+    token: YOUR_GENERATED_TOKEN
 contexts:
 - name: openconsole-context
   context:
@@ -246,88 +299,90 @@ contexts:
 current-context: openconsole-context
 ```
 
-
-
-## Add serviceAccount to deployment
-```yaml
-...
-    metadata:
-      labels:
-        app: kubernetes-openconsole
-    spec:
-      serviceAccountName: openconsole-reader # -> add this line
-      securityContext:
-        runAsNonRoot: true
-...
-```
+---
 
 # Pod Shell (exec)
 
-Interactive shell into a running container, gated by application permission
-`pods:exec`. Off by default on every role; admins opt in per role, per namespace.
+Interactive shell into a running container, gated by application permission `pods:exec`. Off by default on every role; admins opt in per role, per namespace.
 
-- `GET /ws/clusters/default/namespaces/{ns}/pods/{name}/exec?container=<c>&command=/bin/sh`
-  (WebSocket; binary stdin / combined stdout, JSON control frames for terminal resize).
-- Session UI uses xterm.js, remembers theme, supports container picker on
-  multi-container pods and shell picker (`/bin/sh`, `/bin/bash`, `/bin/ash`).
+- Endpoint: `GET /ws/namespaces/{namespace}/pods/{name}/exec?container=<c>&command=/bin/sh` (WebSocket).
+- xterm.js UI with container picker on multi-container pods and shell picker (`/bin/sh`, `/bin/bash`, `/bin/ash`).
 - Idle timeout: **5 minutes** without stdin automatically closes the session.
-- Each session logs `pod.exec.start` and `pod.exec.end` (with duration and
-  outcome) to both the audit DB and the structured console log.
+- Each session logs `pod.exec.start` and `pod.exec.end` (with duration and outcome) to both the audit DB and the structured console log.
 - ClusterRole must grant `pods/exec: create` for this to work.
 
-Security notes:
+**Security notes**
 - Exec is the highest-risk action in OpenConsole; grant it narrowly.
 - Non-root pod admission policies in your cluster still apply.
-- Session recording of stdout is deferred to a later milestone; command events
-  (start/end) are already captured.
+- Session recording of stdout is deferred to a later milestone; command events (start/end) are already captured.
 
-# Deployment Write Actions (restart, scale)
+# Deployment & workload write actions
 
-OpenConsole can **restart** (rolling restart) and **scale** Deployments when the
-caller has been granted the matching application-level permissions:
+OpenConsole can restart, scale, and apply YAML to workloads when the caller has been granted the matching application-level permissions:
 
-- `deployments:restart` → `POST /api/namespaces/{ns}/deployments/{name}/restart`
-- `deployments:scale`   → `POST /api/namespaces/{ns}/deployments/{name}/scale`
-  with body `{"replicas": <int>}`
+| Permission                   | Endpoint                                                                 |
+|------------------------------|--------------------------------------------------------------------------|
+| `deployments:restart`        | `POST /api/namespaces/{ns}/deployments/{name}/restart`                   |
+| `deployments:scale`          | `POST /api/namespaces/{ns}/deployments/{name}/scale` body `{"replicas"}` |
+| `statefulsets:scale`         | `POST /api/namespaces/{ns}/statefulsets/{name}/scale` body `{"replicas"}` |
+| `{resource}:edit`            | `POST /api/namespaces/{ns}/{resource}/{name}/apply` body `{"yaml","dryRun"}` |
 
-Both actions are **off by default** on every role — admins opt in explicitly in
-*Admin → Roles → Role Permissions*, per role and per namespace.
+The `edit` action covers Pod, Deployment, DaemonSet, StatefulSet, HPA, Service, ConfigMap, Ingress, CronJob, Job — same handler for all, powered by the `dynamic` client with GVK fallback and server-side `DryRun=All`.
 
-- Every call records an audit entry — success, denied, failed, and rate_limited
-  outcomes are all captured.
-- Per-user rate limit: 5 burst, 1 token every 6s. 429 with `Retry-After` when exceeded.
+- Every call records an audit entry — `success`, `denied`, `rate_limited`, `failed` outcomes.
+- Per-user rate limit: 5 burst, 1 token every 6 s. 429 with `Retry-After` when exceeded.
 - Scale accepts replicas between 0 and `MAX_REPLICAS` (env, default 100).
-- The ServiceAccount's ClusterRole must grant `apps.deployments: patch` and
-  `apps.deployments/scale: get,update` (see the ClusterRole example above).
+- YAML apply enforces optimistic concurrency via `metadata.resourceVersion` — a stale edit returns 409.
+- Error mapping: the API server's `apierrors` reason maps to the right HTTP status (NotFound → 404, Conflict → 409, Invalid → 400, Timeout → 504) so a reverse proxy / Cloudflare doesn't wrap a 5xx around a 4xx issue.
 
-Request/audit correlation: every HTTP response carries `X-Request-Id`; the same
-id appears in the structured request log, the deployment.action log, and the
-audit entry.
+Request / audit correlation: every HTTP response carries `X-Request-Id`; the same id appears in the structured request log and in the audit mirror.
 
-# Security Notes
+# Sessions (Admin → Sessions)
 
-- Grant each verb (patch, update on scale, pods/exec, pods/log) only if the
-  matching application permission is also handed to at least one role.
-- OpenConsole's ServiceAccount should never be granted more than the actions
-  the UI will expose; secrets access and port-forward are intentionally not
-  used by the app.
-- Token rotation is recommended (every 6–12 months)
-- Do not store generated tokens in Git
-- Prefer one ServiceAccount per cluster
+Every issued token lives in `session_tokens` and is checked on every request.
+
+- List all sessions, filter "Only active".
+- Revoke a single session, or revoke every session for a user.
+- Change-password revokes every session the user has (including the browser that initiated the change).
+- Rolling upgrades don't log everyone out — JWTs issued before 2.3.0 are honoured until their natural expiry.
+- Audit entries: `session.revoke`, `session.revoke_all`.
+
+# Keyboard shortcuts
+
+Open the full cheat sheet with `?`. The core set:
+
+- Global: `⌘K` / `Ctrl+K` command palette, `?` cheat sheet, `Esc` close active modal.
+- Navigate: `g d` → Dashboard, `g a` → Admin.
+- Theme: `t l` light, `t d` dark, `t s` system.
+- Dashboard: `[` / `]` (or `ğ` / `ü` on a TR Q layout) previous / next resource tab, `r` refresh, `/` (or `.`) focus the search box, `n` focus the namespace filter, `e` toggle Live Events, `c` open the cluster switcher, `v` open Saved Views.
+- Cluster switcher / Saved Views when open: `1`–`9` pick by index, `↑/↓` move focus, `Enter` activate, `Esc` close.
+
+# Internationalization
+
+- English (`en`) and Turkish (`tr`) ship in the box.
+- Locale switcher: compact `EN / TR` chip pair in the header, and a copy on the LoginPage pinned top-right.
+- Resolution order: user preference in localStorage → `navigator.language` prefix → `en`. The user override persists across refreshes.
+
+# Security notes
+
+- Grant each verb (`patch`, `update`, `pods/exec`, `pods/log`) only if the matching application permission will actually be handed to at least one role.
+- OpenConsole's ServiceAccount should never be granted more than the actions the UI will expose — `secrets` access and port-forward are intentionally not used by the app.
+- Token rotation is recommended (every 6–12 months).
+- Do not store generated tokens in Git.
+- Prefer one ServiceAccount per cluster.
 - OpenConsole does not bypass Kubernetes RBAC; it operates strictly within the permissions granted to its ServiceAccount.
 
+## Recommended production pattern
 
-## Recommended Production Pattern
-
-- One ServiceAccount per cluster
-- One kubeconfig per cluster
-- Store tokens securely
-- Rotate periodically
-- Avoid using personal user credentials
+- One ServiceAccount per cluster.
+- One kubeconfig per cluster (only needed when running outside the cluster you monitor).
+- Store tokens securely.
+- Rotate periodically.
+- Avoid using personal user credentials.
 
 ---
 
-## First Login
+## First login
 
 On first startup a default admin is created:
 
@@ -339,14 +394,15 @@ You will be forced to change the password on first login.
 ## Usage
 
 1. Log in as admin.
-2. **Admin → Cluster**: upload kubeconfig or token, validate, apply.
+2. **Admin → Clusters**: add one or more clusters (kubeconfig or token), validate, activate one.
 3. **Admin → LDAP / Azure AD**: configure optional identity providers.
-4. **Admin → Users/Groups/Roles**: define access.
-5. **Admin → Audit Logs**: filter, search, export CSV.
+4. **Admin → Users / Groups / Roles**: define access. Use the new Role Permissions screen for bulk grants, templates (Viewer / Developer / SRE / Admin), and copy-from-role.
+5. **Admin → Sessions**: monitor and revoke tokens.
+6. **Admin → Audit Logs**: filter, search, export CSV.
 
-## Example LDAP (Active Directory) Config
+## Example LDAP (Active Directory) config
 
-> Replace the values with your environment. The example below is anonymized.
+> Replace with your environment. The example below is anonymized.
 
 - **host**: `10.10.20.15`
 - **port**: `389`
@@ -356,33 +412,33 @@ You will be forced to change the password on first login.
 - **user base dn**: `OU=Engineering,OU=Users,DC=example,DC=corp`
 - **user filter**: `(sAMAccountName=%s*)`
 
-## Azure AD Login (Single-Tenant, Optional)
+## Azure AD login (single-tenant, optional)
 
-Azure AD is supported as an additional login method and can run in parallel with local/LDAP authentication.
+Azure AD runs in parallel with local / LDAP authentication.
 
 ### Behavior
 
-- Azure AD login is configured from **Admin → Azure AD**.
-- On first successful Azure AD login, the user is automatically created in the local database.
-- RBAC still uses the same local model (**Users → Groups → Roles**).
-- Logout is application-local only (does not sign out globally from Microsoft).
+- Configured from **Admin → Azure AD**.
+- On first successful Azure AD login, the user is auto-created in the local database.
+- RBAC still uses the local model (**Users → Groups → Roles**).
+- Logout is application-local only (does not sign the user out of Microsoft globally).
 
-### Required Azure App Registration Settings
+### Required Azure App Registration settings
 
-- **Tenant type**: Single tenant
+- **Tenant type**: single tenant
 - **Redirect URI**: `https://<your-domain>/api/auth/azure/callback`
 - **Scopes used by app**: `openid profile email`
 
-> After first login, assign groups/roles in **Admin → Users/Groups/Roles** to grant namespace/resource access.
+## Tips & gotchas
 
-## Tips & Gotchas
-
-- **Cluster connection is UI-only**. No env vars or mounted kubeconfigs.
+- **Cluster connection is UI-only**. No env vars or mounted kubeconfigs are consumed by the backend.
 - **Namespace visibility is permission-based**; if a user sees nothing, check role permissions.
-- If LDAP bind password is already configured, toggle **Update Bind Password** only when changing it.
-- Audit log filters can combine user/action/namespace/date range.
+- If LDAP bind password is already configured, toggle **Update Bind Password** only when actually changing it.
+- Audit log filters combine user / action / namespace / date range.
 - Pod logs stream via WebSocket; verify connectivity from the backend pod to the API server.
+- The YAML modal is read-only by default — the Edit button only appears when the viewer has `{resource}:edit`.
+- Monaco loads from `cdn.jsdelivr.net`. In air-gapped deployments, self-host the `vs` folder and point `@monaco-editor/react`'s `loader.config({ paths: { vs: '/vs' } })` at the local path, then tighten CSP back to `self`.
 
 ---
 
-Kubernetes OpenConsole is designed as an internal visibility platform and is **not** a Kubernetes security boundary.
+Kubernetes OpenConsole is designed as an internal visibility and operations platform and is **not** a Kubernetes security boundary.
