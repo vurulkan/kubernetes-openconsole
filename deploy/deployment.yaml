@@ -29,38 +29,91 @@ spec:
             - containerPort: 8080
               name: http
           env:
-            # ── Persistence ─────────────────────────────────────────────
+            # ── Persistence ──────────────────────────────────────────────────────
+            # DATA_PATH: Path to the SQLite file that holds users, groups, roles,
+            # permissions, clusters, audit logs and session_tokens. Default is
+            # /data/app.db — must be on a persistent volume if you want anything
+            # to survive a pod restart.
             - name: DATA_PATH
               value: /data/app.db
+
+            # STATIC_DIR: Where the compiled React bundle lives inside the image.
+            # Only change if you remount a different frontend bundle. Default
+            # /app/public matches the Dockerfile layout.
             - name: STATIC_DIR
               value: /app/public
+
+            # TIMEZONE: IANA zone name used when rendering audit log timestamps
+            # in the UI. Does not affect how timestamps are stored (UTC in DB).
+            # Default UTC.
             - name: TIMEZONE
               value: Europe/Istanbul
-            # ── Logging (ES-ready since 2.9.0) ──────────────────────────
-            # JSON format so Filebeat/Fluent-bit can parse each line out of
-            # stdout without a grok pattern; audit mirror carries request_id
-            # so the audit entry correlates with the HTTP request log.
+
+            # ── Logging (slog → stdout) ──────────────────────────────────────────
+            # LOG_FORMAT: json for log shippers (Filebeat / Fluent-bit / Vector
+            # → Elastic / Loki) so each line is a parseable object; text for
+            # eyes-on-stdout. Default text.
             - name: LOG_FORMAT
               value: json
+
+            # LOG_LEVEL: debug | info | warn | error. Default info. "debug"
+            # includes request bodies and informer sync details — noisy; use
+            # briefly for triage, not in steady-state production.
             - name: LOG_LEVEL
               value: info
+
+            # LOG_OUTPUT: stdout | stderr. Default stdout. kubelet captures both
+            # equally; the knob exists for sidecar / init-container scenarios.
             - name: LOG_OUTPUT
               value: stdout
+
+            # LOG_ADD_SOURCE: when "true" every log record includes file:line
+            # of the slog call site. Useful for triage, costs log volume.
+            # Default "false".
             - name: LOG_ADD_SOURCE
               value: "false"
+
+            # LOG_INCLUDE_AUDIT: when "true" every DB audit entry is also
+            # mirrored to stdout as msg=audit with event / user / namespace /
+            # resource_type / resource_name / request_id / ts. Lets a log
+            # pipeline consume audit events without reading the SQLite file.
+            # Default "true". Set "false" only if you plan to tail the DB
+            # yourself.
             - name: LOG_INCLUDE_AUDIT
               value: "true"
-            # ── Audit retention ─────────────────────────────────────────
+
+            # ── Audit retention ──────────────────────────────────────────────────
+            # LOG_RETENTION_DAYS: how many days of audit rows the backend keeps
+            # in SQLite. A background job purges older rows every ~hour. 0 means
+            # never purge. Default 30.
             - name: LOG_RETENTION_DAYS
               value: "30"
-            # ── Deployment / StatefulSet scale cap (per-call guardrail) ─
+
+            # ── Operational guardrails ───────────────────────────────────────────
+            # MAX_REPLICAS: upper bound the Scale endpoint accepts for
+            # Deployment / StatefulSet scaling, per call. Guards against a slip
+            # ("scale to 10000"). Default 100.
             - name: MAX_REPLICAS
               value: "100"
+
+            # ── Optional labels on every log record ──────────────────────────────
+            # APP_ENV: deployment environment label (dev / staging / prod).
+            # Shows up as "env=…" on every structured log line — useful for
+            # cross-environment Elastic queries. Uncomment to use.
+            # - name: APP_ENV
+            #   value: prod
+
+            # APP_VERSION: static version label attached to every log line.
+            # Handy if you deploy multiple parallel versions (canary, blue /
+            # green). Uncomment to use.
+            # - name: APP_VERSION
+            #   value: "2.9.0"
           resources:
-            # Requests cover a quiet steady-state (small cluster, lister
-            # cache in the low-MB range). Limits give headroom for informer
-            # cache growth on larger clusters (every Pod/Deployment/Service
-            # resident). Bump memory first if OOMKilled under load.
+            # Requests cover a quiet steady-state (small cluster, lister cache
+            # in the low-MB range). Limits give headroom for informer cache
+            # growth on larger clusters (every Pod / Deployment / Service /
+            # DaemonSet / StatefulSet / HPA resident in memory). Bump memory
+            # first if the pod is OOMKilled under load.
             requests:
               cpu: 300m
               memory: 384Mi
@@ -68,9 +121,9 @@ spec:
               cpu: "1"
               memory: 1Gi
           livenessProbe:
-            # Liveness just confirms the process is accepting requests —
-            # DB / cluster state deliberately excluded so a transient DB blip
-            # doesn't restart the pod.
+            # Liveness just confirms the process is accepting requests — DB /
+            # cluster state deliberately excluded so a transient DB blip doesn't
+            # restart the pod.
             httpGet:
               path: /livez
               port: http
@@ -79,9 +132,9 @@ spec:
             timeoutSeconds: 3
             failureThreshold: 3
           readinessProbe:
-            # Readiness is the fuller check: DB reachable AND (if a cluster
-            # is configured) the kube client is ready. Returns 503 otherwise
-            # so Kubernetes rolls the pod out of the Service endpoints.
+            # Readiness is the fuller check: DB reachable AND (if a cluster is
+            # configured) the kube client is ready. Returns 503 otherwise so
+            # Kubernetes rolls the pod out of the Service endpoints.
             httpGet:
               path: /readyz
               port: http
