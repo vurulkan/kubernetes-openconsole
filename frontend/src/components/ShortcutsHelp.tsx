@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Modal } from './ui';
 import { SHORTCUTS_EVENT_NAME, dispatchOpenShortcuts } from '../hooks/useGlobalShortcuts';
 
@@ -6,89 +7,64 @@ import { SHORTCUTS_EVENT_NAME, dispatchOpenShortcuts } from '../hooks/useGlobalS
 // the next within the chord timeout). When the two keys are physical-position
 // alternatives — [ matches the same key as ğ on a TR layout — set
 // `join: 'or'` so the separator reflects "either key works".
-type Row = { keys: string[]; description: string; join?: 'then' | 'or' };
-type Group = { title: string; rows: Row[] };
+type Row = { keys: string[]; descKey: string; join?: 'then' | 'or' };
+type Group = { titleKey: string; rows: Row[] };
 
 const GROUPS: Group[] = [
-  {
-    title: 'Global',
-    rows: [
-      { keys: ['⌘', 'K'], description: 'Open command palette' },
-      { keys: ['?'], description: 'Open this cheat sheet' },
-      { keys: ['Esc'], description: 'Close the active modal / palette' },
-    ],
-  },
-  {
-    title: 'Navigate',
-    rows: [
-      { keys: ['g', 'd'], description: 'Go to Dashboard' },
-      { keys: ['g', 'a'], description: 'Go to Admin (admins only)' },
-    ],
-  },
-  {
-    title: 'Theme',
-    rows: [
-      { keys: ['t', 'l'], description: 'Theme → Light' },
-      { keys: ['t', 'd'], description: 'Theme → Dark' },
-      { keys: ['t', 's'], description: 'Theme → System' },
-    ],
-  },
-  {
-    title: 'Dashboard',
-    rows: [
-      { keys: ['[', 'ğ'], join: 'or', description: 'Previous resource tab' },
-      { keys: [']', 'ü'], join: 'or', description: 'Next resource tab' },
-      { keys: ['r'], description: 'Refresh the current resource list' },
-      { keys: ['/', '.'], join: 'or', description: 'Focus the search box' },
-      { keys: ['n'], description: 'Focus the namespace filter' },
-      { keys: ['e'], description: 'Toggle Live Events panel' },
-      { keys: ['Esc'], description: 'Close Live Events panel (when open)' },
-      { keys: ['c'], description: 'Open cluster switcher (admin only)' },
-    ],
-  },
-  {
-    title: 'Cluster switcher',
-    rows: [
-      { keys: ['1', '9'], join: 'or', description: 'Pick cluster by index (1–9)' },
-      { keys: ['↑', '↓'], join: 'or', description: 'Move focus' },
-      { keys: ['↵'], description: 'Activate focused cluster' },
-      { keys: ['Esc'], description: 'Close without switching' },
-    ],
-  },
-  {
-    title: 'Admin',
-    rows: [
-      { keys: ['[', 'ğ'], join: 'or', description: 'Previous sub-section' },
-      { keys: [']', 'ü'], join: 'or', description: 'Next sub-section' },
-    ],
-  },
-  {
-    title: 'Log viewer',
-    rows: [
-      { keys: ['p'], description: 'Toggle pause' },
-      { keys: ['w'], description: 'Toggle word wrap' },
-    ],
-  },
-  {
-    title: 'Scale modal',
-    rows: [
-      { keys: ['↑', '↓'], description: 'Replica ±1 (while input focused)' },
-      { keys: ['⇧', '↑/↓'], description: 'Replica ±10 (while input focused)' },
-    ],
-  },
-  {
-    title: 'Command palette',
-    rows: [
-      { keys: ['↑', '↓'], description: 'Move selection' },
-      { keys: ['↵'], description: 'Run selected command' },
-      { keys: ['Esc'], description: 'Close' },
-    ],
-  },
+  { titleKey: 'global', rows: [
+    { keys: ['⌘', 'K'], descKey: 'openPalette' },
+    { keys: ['?'], descKey: 'openHelp' },
+    { keys: ['Esc'], descKey: 'closeModal' },
+  ]},
+  { titleKey: 'navigate', rows: [
+    { keys: ['g', 'd'], descKey: 'goDashboard' },
+    { keys: ['g', 'a'], descKey: 'goAdmin' },
+  ]},
+  { titleKey: 'theme', rows: [
+    { keys: ['t', 'l'], descKey: 'themeLight' },
+    { keys: ['t', 'd'], descKey: 'themeDark' },
+    { keys: ['t', 's'], descKey: 'themeSystem' },
+  ]},
+  { titleKey: 'dashboard', rows: [
+    { keys: ['[', 'ğ'], join: 'or', descKey: 'prevTab' },
+    { keys: [']', 'ü'], join: 'or', descKey: 'nextTab' },
+    { keys: ['r'], descKey: 'refresh' },
+    { keys: ['/', '.'], join: 'or', descKey: 'focusSearch' },
+    { keys: ['n'], descKey: 'focusNamespace' },
+    { keys: ['e'], descKey: 'toggleEvents' },
+    { keys: ['Esc'], descKey: 'closeEvents' },
+    { keys: ['c'], descKey: 'openCluster' },
+    { keys: ['v'], descKey: 'openViews' },
+  ]},
+  { titleKey: 'cluster', rows: [
+    { keys: ['1', '9'], join: 'or', descKey: 'pickByIndex' },
+    { keys: ['↑', '↓'], join: 'or', descKey: 'moveFocus' },
+    { keys: ['↵'], descKey: 'activate' },
+    { keys: ['Esc'], descKey: 'closeNoSwitch' },
+  ]},
+  { titleKey: 'admin', rows: [
+    { keys: ['[', 'ğ'], join: 'or', descKey: 'prevSub' },
+    { keys: [']', 'ü'], join: 'or', descKey: 'nextSub' },
+  ]},
+  { titleKey: 'logs', rows: [
+    { keys: ['p'], descKey: 'togglePause' },
+    { keys: ['w'], descKey: 'toggleWrap' },
+  ]},
+  { titleKey: 'scale', rows: [
+    { keys: ['↑', '↓'], descKey: 'replPlusMinus' },
+    { keys: ['⇧', '↑/↓'], descKey: 'replShift' },
+  ]},
+  { titleKey: 'palette', rows: [
+    { keys: ['↑', '↓'], descKey: 'moveSel' },
+    { keys: ['↵'], descKey: 'runSel' },
+    { keys: ['Esc'], descKey: 'closeModal' },
+  ]},
 ];
 
 export const openShortcutsHelp = dispatchOpenShortcuts;
 
 export const ShortcutsHelp: React.FC = () => {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -97,33 +73,31 @@ export const ShortcutsHelp: React.FC = () => {
     return () => window.removeEventListener(SHORTCUTS_EVENT_NAME, handler as EventListener);
   }, []);
 
+  const thenLabel = t('shortcuts.then');
+  const orLabel = t('shortcuts.or');
+
   return (
     <Modal
       open={open}
       onClose={() => setOpen(false)}
-      title="Keyboard shortcuts"
+      title={t('shortcuts.title')}
       size="md"
     >
       <p className="mb-4 text-xs text-slate-500 dark:text-slate-400">
-        Keys joined by <span className="font-medium">then</span> are chord
-        sequences — press one, then the next within a second. Keys joined by
-        <span className="font-medium"> or </span> are alternatives: either one
-        works. The TR layout fallbacks (
-        <kbd className="rounded border px-1 text-[10px] mx-0.5">ğ</kbd> for{' '}
-        <kbd className="rounded border px-1 text-[10px] mx-0.5">[</kbd>,{' '}
-        <kbd className="rounded border px-1 text-[10px] mx-0.5">ü</kbd> for{' '}
-        <kbd className="rounded border px-1 text-[10px] mx-0.5">]</kbd>,{' '}
-        <kbd className="rounded border px-1 text-[10px] mx-0.5">.</kbd> for{' '}
-        <kbd className="rounded border px-1 text-[10px] mx-0.5">/</kbd>) are
-        matched by physical key position. Shortcuts never fire while typing in
-        an input.
+        {t('shortcuts.explain', {
+          then: thenLabel,
+          or: orLabel,
+          g1: 'ğ', g2: '[',
+          u1: 'ü', u2: ']',
+          d1: '.', d2: '/',
+        })}
       </p>
 
       <div className="flex flex-col gap-5">
         {GROUPS.map((group) => (
-          <div key={group.title}>
+          <div key={group.titleKey}>
             <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
-              {group.title}
+              {t(`shortcuts.groups.${group.titleKey}`)}
             </h3>
             <ul className="flex flex-col divide-y divide-slate-100 rounded-lg border border-slate-200 bg-slate-50/60 dark:divide-slate-800 dark:border-slate-800 dark:bg-slate-800/40">
               {group.rows.map((row, idx) => (
@@ -132,14 +106,14 @@ export const ShortcutsHelp: React.FC = () => {
                   className="flex items-center justify-between gap-4 px-3 py-2"
                 >
                   <span className="text-sm text-slate-700 dark:text-slate-200">
-                    {row.description}
+                    {t(`shortcuts.rows.${row.descKey}`)}
                   </span>
                   <span className="flex items-center gap-1">
                     {row.keys.map((k, i) => (
                       <React.Fragment key={i}>
                         {i > 0 && (
                           <span className="text-[10px] text-slate-400 dark:text-slate-500">
-                            {row.join === 'or' ? 'or' : 'then'}
+                            {row.join === 'or' ? orLabel : thenLabel}
                           </span>
                         )}
                         <kbd className="rounded-md border border-slate-200 bg-white px-1.5 py-0.5 font-mono text-[11px] font-medium text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">

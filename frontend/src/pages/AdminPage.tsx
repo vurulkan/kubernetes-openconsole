@@ -1137,7 +1137,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
               />
 
               {rolePermissionsLayout === 'new' ? (
-                <SectionCard title="Role Permissions">
+                <SectionCard title={tr('admin.sections.rolePermissions')}>
                   <RolePermissionsPanel
                     roles={roles}
                     clusters={clustersList}
@@ -1147,14 +1147,14 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   />
                 </SectionCard>
               ) : (
-              <SectionCard title="Role Permissions">
+              <SectionCard title={tr('admin.sections.rolePermissions')}>
                 <div className="mb-3 flex justify-end">
                   <button
                     type="button"
                     onClick={() => setRolePermissionsLayout('new')}
                     className="text-[11px] font-medium text-slate-500 underline-offset-4 hover:text-brand-600 hover:underline dark:text-slate-400 dark:hover:text-brand-300"
                   >
-                    Switch to new view
+                    {tr('admin.switchToNew')}
                   </button>
                 </div>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -1342,7 +1342,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
           {/* ─────────────────────────── LDAP ───────────────────────── */}
           {tab === 'ldap' && (
             <div className="flex flex-col gap-5">
-              <SectionCard title="LDAP Configuration">
+              <SectionCard title={tr('admin.sections.ldap')}>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   <Checkbox
                     checked={ldapConfig.enabled}
@@ -1527,7 +1527,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
 
           {/* ─────────────────────────── AZURE AD ───────────────────── */}
           {tab === 'azure-ad' && (
-            <SectionCard title="Azure AD Configuration">
+            <SectionCard title={tr('admin.sections.azureAd')}>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <Checkbox
                   checked={azureAdConfig.enabled}
@@ -1593,7 +1593,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
 
           {/* ─────────────────────────── SESSION ────────────────────── */}
           {tab === 'session' && (
-            <SectionCard title="Session Settings">
+            <SectionCard title={tr('admin.sections.sessionSettings')}>
               <Input
                 label="Session Lifetime (minutes)"
                 type="number"
@@ -2071,7 +2071,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
 
           {/* ─────────────────────────── AUDIT LOGS ─────────────────── */}
           {tab === 'audit' && (
-            <SectionCard title="Audit Logs">
+            <SectionCard title={tr('admin.sections.audit')}>
               <div className="mb-4 flex flex-wrap items-end gap-3">
                 <Input
                   label="User"
@@ -2177,7 +2177,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
 
           {tab === 'sessions' && (
             <SectionCard
-              title="Sessions"
+              title={tr('admin.sections.sessions')}
               description="Every token issued by this backend. Revoke a single row to sign one browser out; revoke-all for a user kills every tab they have open."
             >
               <SessionsSection currentUserId={user.id} />
@@ -2205,7 +2205,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
           <Modal
             open={showCreateUser}
             onClose={() => setShowCreateUser(false)}
-            title="New user"
+            title={tr('admin.newUser')}
             size="sm"
             footer={
               <>

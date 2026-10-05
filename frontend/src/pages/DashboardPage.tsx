@@ -844,7 +844,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                 <Boxes size={14} />
               </div>
               <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                {selectedNamespace ?? 'No namespace available'}
+                {selectedNamespace ?? t('dashboard.noNamespace')}
               </span>
             </div>
             <div className="relative">
@@ -866,7 +866,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
             {(activeTab === 'pods' || activeTab === 'deployments') && (
               <span className="hidden items-center gap-1.5 text-[11px] font-medium text-slate-500 dark:text-slate-400 sm:inline-flex">
                 <span className="h-1.5 w-1.5 animate-live rounded-full bg-emerald-500" />
-                Auto-refresh 10s
+                {t('dashboard.autoRefresh')}
               </span>
             )}
             <SavedViewsMenu
@@ -900,7 +900,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
           <div className="flex items-center gap-1 overflow-x-auto px-3 py-2">
             {orderedResources.length === 0 && (
               <p className="px-2 py-2 text-xs text-slate-400 dark:text-slate-500">
-                You have no resource permissions in this namespace.
+                {t('dashboard.noResourcePerms')}
               </p>
             )}
             {orderedResources.map((resource) => {
@@ -1005,10 +1005,10 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                   <SearchIcon size={16} />
                 </div>
                 <p className="text-sm font-medium text-slate-600 dark:text-slate-300">
-                  {searchQuery ? 'No matching records found.' : 'No records available.'}
+                  {searchQuery ? t('dashboard.emptyFiltered') : t('dashboard.empty')}
                 </p>
                 <p className="text-xs text-slate-400 dark:text-slate-500">
-                  {searchQuery ? 'Try a different search term.' : 'The namespace is empty or no records match your access.'}
+                  {searchQuery ? t('dashboard.emptyHintSearch') : t('dashboard.emptyHint')}
                 </p>
               </div>
             </div>
@@ -1071,7 +1071,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                 statusLabel = (
                   <Badge variant="success">
                     <span className="h-1.5 w-1.5 animate-live rounded-full bg-emerald-500" />
-                    Running
+                    {t('dashboard.status.running')}
                   </Badge>
                 );
               } else {
@@ -1083,13 +1083,13 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
             } else if (activeTab === 'deployments') {
               if (desiredReplicas === 0) {
                 dotClass = 'status-dot status-dot-idle';
-                statusLabel = <Badge variant="default">Scaled to 0</Badge>;
+                statusLabel = <Badge variant="default">{t('dashboard.status.scaledToZero')}</Badge>;
               } else if (allReplicasReady) {
                 dotClass = 'status-dot status-dot-success';
-                statusLabel = <Badge variant="success">Available</Badge>;
+                statusLabel = <Badge variant="success">{t('dashboard.status.available')}</Badge>;
               } else {
                 dotClass = 'status-dot status-dot-warning';
-                statusLabel = <Badge variant="warning">Progressing</Badge>;
+                statusLabel = <Badge variant="warning">{t('dashboard.status.progressing')}</Badge>;
               }
             } else if (activeTab === 'daemonsets') {
               const dsStatus = (item.status as {
@@ -1100,13 +1100,13 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
               const ready = dsStatus.numberReady ?? 0;
               if (desired === 0) {
                 dotClass = 'status-dot status-dot-idle';
-                statusLabel = <Badge variant="default">No nodes</Badge>;
+                statusLabel = <Badge variant="default">{t('dashboard.status.noNodes')}</Badge>;
               } else if (ready >= desired) {
                 dotClass = 'status-dot status-dot-success';
-                statusLabel = <Badge variant="success">Ready {ready}/{desired}</Badge>;
+                statusLabel = <Badge variant="success">{t('dashboard.status.ready', { ready, desired })}</Badge>;
               } else {
                 dotClass = 'status-dot status-dot-warning';
-                statusLabel = <Badge variant="warning">Ready {ready}/{desired}</Badge>;
+                statusLabel = <Badge variant="warning">{t('dashboard.status.ready', { ready, desired })}</Badge>;
               }
             } else if (activeTab === 'statefulsets') {
               const ssStatus = (item.status as { replicas?: number; readyReplicas?: number }) ?? {};
@@ -1114,13 +1114,13 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
               const ssReady = ssStatus.readyReplicas ?? 0;
               if (ssDesired === 0) {
                 dotClass = 'status-dot status-dot-idle';
-                statusLabel = <Badge variant="default">Scaled to 0</Badge>;
+                statusLabel = <Badge variant="default">{t('dashboard.status.scaledToZero')}</Badge>;
               } else if (ssReady >= ssDesired) {
                 dotClass = 'status-dot status-dot-success';
-                statusLabel = <Badge variant="success">Available {ssReady}/{ssDesired}</Badge>;
+                statusLabel = <Badge variant="success">{t('dashboard.status.availableCount', { ready: ssReady, desired: ssDesired })}</Badge>;
               } else {
                 dotClass = 'status-dot status-dot-warning';
-                statusLabel = <Badge variant="warning">Progressing {ssReady}/{ssDesired}</Badge>;
+                statusLabel = <Badge variant="warning">{t('dashboard.status.progressingCount', { ready: ssReady, desired: ssDesired })}</Badge>;
               }
             } else if (activeTab === 'hpas') {
               const hpaStatus = (item.status as {
@@ -1140,9 +1140,9 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
             } else if (activeTab === 'cronjobs') {
               dotClass = isSuspended ? 'status-dot status-dot-warning' : 'status-dot status-dot-success';
               statusLabel = isSuspended ? (
-                <Badge variant="warning">Suspended</Badge>
+                <Badge variant="warning">{t('dashboard.status.suspended')}</Badge>
               ) : (
-                <Badge variant="success">Active</Badge>
+                <Badge variant="success">{t('dashboard.status.active')}</Badge>
               );
             } else if (activeTab === 'jobs') {
               const jobStatus = (item.status as {
@@ -1156,16 +1156,16 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
               const activeCount = jobStatus.active ?? 0;
               if (failed > 0) {
                 dotClass = 'status-dot status-dot-error';
-                statusLabel = <Badge variant="error">Failed · {failed}</Badge>;
+                statusLabel = <Badge variant="error">{t('dashboard.status.failedN', { count: failed })}</Badge>;
               } else if (activeCount > 0) {
                 dotClass = 'status-dot status-dot-warning';
-                statusLabel = <Badge variant="warning">Running · {activeCount}</Badge>;
+                statusLabel = <Badge variant="warning">{t('dashboard.status.runningN', { count: activeCount })}</Badge>;
               } else if (succeeded > 0) {
                 dotClass = 'status-dot status-dot-success';
-                statusLabel = <Badge variant="success">Succeeded</Badge>;
+                statusLabel = <Badge variant="success">{t('dashboard.status.succeeded')}</Badge>;
               } else {
                 dotClass = 'status-dot status-dot-idle';
-                statusLabel = <Badge variant="default">Pending</Badge>;
+                statusLabel = <Badge variant="default">{t('dashboard.status.pending')}</Badge>;
               }
             }
 
@@ -1283,7 +1283,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                         onClick={() => openLogModal(selectedNamespace ?? '', name)}
                       >
                         <Terminal size={13} />
-                        Logs
+                        {t('dashboard.actions.logs')}
                       </Button>
                       <Button
                         variant="outline"
@@ -1291,7 +1291,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                         onClick={() => openEventsModal('pods', selectedNamespace ?? '', name)}
                       >
                         <Activity size={13} />
-                        Events
+                        {t('dashboard.actions.events')}
                       </Button>
                       {canExecPods && (
                         <Button
@@ -1309,7 +1309,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                           }}
                         >
                           <Terminal size={13} />
-                          Shell
+                          {t('dashboard.actions.shell')}
                         </Button>
                       )}
                     </>
@@ -1322,7 +1322,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                         onClick={() => openYamlModal('deployments', selectedNamespace ?? '', name)}
                       >
                         <FileCode2 size={13} />
-                        YAML
+                        {t('dashboard.actions.yaml')}
                       </Button>
                       <Button
                         variant="outline"
@@ -1330,7 +1330,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                         onClick={() => openDeploymentLogs(selectedNamespace ?? '', name)}
                       >
                         <Terminal size={13} />
-                        Logs
+                        {t('dashboard.actions.logs')}
                       </Button>
                       <Button
                         variant="outline"
@@ -1340,7 +1340,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                         }
                       >
                         <Activity size={13} />
-                        Events
+                        {t('dashboard.actions.events')}
                       </Button>
                       {canScaleDeployments && (
                         <Button
@@ -1353,7 +1353,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                           }}
                         >
                           <Scaling size={13} />
-                          Scale
+                          {t('dashboard.actions.scale')}
                         </Button>
                       )}
                       {canRestartDeployments && (
@@ -1364,7 +1364,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                           onClick={() => setRestartTarget(name)}
                         >
                           <RotateCcw size={13} />
-                          {actionBusy === `restart:${name}` ? 'Restarting…' : 'Restart'}
+                          {actionBusy === `restart:${name}` ? t('dashboard.actions.restarting') : t('dashboard.actions.restart')}
                         </Button>
                       )}
                     </>
@@ -1376,7 +1376,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                       onClick={() => openYamlModal('daemonsets', selectedNamespace ?? '', name)}
                     >
                       <FileCode2 size={13} />
-                      YAML
+                      {t('dashboard.actions.yaml')}
                     </Button>
                   )}
                   {activeTab === 'statefulsets' && (
@@ -1387,7 +1387,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                         onClick={() => openYamlModal('statefulsets', selectedNamespace ?? '', name)}
                       >
                         <FileCode2 size={13} />
-                        YAML
+                        {t('dashboard.actions.yaml')}
                       </Button>
                       {canScaleStatefulSets && (
                         <Button
@@ -1401,7 +1401,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                           }}
                         >
                           <Scaling size={13} />
-                          Scale
+                          {t('dashboard.actions.scale')}
                         </Button>
                       )}
                     </>
@@ -1413,7 +1413,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                       onClick={() => openYamlModal('hpas', selectedNamespace ?? '', name)}
                     >
                       <FileCode2 size={13} />
-                      YAML
+                      {t('dashboard.actions.yaml')}
                     </Button>
                   )}
                   {activeTab === 'services' && (
@@ -1423,7 +1423,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                       onClick={() => openYamlModal('services', selectedNamespace ?? '', name)}
                     >
                       <FileCode2 size={13} />
-                      YAML
+                      {t('dashboard.actions.yaml')}
                     </Button>
                   )}
                   {activeTab === 'ingresses' && (
@@ -1433,7 +1433,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                       onClick={() => openYamlModal('ingresses', selectedNamespace ?? '', name)}
                     >
                       <FileCode2 size={13} />
-                      YAML
+                      {t('dashboard.actions.yaml')}
                     </Button>
                   )}
                   {activeTab === 'configmaps' && (
@@ -1444,7 +1444,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                         onClick={() => openConfigMapDataModal(selectedNamespace ?? '', name)}
                       >
                         <FileText size={13} />
-                        Data
+                        {t('dashboard.actions.data')}
                       </Button>
                       <Button
                         variant="outline"
@@ -1452,7 +1452,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                         onClick={() => openYamlModal('configmaps', selectedNamespace ?? '', name)}
                       >
                         <FileCode2 size={13} />
-                        YAML
+                        {t('dashboard.actions.yaml')}
                       </Button>
                     </>
                   )}
@@ -1463,7 +1463,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                       onClick={() => openYamlModal('cronjobs', selectedNamespace ?? '', name)}
                     >
                       <FileCode2 size={13} />
-                      YAML
+                      {t('dashboard.actions.yaml')}
                     </Button>
                   )}
                   {activeTab === 'jobs' && (
@@ -1474,7 +1474,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                         onClick={() => openYamlModal('jobs', selectedNamespace ?? '', name)}
                       >
                         <FileCode2 size={13} />
-                        YAML
+                        {t('dashboard.actions.yaml')}
                       </Button>
                       <Button
                         variant="outline"
@@ -1482,7 +1482,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                         onClick={() => openJobLogs(selectedNamespace ?? '', name)}
                       >
                         <Terminal size={13} />
-                        Logs
+                        {t('dashboard.actions.logs')}
                       </Button>
                     </>
                   )}
@@ -1607,7 +1607,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                   }
                 }}
               >
-                {actionBusy ? 'Restarting…' : 'Restart'}
+                {actionBusy ? t('dashboard.actions.restarting') : t('dashboard.actions.restart')}
               </Button>
             </>
           }

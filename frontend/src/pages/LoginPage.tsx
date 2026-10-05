@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ShieldCheck } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { Alert, Button, Input } from '../components/ui';
 import { getAuthProviders, login, startAzureLogin } from '../services/api';
+import LocaleSwitcher from '../components/LocaleSwitcher';
 
 type Props = {
   onLogin: () => Promise<void>;
@@ -10,6 +12,7 @@ type Props = {
 
 const LoginPage: React.FC<Props> = ({ onLogin }) => {
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -44,7 +47,7 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
         navigate('/');
       }
     } catch (err) {
-      setError('Login failed. Please check your credentials.');
+      setError(t('login.failed'));
     } finally {
       setLoading(false);
     }
@@ -53,6 +56,12 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
   return (
     <div className="relative flex min-h-screen items-center justify-center p-4 font-sans">
       <div className="pointer-events-none absolute inset-0 bg-brand-radial" aria-hidden="true" />
+
+      {/* Locale switcher pinned top-right so a user whose browser is TR but
+          lands on an EN-defaulted deploy can flip without logging in first. */}
+      <div className="absolute right-4 top-4 z-10">
+        <LocaleSwitcher />
+      </div>
 
       <div className="relative grid w-full max-w-5xl grid-cols-1 overflow-hidden rounded-3xl border border-slate-200 dark:border-slate-800/80 bg-white dark:bg-slate-900/80 shadow-elevated backdrop-blur-sm md:grid-cols-[1.1fr,1fr]">
         {/* ── Brand side ────────────────────────────────────────────── */}
@@ -85,25 +94,23 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
               <div className="flex flex-col leading-tight">
                 <span className="text-sm font-semibold tracking-tight">Kubernetes OpenConsole</span>
                 <span className="text-[10px] font-medium uppercase tracking-[0.18em] text-slate-400 dark:text-slate-500">
-                  Visibility · RBAC · Audit
+                  {t('login.tagline')}
                 </span>
               </div>
             </div>
             <h2 className="mt-10 max-w-sm text-3xl font-semibold leading-tight tracking-tight">
-              Observe your clusters with calm, scoped access.
+              {t('login.headline')}
             </h2>
             <p className="mt-3 max-w-sm text-sm text-slate-300">
-              Multi-cluster Kubernetes insight with fine-grained, application-level RBAC.
-              Deployment restarts, scaling, pod shells, and a full audit trail — all from
-              a single pane of glass.
+              {t('login.subheadline')}
             </p>
           </div>
 
           <div className="relative mt-8 grid grid-cols-3 gap-3 text-xs">
             {[
-              { label: 'Namespaces', value: 'Scoped' },
-              { label: 'Workloads', value: 'Live' },
-              { label: 'Audit', value: 'Always-on' },
+              { label: t('login.stats.namespaces'), value: t('login.stats.scoped') },
+              { label: t('login.stats.workloads'), value: t('login.stats.live') },
+              { label: t('login.stats.audit'), value: t('login.stats.always') },
             ].map((stat) => (
               <div
                 key={stat.label}
@@ -131,8 +138,8 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
             </div>
           )}
 
-          <h1 className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Welcome back</h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Sign in to continue to your workspace.</p>
+          <h1 className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">{t('login.welcome')}</h1>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{t('login.subtitle')}</p>
 
           {error && (
             <Alert severity="error" className="mt-5">
@@ -142,14 +149,14 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
 
           <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-4">
             <Input
-              label="Username"
+              label={t('login.username')}
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               autoComplete="username"
-              placeholder="e.g. admin"
+              placeholder={t('login.usernamePlaceholder')}
             />
             <Input
-              label="Password"
+              label={t('login.password')}
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -157,14 +164,14 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
               placeholder="••••••••"
             />
             <Button type="submit" variant="primary" disabled={loading} className="mt-1 w-full">
-              {loading ? 'Signing in…' : 'Sign in'}
+              {loading ? t('login.signingIn') : t('login.signIn')}
             </Button>
             {azureEnabled && (
               <>
                 <div className="relative my-1 flex items-center">
                   <div className="h-px flex-1 bg-slate-200" />
                   <span className="px-3 text-[11px] font-medium uppercase tracking-wider text-slate-400 dark:text-slate-500">
-                    or
+                    {t('login.or')}
                   </span>
                   <div className="h-px flex-1 bg-slate-200" />
                 </div>
@@ -175,7 +182,7 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
                     <rect x="0" y="12" width="11" height="11" fill="#00a4ef" />
                     <rect x="12" y="12" width="11" height="11" fill="#ffb900" />
                   </svg>
-                  Sign in with Microsoft
+                  {t('login.signInMicrosoft')}
                 </Button>
               </>
             )}
@@ -183,7 +190,7 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
 
           <div className="mt-6 flex items-center gap-2 text-[11px] text-slate-400 dark:text-slate-500">
             <ShieldCheck size={14} className="text-emerald-500" />
-            Secure sign-in · JWT · Session scoped
+            {t('login.footer')}
           </div>
         </div>
       </div>

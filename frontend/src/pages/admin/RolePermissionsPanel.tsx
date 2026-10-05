@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Copy,
   MoreHorizontal,
@@ -162,6 +163,7 @@ export const RolePermissionsPanel: React.FC<Props> = ({
   onError,
   onSwitchClassic,
 }) => {
+  const { t } = useTranslation();
   const [roleSearch, setRoleSearch] = useState('');
   const [selectedRoleId, setSelectedRoleId] = useState<number | null>(() => roles[0]?.id ?? null);
   const [permissions, setPermissions] = useState<NamespacePermission[]>([]);
@@ -456,14 +458,14 @@ export const RolePermissionsPanel: React.FC<Props> = ({
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between gap-3">
         <p className="text-xs text-slate-500 dark:text-slate-400">
-          Pick a role, review what it grants, and bulk-add or copy permissions.
+          {t('rolePermissions.description')}
         </p>
         <button
           type="button"
           onClick={onSwitchClassic}
           className="text-[11px] font-medium text-slate-500 underline-offset-4 hover:text-brand-600 hover:underline dark:text-slate-400 dark:hover:text-brand-300"
         >
-          Switch to classic view
+          {t('admin.switchToClassic')}
         </button>
       </div>
 
@@ -479,7 +481,7 @@ export const RolePermissionsPanel: React.FC<Props> = ({
               type="text"
               value={roleSearch}
               onChange={(e) => setRoleSearch(e.target.value)}
-              placeholder="Search roles…"
+              placeholder={t('rolePermissions.searchRoles')}
               className="w-full rounded-md border border-slate-200 bg-white py-1.5 pl-7 pr-2 text-xs text-slate-900 placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/15 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500"
             />
           </div>
@@ -512,7 +514,7 @@ export const RolePermissionsPanel: React.FC<Props> = ({
             })}
             {filteredRoles.length === 0 && (
               <li className="px-2.5 py-4 text-center text-[11px] text-slate-400 dark:text-slate-500">
-                No roles.
+                {t('rolePermissions.noRoles')}
               </li>
             )}
           </ul>
@@ -522,7 +524,7 @@ export const RolePermissionsPanel: React.FC<Props> = ({
         <section className="flex flex-col gap-3">
           {!selectedRole && (
             <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-400 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-500">
-              Select a role on the left.
+              {t('rolePermissions.pickRole')}
             </div>
           )}
           {selectedRole && (
@@ -533,17 +535,17 @@ export const RolePermissionsPanel: React.FC<Props> = ({
                     {selectedRole.name}
                   </div>
                   <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                    {selectedRole.description || 'No description.'}
+                    {selectedRole.description || t('rolePermissions.noDescription')}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <Button variant="outline" size="sm" onClick={() => setCopyOpen(true)}>
                     <Copy size={13} />
-                    Copy from role
+                    {t('rolePermissions.copyFromRole')}
                   </Button>
                   <Button variant="primary" size="sm" onClick={() => openAddModal()}>
                     <Plus size={13} />
-                    Add permissions
+                    {t('rolePermissions.addPermissions')}
                   </Button>
                 </div>
               </div>
@@ -554,7 +556,7 @@ export const RolePermissionsPanel: React.FC<Props> = ({
 
               {!loading && groups.length === 0 && (
                 <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-400 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-500">
-                  No permissions yet. Pick a template from "Add permissions" to seed this role.
+                  {t('rolePermissions.noPerms')}
                 </div>
               )}
 
@@ -716,6 +718,7 @@ const GrantCard: React.FC<{
   onEdit: () => void;
   onDuplicateTo: () => void;
 }> = ({ clusterId, clusterName, namespaces, permissions, onRemoveAction, onClearCard, onEdit, onDuplicateTo }) => {
+  const { t } = useTranslation();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuAnchor = React.useRef<HTMLButtonElement | null>(null);
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
@@ -751,7 +754,7 @@ const GrantCard: React.FC<{
       <header className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-2.5 dark:border-slate-800/70">
         <div className="flex min-w-0 flex-1 items-center gap-x-2 overflow-hidden">
           {clusterId === 0 ? (
-            <Badge variant="info" className="h-5 shrink-0 text-[10px]">all clusters</Badge>
+            <Badge variant="info" className="h-5 shrink-0 text-[10px]">{t('rolePermissions.allClusters')}</Badge>
           ) : (
             <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-700 dark:bg-slate-800 dark:text-slate-200">
               {clusterName || `#${clusterId}`}
@@ -822,7 +825,7 @@ const GrantCard: React.FC<{
             onClick={() => { setMenuOpen(false); onEdit(); }}
           >
             <Pencil size={13} />
-            Edit permissions…
+            {t('rolePermissions.editPermissions')}
           </button>
           <button
             type="button"
@@ -830,7 +833,7 @@ const GrantCard: React.FC<{
             onClick={() => { setMenuOpen(false); onDuplicateTo(); }}
           >
             <Copy size={13} />
-            Duplicate to another namespace…
+            {t('rolePermissions.duplicateTo')}
           </button>
           <button
             type="button"
@@ -838,7 +841,7 @@ const GrantCard: React.FC<{
             onClick={() => { setMenuOpen(false); void onClearCard(); }}
           >
             <Trash2 size={13} />
-            Clear card
+            {t('rolePermissions.clearCard')}
           </button>
         </div>,
         document.body

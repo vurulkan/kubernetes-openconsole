@@ -10,6 +10,7 @@ const SHORTCUTS_EVENT = 'openconsole:open-shortcuts';
 const PALETTE_EVENT = 'openconsole:open-palette';
 const EVENTS_PANEL_EVENT = 'openconsole:toggle-events';
 const CLUSTER_SWITCHER_EVENT = 'openconsole:open-cluster-switcher';
+const SAVED_VIEWS_EVENT = 'openconsole:open-views';
 
 export const dispatchOpenShortcuts = () => {
   window.dispatchEvent(new CustomEvent(SHORTCUTS_EVENT));
@@ -23,10 +24,14 @@ export const dispatchToggleEvents = () => {
 export const dispatchOpenClusterSwitcher = () => {
   window.dispatchEvent(new CustomEvent(CLUSTER_SWITCHER_EVENT));
 };
+export const dispatchOpenSavedViews = () => {
+  window.dispatchEvent(new CustomEvent(SAVED_VIEWS_EVENT));
+};
 export const SHORTCUTS_EVENT_NAME = SHORTCUTS_EVENT;
 export const PALETTE_EVENT_NAME = PALETTE_EVENT;
 export const EVENTS_PANEL_EVENT_NAME = EVENTS_PANEL_EVENT;
 export const CLUSTER_SWITCHER_EVENT_NAME = CLUSTER_SWITCHER_EVENT;
+export const SAVED_VIEWS_EVENT_NAME = SAVED_VIEWS_EVENT;
 
 const isTypingTarget = (el: EventTarget | null): boolean => {
   if (!el || !(el instanceof HTMLElement)) return false;
@@ -147,6 +152,13 @@ export const useGlobalShortcuts = ({ isAdmin, setTheme }: Options) => {
       if (key === 'c') {
         e.preventDefault();
         dispatchOpenClusterSwitcher();
+        return;
+      }
+      // Single-key: open the saved-views dropdown. Same 1..9 / arrow /
+      // enter / esc contract as the cluster switcher.
+      if (key === 'v') {
+        e.preventDefault();
+        dispatchOpenSavedViews();
         return;
       }
     };

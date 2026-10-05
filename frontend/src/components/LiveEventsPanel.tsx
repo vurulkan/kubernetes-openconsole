@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, Pause, Play, Radio, Trash2, X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { Button } from './ui';
 
 export type LiveEvent = {
@@ -32,6 +33,7 @@ const MAX_EVENTS = 200;
  * resumes with the live stream.
  */
 const LiveEventsPanel: React.FC<Props> = ({ namespace, open, onToggle, onClose }) => {
+  const { t } = useTranslation();
   const [events, setEvents] = useState<LiveEvent[]>([]);
   const [connected, setConnected] = useState(false);
   const [paused, setPaused] = useState(false);
@@ -109,10 +111,10 @@ const LiveEventsPanel: React.FC<Props> = ({ namespace, open, onToggle, onClose }
         type="button"
         onClick={onToggle}
         className="fixed bottom-6 right-6 z-30 flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-xs font-medium text-slate-700 shadow-lg transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
-        title="Open live events"
+        title={t('dashboard.events.panelLabel')}
       >
         <Radio size={14} className="text-brand-500" />
-        Live events
+        {t('dashboard.events.panelLabel')}
       </button>
     );
   }
@@ -131,10 +133,10 @@ const LiveEventsPanel: React.FC<Props> = ({ namespace, open, onToggle, onClose }
             )}
           </div>
           <div>
-            <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">Live events</div>
+            <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{t('dashboard.events.panelLabel')}</div>
             <div className="text-[11px] text-slate-500 dark:text-slate-400">
-              {connected ? 'streaming' : 'disconnected'}
-              {namespace ? ` · ns/${namespace}` : ' · all namespaces'}
+              {connected ? t('dashboard.events.streaming') : t('dashboard.events.disconnected')}
+              {namespace ? ` · ns/${namespace}` : ` · ${t('dashboard.events.allNamespaces')}`}
             </div>
           </div>
         </div>
@@ -161,7 +163,7 @@ const LiveEventsPanel: React.FC<Props> = ({ namespace, open, onToggle, onClose }
                   : 'text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-700/60'
               }`}
             >
-              {k === 'all' ? 'All' : k === 'events' ? 'K8s events' : 'Warnings'}
+              {t(`dashboard.events.filter.${k}`)}
             </button>
           ))}
         </div>
@@ -170,7 +172,7 @@ const LiveEventsPanel: React.FC<Props> = ({ namespace, open, onToggle, onClose }
             variant="ghost"
             size="sm"
             onClick={() => setPaused((v) => !v)}
-            title={paused ? 'Resume' : 'Pause'}
+            title={paused ? t('dashboard.events.resume') : t('dashboard.events.pause')}
             className="h-7 px-2"
           >
             {paused ? <Play size={12} /> : <Pause size={12} />}
@@ -179,7 +181,7 @@ const LiveEventsPanel: React.FC<Props> = ({ namespace, open, onToggle, onClose }
             variant="ghost"
             size="sm"
             onClick={() => setEvents([])}
-            title="Clear"
+            title={t('dashboard.events.clear')}
             className="h-7 px-2"
           >
             <Trash2 size={12} />
@@ -190,7 +192,7 @@ const LiveEventsPanel: React.FC<Props> = ({ namespace, open, onToggle, onClose }
       <ol className="scrollbar-thin flex-1 overflow-y-auto px-2 py-2">
         {visible.length === 0 && (
           <li className="px-3 py-10 text-center text-xs text-slate-400 dark:text-slate-500">
-            {connected ? 'Waiting for events…' : 'Connecting…'}
+            {connected ? t('dashboard.events.waiting') : t('dashboard.events.connecting')}
           </li>
         )}
         {visible.map((e, idx) => (
