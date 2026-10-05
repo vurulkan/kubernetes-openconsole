@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -179,7 +178,7 @@ func (s *Server) recordApplyAudit(user, namespace, name, resource, outcome, deta
 	if details != "" {
 		resourceName = fmt.Sprintf("%s (%s)", name, details)
 	}
-	go s.audit.Record(context.Background(), models.AuditLog{
+	go s.audit.Record(s.auditCtxFromID(requestID), models.AuditLog{
 		User:         user,
 		Action:       resource + ".apply." + outcome,
 		Namespace:    namespace,

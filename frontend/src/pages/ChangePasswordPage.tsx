@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { KeyRound } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { Alert, Button, Input } from '../components/ui';
 import { changePassword } from '../services/api';
 
@@ -10,6 +11,7 @@ type Props = {
 
 const ChangePasswordPage: React.FC<Props> = ({ onChanged }) => {
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -29,7 +31,7 @@ const ChangePasswordPage: React.FC<Props> = ({ onChanged }) => {
       await onChanged();
       navigate('/');
     } catch (err) {
-      setError('Password change failed.');
+      setError(t('changePassword.failed'));
     } finally {
       setLoading(false);
     }
@@ -45,9 +47,9 @@ const ChangePasswordPage: React.FC<Props> = ({ onChanged }) => {
           </div>
           <div className="leading-tight">
             <h1 className="text-base font-semibold tracking-tight text-slate-900 dark:text-slate-100">
-              Update your password
+              {t('changePassword.title')}
             </h1>
-            <p className="text-xs text-slate-500 dark:text-slate-400">A password update is required for first login.</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400">{t('changePassword.subtitle')}</p>
           </div>
         </div>
 
@@ -58,27 +60,27 @@ const ChangePasswordPage: React.FC<Props> = ({ onChanged }) => {
         )}
         {success && (
           <Alert severity="success" className="mb-4">
-            Password updated.
+            {t('changePassword.saved', { defaultValue: 'Password updated.' })}
           </Alert>
         )}
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <Input
-            label="Current Password"
+            label={t('changePassword.current')}
             type="password"
             value={currentPassword}
             onChange={(e) => setCurrentPassword(e.target.value)}
             autoComplete="current-password"
           />
           <Input
-            label="New Password"
+            label={t('changePassword.new')}
             type="password"
             value={newPassword}
             onChange={(e) => setNewPassword(e.target.value)}
             autoComplete="new-password"
           />
           <Button type="submit" variant="primary" disabled={loading} className="w-full">
-            {loading ? 'Updating…' : 'Update Password'}
+            {loading ? t('changePassword.submitting') : t('changePassword.submit')}
           </Button>
         </form>
       </div>

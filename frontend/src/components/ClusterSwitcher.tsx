@@ -5,6 +5,7 @@ import { activateCluster, listClustersPublic } from '../services/api';
 import { User } from '../services/api';
 import { confirm } from './ConfirmDialog';
 import { CLUSTER_SWITCHER_EVENT_NAME } from '../hooks/useGlobalShortcuts';
+import { useTranslation } from 'react-i18next';
 
 type Props = {
   user: User;
@@ -18,6 +19,7 @@ type ClusterRow = { id: number; name: string; isActive: boolean };
  * non-admins see the active cluster but cannot switch it.
  */
 export const ClusterSwitcher: React.FC<Props> = ({ user }) => {
+  const { t } = useTranslation();
   const [clusters, setClusters] = useState<ClusterRow[]>([]);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<number | null>(null);
@@ -77,7 +79,7 @@ export const ClusterSwitcher: React.FC<Props> = ({ user }) => {
   }, [open]);
 
   const active = clusters.find((c) => c.isActive);
-  const label = active?.name ?? 'no cluster';
+  const label = active?.name ?? t('clusterSwitcher.noCluster');
 
   // Global `c` shortcut opens the menu (only for admins — the switcher is
   // read-only for non-admins so there's nothing to open).
@@ -151,10 +153,10 @@ export const ClusterSwitcher: React.FC<Props> = ({ user }) => {
       window.location.reload();
     } catch (err) {
       await confirm({
-        title: 'Cluster activation failed',
-        message: (err as Error).message || 'Unknown error.',
-        confirmText: 'OK',
-        cancelText: 'Dismiss',
+        title: t('clusterSwitcher.activationFailed'),
+        message: (err as Error).message || t('clusterSwitcher.unknownError'),
+        confirmText: t('actions.ok'),
+        cancelText: t('actions.dismiss'),
       });
     } finally {
       setBusy(null);
@@ -164,7 +166,7 @@ export const ClusterSwitcher: React.FC<Props> = ({ user }) => {
   if (clusters.length === 0) {
     return (
       <span className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
-        no cluster
+        {t('clusterSwitcher.noCluster')}
       </span>
     );
   }
@@ -197,7 +199,7 @@ export const ClusterSwitcher: React.FC<Props> = ({ user }) => {
           style={{ top: menuPos.top, left: menuPos.left }}
         >
           <div className="px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400 dark:text-slate-500">
-            Clusters
+            {t('clusterSwitcher.clusters')}
           </div>
           <ul className="max-h-72 overflow-auto pb-1">
             {clusters.map((c, idx) => (
@@ -230,7 +232,7 @@ export const ClusterSwitcher: React.FC<Props> = ({ user }) => {
                   <span className="flex-1 truncate font-mono">{c.name}</span>
                   {c.isActive && <Check size={14} className="text-brand-600 dark:text-brand-300" />}
                   {busy === c.id && (
-                    <span className="text-[10px] text-slate-400">switching…</span>
+                    <span className="text-[10px] text-slate-400">{t('clusterSwitcher.switching')}</span>
                   )}
                 </button>
               </li>
@@ -238,7 +240,7 @@ export const ClusterSwitcher: React.FC<Props> = ({ user }) => {
           </ul>
           {!user.isAdmin && (
             <div className="border-t border-slate-200 px-3 py-1.5 text-[10px] text-slate-400 dark:border-slate-800">
-              Only admins can switch clusters.
+              {t('clusterSwitcher.adminOnly')}
             </div>
           )}
         </div>,

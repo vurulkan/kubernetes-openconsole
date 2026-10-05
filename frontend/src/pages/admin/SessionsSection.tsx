@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, RefreshCw, ShieldAlert, Trash2 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { Alert, Badge, Button, Toggle } from '../../components/ui';
 import { Column, DataTable, IconButton } from '../../components/DataTable';
 import { confirm } from '../../components/ConfirmDialog';
@@ -17,6 +18,7 @@ type Props = {
 };
 
 export const SessionsSection: React.FC<Props> = ({ currentUserId }) => {
+  const { t } = useTranslation();
   const [rows, setRows] = useState<SessionRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,16 +43,17 @@ export const SessionsSection: React.FC<Props> = ({ currentUserId }) => {
   }, [refresh]);
 
   const handleRevoke = async (row: SessionRow) => {
+    const name = row.username || `user#${row.userId}`;
     const ok = await confirm({
-      title: 'Revoke session?',
-      message: `This immediately signs ${row.username || 'this user'} out of the browser that holds this token. They will need to log in again.`,
-      confirmText: 'Revoke',
+      title: t('sessions.revokeConfirm'),
+      message: t('sessions.revokeBody', { name }),
+      confirmText: t('actions.confirm'),
       variant: 'danger',
     });
     if (!ok) return;
     try {
       await revokeSession(row.id);
-      setNotice(`Session ${row.id} revoked.`);
+      setNotice(t('sessions.oneRevoked', { id: row.id }));
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to revoke');
@@ -59,15 +62,15 @@ export const SessionsSection: React.FC<Props> = ({ currentUserId }) => {
 
   const handleRevokeAll = async (userId: number, username: string) => {
     const ok = await confirm({
-      title: 'Revoke every session for this user?',
-      message: `All active sessions for ${username} will be killed, including any tabs this user has open right now.`,
-      confirmText: 'Revoke all',
+      title: t('sessions.revokeAllTitle'),
+      message: t('sessions.revokeAllBody', { name: username }),
+      confirmText: t('actions.confirm'),
       variant: 'danger',
     });
     if (!ok) return;
     try {
       await revokeAllSessionsForUser(userId);
-      setNotice(`All active sessions for ${username} revoked.`);
+      setNotice(t('sessions.allRevoked', { name: username }));
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to revoke');
@@ -77,32 +80,32 @@ export const SessionsSection: React.FC<Props> = ({ currentUserId }) => {
   const columns: Column<SessionRow>[] = [
     {
       key: 'user',
-      header: 'User',
+      header: t('sessions.user'),
       cell: (row) => (
         <div className="flex items-center gap-1.5">
           <span className="font-mono text-[13px] font-medium text-slate-900 dark:text-slate-100">
             {row.username || `user#${row.userId}`}
           </span>
           {row.userId === currentUserId && (
-            <Badge variant="info" className="h-5 px-1.5 text-[10px]">this is you</Badge>
+            <Badge variant="info" className="h-5 px-1.5 text-[10px]">{t('sessions.thisIsYou')}</Badge>
           )}
         </div>
       ),
     },
     {
       key: 'status',
-      header: 'Status',
+      header: t('sessions.status'),
       align: 'center',
       cell: (row) => {
-        if (row.revokedAt) return <Badge variant="warning">Revoked</Badge>;
+        if (row.revokedAt) return <Badge variant="warning">{t('sessions.revoked')}</Badge>;
         if (new Date(row.expiresAt).getTime() < Date.now())
-          return <Badge variant="default">Expired</Badge>;
-        return <Badge variant="success">Active</Badge>;
+          return <Badge variant="default">{t('sessions.expired')}</Badge>;
+        return <Badge variant="success">{t('sessions.active')}</Badge>;
       },
     },
     {
       key: 'ip',
-      header: 'IP / UA',
+      header: t('sessions.user') + ' / UA',
       cell: (row) => (
         <div className="flex flex-col text-[11px] leading-tight">
           <span className="font-mono text-slate-700 dark:text-slate-200">{row.ip || '—'}</span>
@@ -114,19 +117,19 @@ export const SessionsSection: React.FC<Props> = ({ currentUserId }) => {
     },
     {
       key: 'issued',
-      header: 'Issued',
+      header: t('sessions.issued'),
       align: 'right',
       cell: (row) => <TimeCell iso={row.issuedAt} />,
     },
     {
       key: 'lastused',
-      header: 'Last used',
+      header: t('sessions.lastUsed'),
       align: 'right',
       cell: (row) => <TimeCell iso={row.lastUsedAt} />,
     },
     {
       key: 'expires',
-      header: 'Expires',
+      header: t('sessions.expires'),
       align: 'right',
       cell: (row) => <TimeCell iso={row.expiresAt} />,
     },
@@ -142,14 +145,14 @@ export const SessionsSection: React.FC<Props> = ({ currentUserId }) => {
         return (
           <div className="flex justify-end gap-1">
             <IconButton
-              label="Revoke this session"
+              label={t('sessions.revokeOne')}
               variant="danger"
               onClick={() => handleRevoke(row)}
             >
               <Trash2 size={14} />
             </IconButton>
             <IconButton
-              label={`Revoke every session for ${row.username || 'this user'}`}
+              label={t('sessions.revokeAll', { name: row.username || `user#${row.userId}` })}
               variant="danger"
               onClick={() => handleRevokeAll(row.userId, row.username || `user#${row.userId}`)}
             >
@@ -168,15 +171,15 @@ export const SessionsSection: React.FC<Props> = ({ currentUserId }) => {
           <Toggle
             checked={activeOnly}
             onChange={setActiveOnly}
-            label="Only active sessions"
+            label={t('sessions.activeOnly')}
           />
           <span className="text-xs text-slate-500 dark:text-slate-400">
-            {rows.length} shown
+            {t('sessions.shown', { count: rows.length })}
           </span>
         </div>
         <Button variant="outline" size="sm" onClick={refresh} disabled={loading}>
           <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-          Refresh
+          {t('dashboard.refresh')}
         </Button>
       </div>
 
@@ -192,7 +195,7 @@ export const SessionsSection: React.FC<Props> = ({ currentUserId }) => {
         rows={rows}
         columns={columns}
         rowKey={(r) => r.id}
-        emptyMessage={activeOnly ? 'No active sessions.' : 'No sessions on file.'}
+        emptyMessage={activeOnly ? t('sessions.noActive') : t('sessions.noneAtAll')}
       />
     </div>
   );

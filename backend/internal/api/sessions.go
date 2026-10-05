@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"net/http"
 	"strconv"
 
@@ -62,7 +61,7 @@ func (s *Server) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
 		s.sessionToucher.Forget(targetJTI)
 	}
 	user, _ := s.userForRequest(r)
-	go s.audit.Record(context.Background(), models.AuditLog{
+	go s.audit.Record(s.auditCtx(r), models.AuditLog{
 		User:         userName(user),
 		Action:       "session.revoke",
 		Namespace:    "-",
@@ -83,7 +82,7 @@ func (s *Server) handleRevokeAllForUser(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	user, _ := s.userForRequest(r)
-	go s.audit.Record(context.Background(), models.AuditLog{
+	go s.audit.Record(s.auditCtx(r), models.AuditLog{
 		User:         userName(user),
 		Action:       "session.revoke_all",
 		Namespace:    "-",

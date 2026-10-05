@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -134,7 +133,7 @@ func (s *Server) handleCreateCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, _ := s.userForRequest(r)
-	go s.audit.Record(context.Background(), models.AuditLog{
+	go s.audit.Record(s.auditCtx(r), models.AuditLog{
 		User: userName(user), Action: "cluster.create", Namespace: "-",
 		ResourceType: "cluster", ResourceName: p.Name,
 	})
@@ -174,7 +173,7 @@ func (s *Server) handleUpdateClusterByID(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	user, _ := s.userForRequest(r)
-	go s.audit.Record(context.Background(), models.AuditLog{
+	go s.audit.Record(s.auditCtx(r), models.AuditLog{
 		User: userName(user), Action: "cluster.update", Namespace: "-",
 		ResourceType: "cluster", ResourceName: p.Name,
 	})
@@ -192,7 +191,7 @@ func (s *Server) handleDeleteCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, _ := s.userForRequest(r)
-	go s.audit.Record(context.Background(), models.AuditLog{
+	go s.audit.Record(s.auditCtx(r), models.AuditLog{
 		User: userName(user), Action: "cluster.delete", Namespace: "-",
 		ResourceType: "cluster", ResourceName: strconv.Itoa(id),
 	})
@@ -214,7 +213,7 @@ func (s *Server) handleDeactivateCluster(w http.ResponseWriter, r *http.Request)
 	_ = s.kube.ApplyCredentials(models.KubeCredentials{Method: "token", Server: "", Token: []byte{}})
 	s.activeClusterID.Store(0)
 	user, _ := s.userForRequest(r)
-	go s.audit.Record(context.Background(), models.AuditLog{
+	go s.audit.Record(s.auditCtx(r), models.AuditLog{
 		User: userName(user), Action: "cluster.deactivate", Namespace: "-",
 		ResourceType: "cluster", ResourceName: strconv.Itoa(id),
 	})
@@ -246,7 +245,7 @@ func (s *Server) handleActivateCluster(w http.ResponseWriter, r *http.Request) {
 	}
 	s.activeClusterID.Store(int64(c.ID))
 	user, _ := s.userForRequest(r)
-	go s.audit.Record(context.Background(), models.AuditLog{
+	go s.audit.Record(s.auditCtx(r), models.AuditLog{
 		User: userName(user), Action: "cluster.activate", Namespace: "-",
 		ResourceType: "cluster", ResourceName: c.Name,
 	})

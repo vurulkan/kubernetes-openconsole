@@ -1,5 +1,6 @@
 import React from 'react';
 import { Pencil, Plus, Search as SearchIcon, Trash2 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { Badge, Button, Input } from '../../components/ui';
 import { Column, DataTable, IconButton } from '../../components/DataTable';
 import { User } from '../../services/api';
@@ -31,6 +32,7 @@ export const GroupsSection: React.FC<Props> = ({
   onEdit,
   onDelete,
 }) => {
+  const { t } = useTranslation();
   const q = filter.trim().toLowerCase();
   const rows = q ? groups.filter((g) => g.name.toLowerCase().includes(q)) : groups;
 
@@ -46,14 +48,14 @@ export const GroupsSection: React.FC<Props> = ({
   const columns: Column<Group>[] = [
     {
       key: 'name',
-      header: 'Name',
+      header: t('admin.groups.col.name'),
       cell: (g) => (
         <span className="font-medium text-slate-900 dark:text-slate-100">{g.name}</span>
       ),
     },
     {
       key: 'members',
-      header: 'Members',
+      header: t('admin.groups.col.members'),
       align: 'center',
       cell: (g) => (
         <Badge variant="default">{memberCount.get(g.id) ?? 0}</Badge>
@@ -61,7 +63,7 @@ export const GroupsSection: React.FC<Props> = ({
     },
     {
       key: 'roles',
-      header: 'Roles',
+      header: t('admin.groups.col.roles'),
       cell: (g) => {
         const list = groupRoles[g.id] ?? [];
         if (list.length === 0)
@@ -112,7 +114,7 @@ export const GroupsSection: React.FC<Props> = ({
             className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"
           />
           <Input
-            placeholder="Search groups…"
+            placeholder={t('admin.groups.search')}
             value={filter}
             onChange={(e) => onFilter(e.target.value)}
             className="h-9 pl-8"
@@ -120,14 +122,14 @@ export const GroupsSection: React.FC<Props> = ({
         </div>
         <Button variant="primary" size="sm" onClick={onNew}>
           <Plus size={14} />
-          New group
+          {t('admin.groups.new')}
         </Button>
       </div>
       <DataTable
         rows={rows}
         columns={columns}
         rowKey={(g) => g.id}
-        emptyMessage={q ? 'No groups match this search.' : 'No groups yet.'}
+        emptyMessage={q ? t('admin.groups.emptyFilter') : t('admin.groups.emptyAll')}
       />
     </div>
   );

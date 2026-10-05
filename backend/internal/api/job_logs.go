@@ -79,7 +79,7 @@ func (s *Server) handleJobLogsWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	go s.audit.Record(context.Background(), models.AuditLog{
+	go s.audit.Record(s.auditCtx(r), models.AuditLog{
 		User:         claims.Username,
 		Action:       "job.logs",
 		Namespace:    namespace,

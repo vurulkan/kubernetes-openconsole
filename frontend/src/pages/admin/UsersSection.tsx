@@ -1,5 +1,6 @@
 import React from 'react';
 import { Pencil, Plus, Search as SearchIcon, Trash2 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { Badge, Button, Input } from '../../components/ui';
 import { Column, DataTable, IconButton } from '../../components/DataTable';
 import { User } from '../../services/api';
@@ -24,6 +25,7 @@ export const UsersSection: React.FC<Props> = ({
   onEdit,
   onDelete,
 }) => {
+  const { t } = useTranslation();
   const q = filter.trim().toLowerCase();
   const rows = q
     ? users.filter((u) => u.username.toLowerCase().includes(q))
@@ -32,7 +34,7 @@ export const UsersSection: React.FC<Props> = ({
   const columns: Column<User>[] = [
     {
       key: 'username',
-      header: 'Username',
+      header: t('admin.users.col.username'),
       cell: (u) => (
         <span className="font-mono text-[13px] font-medium text-slate-900 dark:text-slate-100">
           {u.username}
@@ -41,29 +43,29 @@ export const UsersSection: React.FC<Props> = ({
     },
     {
       key: 'admin',
-      header: 'Admin',
+      header: t('admin.users.col.admin'),
       align: 'center',
       cell: (u) =>
         u.isAdmin ? (
-          <Badge variant="info">Admin</Badge>
+          <Badge variant="info">{t('admin.users.adminBadge')}</Badge>
         ) : (
           <span className="text-xs text-slate-400 dark:text-slate-500">—</span>
         ),
     },
     {
       key: 'active',
-      header: 'Status',
+      header: t('admin.users.col.status'),
       align: 'center',
       cell: (u) =>
         u.isActive ? (
-          <Badge variant="success">Active</Badge>
+          <Badge variant="success">{t('admin.users.active')}</Badge>
         ) : (
-          <Badge variant="warning">Disabled</Badge>
+          <Badge variant="warning">{t('admin.users.disabled')}</Badge>
         ),
     },
     {
       key: 'groups',
-      header: 'Groups',
+      header: t('admin.users.col.groups'),
       cell: (u) => {
         const list = userGroups[u.id] ?? [];
         if (list.length === 0)
@@ -114,7 +116,7 @@ export const UsersSection: React.FC<Props> = ({
             className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"
           />
           <Input
-            placeholder="Search users…"
+            placeholder={t('admin.users.search')}
             value={filter}
             onChange={(e) => onFilter(e.target.value)}
             className="h-9 pl-8"
@@ -122,14 +124,14 @@ export const UsersSection: React.FC<Props> = ({
         </div>
         <Button variant="primary" size="sm" onClick={onNew}>
           <Plus size={14} />
-          New user
+          {t('admin.users.new')}
         </Button>
       </div>
       <DataTable
         rows={rows}
         columns={columns}
         rowKey={(u) => u.id}
-        emptyMessage={q ? 'No users match this search.' : 'No users yet.'}
+        emptyMessage={q ? t('admin.users.emptyFilter') : t('admin.users.emptyAll')}
       />
     </div>
   );

@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -240,7 +239,7 @@ func (s *Server) recordWorkloadAudit(user, namespace, name, resourceType, action
 	if details != "" {
 		resourceName = fmt.Sprintf("%s (%s)", name, details)
 	}
-	go s.audit.Record(context.Background(), models.AuditLog{
+	go s.audit.Record(s.auditCtxFromID(requestID), models.AuditLog{
 		User:         user,
 		Action:       action + "." + outcome,
 		Namespace:    namespace,

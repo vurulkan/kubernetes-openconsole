@@ -218,14 +218,13 @@ func (s *Server) recordExecAudit(user, namespace, pod, outcome, detail, requestI
 	if detail != "" {
 		resource = pod + " (" + detail + ")"
 	}
-	go s.audit.Record(context.Background(), models.AuditLog{
+	go s.audit.Record(s.auditCtxFromID(requestID), models.AuditLog{
 		User:         user,
 		Action:       "pod.exec." + outcome,
 		Namespace:    namespace,
 		ResourceType: "pod",
 		ResourceName: resource,
 	})
-	_ = requestID
 }
 
 // execBridge wires a WebSocket conn to the io.Reader / io.Writer /

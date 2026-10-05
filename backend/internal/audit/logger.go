@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"k8s-dashboard/backend/internal/logging"
 	"k8s-dashboard/backend/internal/models"
 	"k8s-dashboard/backend/internal/store"
 )
@@ -34,12 +35,17 @@ func (l *Logger) Record(ctx context.Context, entry models.AuditLog) {
 	}
 
 	if l.consoleMirror.Load() {
+		// request_id lets an operator correlate an audit entry back to the
+		// HTTP request log that produced it (same middleware already emits
+		// method/path/status/duration under the same id). Falls back to "" so
+		// background goroutines without a request context still log cleanly.
 		slog.LogAttrs(ctx, slog.LevelInfo, "audit",
 			slog.String("event", entry.Action),
 			slog.String("user", entry.User),
 			slog.String("namespace", entry.Namespace),
 			slog.String("resource_type", entry.ResourceType),
 			slog.String("resource_name", entry.ResourceName),
+			slog.String("request_id", logging.RequestIDFrom(ctx)),
 			slog.Time("ts", entry.Timestamp),
 		)
 	}

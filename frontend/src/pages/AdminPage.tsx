@@ -1347,15 +1347,15 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   <Checkbox
                     checked={ldapConfig.enabled}
                     onChange={(v) => setLdapConfig({ ...ldapConfig, enabled: v })}
-                    label="Enabled"
+                    label={tr("admin.ldap.enabled")}
                   />
                   <Input
-                    label="Host"
+                    label={tr("admin.ldap.host")}
                     value={ldapConfig.host}
                     onChange={(e) => setLdapConfig({ ...ldapConfig, host: e.target.value })}
                   />
                   <Input
-                    label="Port"
+                    label={tr("admin.ldap.port")}
                     type="number"
                     value={ldapConfig.port}
                     onChange={(e) =>
@@ -1365,20 +1365,20 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   <Checkbox
                     checked={ldapConfig.useSsl}
                     onChange={(v) => setLdapConfig({ ...ldapConfig, useSsl: v })}
-                    label="Use SSL"
+                    label={tr("admin.ldap.useSsl")}
                   />
                   <Checkbox
                     checked={ldapConfig.startTls}
                     onChange={(v) => setLdapConfig({ ...ldapConfig, startTls: v })}
-                    label="StartTLS"
+                    label={tr("admin.ldap.startTls")}
                   />
                   <Checkbox
                     checked={ldapConfig.sslSkipVerify}
                     onChange={(v) => setLdapConfig({ ...ldapConfig, sslSkipVerify: v })}
-                    label="Skip Verify"
+                    label={tr("admin.ldap.skipVerify")}
                   />
                   <Input
-                    label="Timeout (seconds)"
+                    label={tr("admin.ldap.timeout")}
                     type="number"
                     value={ldapConfig.timeoutSeconds}
                     onChange={(e) =>
@@ -1386,7 +1386,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                     }
                   />
                   <Input
-                    label="Bind DN"
+                    label={tr("admin.ldap.bindDn")}
                     value={ldapConfig.bindDn}
                     onChange={(e) => setLdapConfig({ ...ldapConfig, bindDn: e.target.value })}
                   />
@@ -1445,7 +1445,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                 </div>
                 <div className="mt-4 flex gap-2">
                   <Button variant="primary" size="sm" onClick={handleSaveLDAP}>
-                    Save LDAP Settings
+                    {tr("admin.ldap.save")}
                   </Button>
                   <Button variant="outline" size="sm" onClick={handleTestLDAP}>
                     Test Connection
@@ -1532,24 +1532,24 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                 <Checkbox
                   checked={azureAdConfig.enabled}
                   onChange={(v) => setAzureAdConfig({ ...azureAdConfig, enabled: v })}
-                  label="Enabled"
+                  label={tr("admin.ldap.enabled")}
                 />
                 <Input
-                  label="Tenant ID"
+                  label={tr("admin.azure.tenantId")}
                   value={azureAdConfig.tenantId}
                   onChange={(e) =>
                     setAzureAdConfig({ ...azureAdConfig, tenantId: e.target.value })
                   }
                 />
                 <Input
-                  label="Client ID"
+                  label={tr("admin.azure.clientId")}
                   value={azureAdConfig.clientId}
                   onChange={(e) =>
                     setAzureAdConfig({ ...azureAdConfig, clientId: e.target.value })
                   }
                 />
                 <Input
-                  label="Redirect URL"
+                  label={tr("admin.azure.redirectUrl")}
                   value={azureAdConfig.redirectUrl}
                   onChange={(e) =>
                     setAzureAdConfig({ ...azureAdConfig, redirectUrl: e.target.value })
@@ -1577,7 +1577,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
               </div>
               <div className="mt-4 flex gap-2">
                 <Button variant="primary" size="sm" onClick={handleSaveAzureAd}>
-                  Save Azure AD Settings
+                  {tr("admin.azure.save")}
                 </Button>
                 <Button variant="outline" size="sm" onClick={handleTestAzureAd}>
                   Test Connection
@@ -2074,7 +2074,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
             <SectionCard title={tr('admin.sections.audit')}>
               <div className="mb-4 flex flex-wrap items-end gap-3">
                 <Input
-                  label="User"
+                  label={tr("admin.audit.filterUser")}
                   value={auditUserFilter}
                   onChange={(e) => {
                     setAuditOffset(0);
@@ -2083,7 +2083,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   className="w-40"
                 />
                 <Input
-                  label="Action"
+                  label={tr("admin.audit.filterAction")}
                   value={auditActionFilter}
                   onChange={(e) => {
                     setAuditOffset(0);
@@ -2092,7 +2092,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   className="w-40"
                 />
                 <Input
-                  label="Namespace"
+                  label={tr("admin.audit.filterNamespace")}
                   value={auditNamespaceFilter}
                   onChange={(e) => {
                     setAuditOffset(0);
@@ -2101,7 +2101,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   className="w-40"
                 />
                 <Input
-                  label="Start date"
+                  label={tr("admin.audit.filterStart")}
                   type="date"
                   value={auditStartDate}
                   onChange={(e) => {
@@ -2110,7 +2110,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   }}
                 />
                 <Input
-                  label="End date"
+                  label={tr("admin.audit.filterEnd")}
                   type="date"
                   value={auditEndDate}
                   onChange={(e) => {
@@ -2123,7 +2123,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                     {auditOffset + 1}–{Math.min(auditOffset + 50, auditTotal)} of {auditTotal}
                   </span>
                   <Button variant="outline" size="sm" onClick={handleAuditExport}>
-                    Export CSV
+                    {tr('admin.audit.exportCsv')}
                   </Button>
                 </div>
               </div>
@@ -2161,7 +2161,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   disabled={auditOffset === 0}
                   onClick={() => setAuditOffset(Math.max(0, auditOffset - 50))}
                 >
-                  Previous
+                  {tr('admin.audit.prev')}
                 </Button>
                 <Button
                   variant="outline"
@@ -2169,7 +2169,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   disabled={auditOffset + 50 >= auditTotal}
                   onClick={() => setAuditOffset(auditOffset + 50)}
                 >
-                  Next
+                  {tr('admin.audit.next')}
                 </Button>
               </div>
             </SectionCard>

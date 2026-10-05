@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Eye, Pencil, PlayCircle, Save } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { Alert, Badge, Button, Modal } from './ui';
 import { confirm } from './ConfirmDialog';
 import { YamlDiff, YamlEditor } from './MonacoYaml';
@@ -34,6 +35,7 @@ type Props = {
  * the editable Monaco buffer.
  */
 export const YamlEditModal: React.FC<Props> = ({ target, onClose, onApplied, theme }) => {
+  const { t } = useTranslation();
   const [originalYaml, setOriginalYaml] = useState('');
   const [draftYaml, setDraftYaml] = useState('');
   const [mode, setMode] = useState<'view' | 'edit'>('view');
@@ -97,7 +99,7 @@ export const YamlEditModal: React.FC<Props> = ({ target, onClose, onApplied, the
     try {
       const res = await applyYaml(target.resource, target.namespace, target.name, draftYaml, true);
       setDryRunPreview(res.applied);
-      setNotice('Dry-run succeeded. Review the server-defaulted YAML on the right.');
+      setNotice(t('yamlEditor.dryRunOk'));
     } catch (err) {
       setDryRunPreview(null);
       setError(err instanceof Error ? err.message : 'Dry-run failed');
@@ -109,11 +111,11 @@ export const YamlEditModal: React.FC<Props> = ({ target, onClose, onApplied, the
   const handleApply = useCallback(async () => {
     if (!target) return;
     const ok = await confirm({
-      title: `Apply changes to ${target.resourceLabel} "${target.name}"?`,
+      title: t('yamlEditor.confirmTitle', { kind: target.resourceLabel, name: target.name }),
       message: dryRunPreview
-        ? 'Dry-run passed. This will persist the YAML on the cluster.'
-        : 'No dry-run was run. The cluster will accept or reject the YAML directly.',
-      confirmText: 'Apply',
+        ? t('yamlEditor.confirmDryOk')
+        : t('yamlEditor.confirmNoDry'),
+      confirmText: t('yamlEditor.apply'),
       variant: 'danger',
     });
     if (!ok) return;
@@ -127,7 +129,7 @@ export const YamlEditModal: React.FC<Props> = ({ target, onClose, onApplied, the
       setOriginalYaml(res.applied);
       setDraftYaml(res.applied);
       setDryRunPreview(null);
-      setNotice('Applied.');
+      setNotice(t('yamlEditor.applied'));
       if (onApplied) onApplied();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Apply failed');
@@ -139,11 +141,11 @@ export const YamlEditModal: React.FC<Props> = ({ target, onClose, onApplied, the
   const monacoTheme = theme === 'dark' ? 'vs-dark' : 'vs';
 
   const headerBadge = useMemo(() => {
-    if (loading) return <Badge variant="default">Loading…</Badge>;
-    if (mode === 'edit' && dirty) return <Badge variant="warning">Edited</Badge>;
-    if (mode === 'edit') return <Badge variant="info">Editing</Badge>;
-    return <Badge variant="default">Read-only</Badge>;
-  }, [loading, mode, dirty]);
+    if (loading) return <Badge variant="default">{t('common.loading')}</Badge>;
+    if (mode === 'edit' && dirty) return <Badge variant="warning">{t('yamlEditor.editedBadge')}</Badge>;
+    if (mode === 'edit') return <Badge variant="info">{t('yamlEditor.editingBadge')}</Badge>;
+    return <Badge variant="default">{t('yamlEditor.readOnlyBadge')}</Badge>;
+  }, [loading, mode, dirty, t]);
 
   if (!target) return null;
 
@@ -152,7 +154,7 @@ export const YamlEditModal: React.FC<Props> = ({ target, onClose, onApplied, the
       open
       size="full"
       onClose={applying ? () => {} : onClose}
-      title={`${target.resourceLabel} YAML — ${target.name}`}
+      title={t('yamlEditor.titleView', { kind: target.resourceLabel, name: target.name })}
       footer={
         <div className="flex flex-1 flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
@@ -163,33 +165,33 @@ export const YamlEditModal: React.FC<Props> = ({ target, onClose, onApplied, the
             {mode === 'edit' && (
               <>
                 <Button variant="ghost" size="sm" onClick={handleReset} disabled={!dirty || applying}>
-                  Reset
+                  {t('yamlEditor.reset')}
                 </Button>
                 <Button variant="outline" size="sm" onClick={handleDryRun} disabled={applying || loading}>
                   <PlayCircle size={13} />
-                  Dry-run
+                  {t('yamlEditor.dryRun')}
                 </Button>
                 <Button variant="primary" size="sm" onClick={handleApply} disabled={applying || loading}>
                   <Save size={13} />
-                  {applying ? 'Applying…' : 'Apply'}
+                  {applying ? t('yamlEditor.applying') : t('yamlEditor.apply')}
                 </Button>
               </>
             )}
             {mode === 'view' && (
               <>
                 <Button variant="outline" size="sm" onClick={handleReload} disabled={loading}>
-                  Reload
+                  {t('yamlEditor.reload')}
                 </Button>
                 {target.canEdit && (
                   <Button variant="primary" size="sm" onClick={() => setMode('edit')} disabled={loading}>
                     <Pencil size={13} />
-                    Edit
+                    {t('yamlEditor.edit')}
                   </Button>
                 )}
               </>
             )}
             <Button variant="ghost" size="sm" onClick={onClose} disabled={applying}>
-              Close
+              {t('yamlEditor.close')}
             </Button>
           </div>
         </div>
@@ -208,8 +210,7 @@ export const YamlEditModal: React.FC<Props> = ({ target, onClose, onApplied, the
         )}
         {mode === 'view' && target.canEdit && (
           <div className="shrink-0 rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-[11px] text-slate-500 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400">
-            Read-only view. Click <Eye size={11} className="inline" /> Edit to make changes
-            — nothing is sent to the cluster until you click Apply.
+            <Eye size={11} className="inline" /> {t('yamlEditor.readOnlyNotice')}
           </div>
         )}
         <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-slate-200 dark:border-slate-800">

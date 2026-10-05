@@ -470,7 +470,26 @@ func (s *Server) recordAudit(r *http.Request, action, namespace, resourceType, r
 		ResourceType: resourceType,
 		ResourceName: resourceName,
 	}
-	go s.audit.Record(context.Background(), entry)
+	go s.audit.Record(s.auditCtx(r), entry)
+}
+
+// auditCtx returns a background context carrying the current request_id so a
+// detached audit goroutine (which outlives r.Context()) still correlates with
+// the HTTP request log that triggered it when both land in Elasticsearch.
+func (s *Server) auditCtx(r *http.Request) context.Context {
+	if r == nil {
+		return context.Background()
+	}
+	return s.auditCtxFromID(logpkg.RequestIDFrom(r.Context()))
+}
+
+// auditCtxFromID is the string-ID variant used by helpers that already fished
+// the request_id out of the request context (recordDeployAudit etc.).
+func (s *Server) auditCtxFromID(id string) context.Context {
+	if id == "" {
+		return context.Background()
+	}
+	return context.WithValue(context.Background(), logpkg.RequestIDKey, id)
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -486,7 +505,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	gateKey := clientIP(r) + "|" + strings.ToLower(strings.TrimSpace(request.Username))
 	if ok, retry := LoginGate().check(gateKey); !ok {
 		w.Header().Set("Retry-After", strconv.Itoa(retry))
-		go s.audit.Record(context.Background(), models.AuditLog{
+		go s.audit.Record(s.auditCtx(r), models.AuditLog{
 			User:         request.Username,
 			Action:       "login.locked",
 			Namespace:    "-",
@@ -500,7 +519,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	user, err := s.store.GetUserByUsername(r.Context(), request.Username)
 	if err != nil || !user.IsActive {
 		LoginGate().recordFailure(gateKey)
-		go s.audit.Record(context.Background(), models.AuditLog{
+		go s.audit.Record(s.auditCtx(r), models.AuditLog{
 			User:         request.Username,
 			Action:       "login.failed",
 			Namespace:    "-",
@@ -541,7 +560,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	if !authenticated {
 		LoginGate().recordFailure(gateKey)
-		go s.audit.Record(context.Background(), models.AuditLog{
+		go s.audit.Record(s.auditCtx(r), models.AuditLog{
 			User:         request.Username,
 			Action:       "login.failed",
 			Namespace:    "-",
@@ -734,7 +753,7 @@ func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.CreateSession(r.Context(), jti, user.ID, now, now.Add(ttl), clientIP(r), r.UserAgent()); err != nil {
 		slog.Warn("could not record azure session", "user", user.Username, "error", err.Error())
 	}
-	go s.audit.Record(context.Background(), models.AuditLog{
+	go s.audit.Record(s.auditCtx(r), models.AuditLog{
 		User:         user.Username,
 		Action:       "login.azure",
 		Namespace:    "-",

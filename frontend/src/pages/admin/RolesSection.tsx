@@ -1,5 +1,6 @@
 import React from 'react';
 import { Pencil, Plus, Search as SearchIcon, Trash2 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { Badge, Button, Input } from '../../components/ui';
 import { Column, DataTable, IconButton } from '../../components/DataTable';
 
@@ -24,6 +25,7 @@ export const RolesSection: React.FC<Props> = ({
   onEdit,
   onDelete,
 }) => {
+  const { t } = useTranslation();
   const q = filter.trim().toLowerCase();
   const rows = q
     ? roles.filter(
@@ -45,14 +47,14 @@ export const RolesSection: React.FC<Props> = ({
   const columns: Column<Role>[] = [
     {
       key: 'name',
-      header: 'Name',
+      header: t('admin.roles.col.name'),
       cell: (r) => (
         <span className="font-medium text-slate-900 dark:text-slate-100">{r.name}</span>
       ),
     },
     {
       key: 'description',
-      header: 'Description',
+      header: t('admin.roles.col.description'),
       cell: (r) =>
         r.description ? (
           <span className="text-sm text-slate-600 dark:text-slate-300">{r.description}</span>
@@ -62,7 +64,7 @@ export const RolesSection: React.FC<Props> = ({
     },
     {
       key: 'groups',
-      header: 'Used by',
+      header: t('admin.roles.col.usedBy'),
       align: 'center',
       cell: (r) => (
         <Badge variant="default">
@@ -97,7 +99,7 @@ export const RolesSection: React.FC<Props> = ({
             className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"
           />
           <Input
-            placeholder="Search roles…"
+            placeholder={t('admin.roles.search')}
             value={filter}
             onChange={(e) => onFilter(e.target.value)}
             className="h-9 pl-8"
@@ -105,14 +107,14 @@ export const RolesSection: React.FC<Props> = ({
         </div>
         <Button variant="primary" size="sm" onClick={onNew}>
           <Plus size={14} />
-          New role
+          {t('admin.roles.new')}
         </Button>
       </div>
       <DataTable
         rows={rows}
         columns={columns}
         rowKey={(r) => r.id}
-        emptyMessage={q ? 'No roles match this search.' : 'No roles yet.'}
+        emptyMessage={q ? t('admin.roles.emptyFilter') : t('admin.roles.emptyAll')}
       />
     </div>
   );
