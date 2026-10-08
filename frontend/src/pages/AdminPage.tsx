@@ -15,6 +15,7 @@ import {
 import { UsersSection } from './admin/UsersSection';
 import { GroupsSection } from './admin/GroupsSection';
 import { SessionsSection } from './admin/SessionsSection';
+import { RecordingSettingsPanel, RecordingsSection } from './admin/RecordingsSection';
 import { RolePermissionsPanel } from './admin/RolePermissionsPanel';
 import { useTranslation } from 'react-i18next';
 import { RolesSection } from './admin/RolesSection';
@@ -88,6 +89,7 @@ import {
   Trash2,
   UserPlus,
   Users as UsersIcon,
+  Video,
   X,
 } from 'lucide-react';
 
@@ -108,7 +110,17 @@ const ADMIN_TABS: Array<{
   { label: 'Customization', value: 'customization', icon: ImageIcon },
   { label: 'Audit Logs', value: 'audit', icon: FileText },
   { label: 'Sessions', value: 'sessions', icon: KeyRound },
+  { label: 'Recordings', value: 'recordings', icon: Video },
 ];
+
+// Map tab slugs to admin.tabs.* i18n keys; a few older slugs don't line up
+// 1:1 so a tiny lookup keeps the dictionary tidy.
+const TAB_I18N_KEY: Record<string, string> = {
+  users: 'users', groups: 'groups', roles: 'roles',
+  ldap: 'ldap', 'azure-ad': 'azure', session: 'session',
+  clusters: 'clusters', customization: 'customization',
+  audit: 'audit', sessions: 'sessions', recordings: 'recordings',
+};
 
 // ─── Section card ─────────────────────────────────────────────────────────────
 
@@ -967,15 +979,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
           {ADMIN_TABS.map((entry) => {
             const Icon = entry.icon;
             const active = tab === entry.value;
-            // Map our existing tab keys to the i18n namespace; a few older
-            // slugs don't line up 1:1 so a tiny lookup keeps JSON tidy.
-            const i18nKey: Record<string, string> = {
-              users: 'users', groups: 'groups', roles: 'roles',
-              ldap: 'ldap', 'azure-ad': 'azure', session: 'session',
-              clusters: 'clusters', customization: 'customization',
-              audit: 'audit', sessions: 'sessions',
-            };
-            const label = tr(`admin.tabs.${i18nKey[entry.value] ?? entry.value}`, { defaultValue: entry.label });
+            const label = tr(`admin.tabs.${TAB_I18N_KEY[entry.value] ?? entry.value}`, { defaultValue: entry.label });
             return (
               <button
                 key={entry.value}
@@ -1004,7 +1008,11 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
             <span className="uppercase tracking-wider">{tr("common.administration")}</span>
           </div>
           <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
-            {ADMIN_TABS.find((t) => t.value === tab)?.label ?? 'Admin'}
+            {(() => {
+              const entry = ADMIN_TABS.find((t) => t.value === tab);
+              if (!entry) return 'Admin';
+              return tr(`admin.tabs.${TAB_I18N_KEY[entry.value] ?? entry.value}`, { defaultValue: entry.label });
+            })()}
           </h1>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
             Manage users, roles, LDAP, sessions and cluster connections entirely from the UI.
@@ -2182,6 +2190,23 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
             >
               <SessionsSection currentUserId={user.id} />
             </SectionCard>
+          )}
+
+          {tab === 'recordings' && (
+            <div className="flex flex-col gap-5">
+              <SectionCard
+                title={tr('admin.sections.recordingSettings')}
+                description={tr('recordings.settingsDescription')}
+              >
+                <RecordingSettingsPanel />
+              </SectionCard>
+              <SectionCard
+                title={tr('admin.sections.recordings')}
+                description={tr('recordings.listDescription')}
+              >
+                <RecordingsSection />
+              </SectionCard>
+            </div>
           )}
         </div>
       </div>

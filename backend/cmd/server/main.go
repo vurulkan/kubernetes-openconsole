@@ -17,6 +17,8 @@ import (
 	"k8s-dashboard/backend/internal/db"
 	"k8s-dashboard/backend/internal/kube"
 	logpkg "k8s-dashboard/backend/internal/logging"
+	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/recording"
 	"k8s-dashboard/backend/internal/store"
 )
 
@@ -62,23 +64,36 @@ func main() {
 	}
 
 	kubeManager := kube.NewManager()
-	if creds, err := stor.GetKubeCredentials(context.Background()); err == nil && creds.Active {
-		if err := kubeManager.ApplyCredentials(creds); err == nil {
-			_ = kubeManager.Start(context.Background())
-		}
-	}
+	restoreActiveCluster(context.Background(), stor, kubeManager)
 
 	auditLogger := audit.New(stor)
 	auditLogger.SetConsoleMirror(cfg.LogIncludeAudit)
 	audit.SetMetricHook(api.MetricsAuditIncr)
 	auditLogger.StartRetention(context.Background(), cfg.LogRetentionDays, cfg.AuditPurgeInterval)
 
+	recDir := cfg.Recording.Dir
+	if recDir == "" {
+		recDir = filepath.Join(filepath.Dir(cfg.DataPath), "recordings")
+	}
+	recorder, err := recording.New(context.Background(), stor, auditLogger, recDir, models.RecordingSettings{
+		Enabled:       cfg.Recording.Enabled,
+		RetentionDays: cfg.Recording.RetentionDays,
+		MaxSessionMB:  cfg.Recording.MaxSessionMB,
+		MaxTotalMB:    cfg.Recording.MaxTotalMB,
+		MinFreeMB:     cfg.Recording.MinFreeMB,
+		DiskPolicy:    cfg.Recording.DiskPolicy,
+	})
+	if err != nil {
+		fatal("recording init error", err)
+	}
+	recorder.Run(context.Background())
+
 	staticDir := "./public"
 	if value := os.Getenv("STATIC_DIR"); value != "" {
 		staticDir = value
 	}
 	dataDir := filepath.Dir(cfg.DataPath)
-	server := api.NewServer(stor, auditLogger, kubeManager, staticDir, dataDir, cfg.TimeZone)
+	server := api.NewServer(stor, auditLogger, kubeManager, recorder, staticDir, dataDir, cfg.TimeZone)
 	httpServer := &http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      server.Router(),
@@ -104,6 +119,31 @@ func main() {
 		slog.Error("shutdown error", slog.Any("error", err))
 	}
 	slog.Info("server stopped")
+}
+
+// restoreActiveCluster reconnects to whichever cluster was active before the
+// restart. The clusters table is the source of truth since multi-cluster;
+// the legacy single kube_credentials row is only a fallback for installs
+// that never had a cluster row. Failures are logged, not fatal: the console
+// still boots and an admin can fix or re-activate the cluster from the UI.
+func restoreActiveCluster(ctx context.Context, stor *store.Store, km *kube.Manager) {
+	if c, err := stor.GetActiveCluster(ctx); err == nil && c != nil {
+		if err := km.ApplyCredentials(c.Credentials); err != nil {
+			slog.Warn("active cluster credentials rejected", slog.String("cluster", c.Name), slog.Any("error", err))
+			return
+		}
+		if err := km.Start(ctx); err != nil {
+			slog.Warn("active cluster start failed", slog.String("cluster", c.Name), slog.Any("error", err))
+			return
+		}
+		slog.Info("active cluster restored", slog.String("cluster", c.Name))
+		return
+	}
+	if creds, err := stor.GetKubeCredentials(ctx); err == nil && creds.Active {
+		if err := km.ApplyCredentials(creds); err == nil {
+			_ = km.Start(ctx)
+		}
+	}
 }
 
 func fatal(msg string, err error) {

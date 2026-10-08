@@ -154,6 +154,37 @@ func migrate(ctx context.Context, conn *sql.DB) error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_session_tokens_user ON session_tokens (user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_session_tokens_expires ON session_tokens (expires_at)`,
+		// Pod exec session recordings (asciicast v2 files on disk). ended_at
+		// stays NULL while the session is open; startup recovery closes rows
+		// left open by a crash.
+		`CREATE TABLE IF NOT EXISTS session_recordings (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id TEXT NOT NULL UNIQUE,
+			user TEXT NOT NULL,
+			cluster TEXT NOT NULL DEFAULT '',
+			namespace TEXT NOT NULL,
+			pod TEXT NOT NULL,
+			container TEXT NOT NULL DEFAULT '',
+			started_at DATETIME NOT NULL,
+			ended_at DATETIME NULL,
+			size_bytes INTEGER NOT NULL DEFAULT 0,
+			truncated INTEGER NOT NULL DEFAULT 0,
+			request_id TEXT NOT NULL DEFAULT '',
+			path TEXT NOT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_session_recordings_started ON session_recordings (started_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_session_recordings_user ON session_recordings (user)`,
+		// Seeded from SESSION_RECORDING_* env on first boot by the recording
+		// manager; the admin UI owns it afterwards.
+		`CREATE TABLE IF NOT EXISTS recording_settings (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			enabled INTEGER NOT NULL DEFAULT 1,
+			retention_days INTEGER NOT NULL DEFAULT 30,
+			max_session_mb INTEGER NOT NULL DEFAULT 10,
+			max_total_mb INTEGER NOT NULL DEFAULT 2048,
+			min_free_mb INTEGER NOT NULL DEFAULT 512,
+			disk_policy TEXT NOT NULL DEFAULT 'evict_oldest'
+		);`,
 	}
 
 	for _, stmt := range stmts {

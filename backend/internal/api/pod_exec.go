@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"k8s-dashboard/backend/internal/auth"
 	"k8s-dashboard/backend/internal/logging"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/recording"
 )
 
 // Default shells tried in order when the client did not pick one.
@@ -100,6 +102,12 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Recording is fail-open: if it can't start, the shell still opens and
+	// the reason lands in the audit log. The client only shows the
+	// "being recorded" banner when it receives the recording frame.
+	rec := s.startExecRecording(r, conn, claims.Username, namespace, pod, container, requestID)
+	defer rec.Close()
+
 	start := time.Now()
 	s.recordExecAudit(claims.Username, namespace, pod, "start",
 		"container="+container+";cmd="+command, requestID)
@@ -115,7 +123,7 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	bridge := newExecBridge(conn, cancel)
+	bridge := newExecBridge(conn, cancel, rec)
 	defer bridge.Close()
 
 	err = executor.StreamWithContext(ctx, remotecommand.StreamOptions{
@@ -144,6 +152,59 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 		slog.Int64("duration_ms", duration.Milliseconds()),
 		slog.String("request_id", requestID),
 	)
+
+	if rec != nil {
+		res := rec.Close()
+		detail := "session_id=" + res.SessionID +
+			";size=" + strconv.FormatInt(res.SizeBytes, 10) +
+			";dur_ms=" + itoa(res.Duration.Milliseconds())
+		if res.Truncated {
+			detail += ";truncated=" + res.TruncateReason
+		}
+		s.recordExecAudit(claims.Username, namespace, pod, "session.recorded", detail, requestID)
+	}
+}
+
+// startExecRecording opens a recording for the session and tells the client
+// about it. Returns nil (which the bridge treats as "not recording") when
+// recording is off, refused by the disk guard, or failed to start.
+func (s *Server) startExecRecording(r *http.Request, conn *websocket.Conn, user, namespace, pod, container, requestID string) *recording.Session {
+	if s.recorder == nil {
+		return nil
+	}
+	cluster := ""
+	if c, err := s.store.GetActiveCluster(r.Context()); err == nil && c != nil {
+		cluster = c.Name
+	}
+	cols, _ := strconv.ParseUint(r.URL.Query().Get("cols"), 10, 16)
+	rows, _ := strconv.ParseUint(r.URL.Query().Get("rows"), 10, 16)
+	rec, err := s.recorder.Start(r.Context(), recording.Meta{
+		User:      user,
+		Cluster:   cluster,
+		Namespace: namespace,
+		Pod:       pod,
+		Container: container,
+		RequestID: requestID,
+		Cols:      uint16(cols),
+		Rows:      uint16(rows),
+	})
+	switch {
+	case err == nil:
+		// Sent before the bridge starts, so no concurrent writer yet.
+		_ = conn.WriteMessage(websocket.TextMessage,
+			[]byte(`{"type":"recording","enabled":true,"sessionId":`+jsonString(rec.ID())+`}`))
+		return rec
+	case errors.Is(err, recording.ErrDisabled):
+	case errors.Is(err, recording.ErrNoSpace):
+		s.recordExecAudit(user, namespace, pod, "session.record_skipped", "reason=disk_quota", requestID)
+	default:
+		slog.Warn("exec recording failed to start",
+			slog.Any("error", err),
+			slog.String("request_id", requestID),
+		)
+		s.recordExecAudit(user, namespace, pod, "session.record_failed", err.Error(), requestID)
+	}
+	return nil
 }
 
 // splitCommand resolves the client-supplied command into an argv slice for
@@ -234,6 +295,9 @@ type execBridge struct {
 	conn   *websocket.Conn
 	cancel context.CancelFunc
 
+	// rec receives a copy of stdout/stderr and resize events; nil-safe.
+	rec *recording.Session
+
 	// stdin: binary WS frames from the client; served to Read().
 	stdinCh chan []byte
 
@@ -253,10 +317,11 @@ type execBridge struct {
 	lastMu    sync.Mutex
 }
 
-func newExecBridge(conn *websocket.Conn, cancel context.CancelFunc) *execBridge {
+func newExecBridge(conn *websocket.Conn, cancel context.CancelFunc, rec *recording.Session) *execBridge {
 	b := &execBridge{
 		conn:      conn,
 		cancel:    cancel,
+		rec:       rec,
 		stdinCh:   make(chan []byte, 32),
 		sizeCh:    make(chan *remotecommand.TerminalSize, 4),
 		done:      make(chan struct{}),
@@ -315,6 +380,7 @@ func (b *execBridge) readLoop() {
 		case websocket.TextMessage:
 			var ctrl execControl
 			if err := json.Unmarshal(data, &ctrl); err == nil && ctrl.Type == "resize" {
+				b.rec.Resize(ctrl.Cols, ctrl.Rows)
 				select {
 				case b.sizeCh <- &remotecommand.TerminalSize{Width: ctrl.Cols, Height: ctrl.Rows}:
 				default:
@@ -352,6 +418,8 @@ func (b *execBridge) Read(p []byte) (int, error) {
 
 // Write implements io.Writer (stdout/stderr merged; sent as binary WS frames).
 func (b *execBridge) Write(p []byte) (int, error) {
+	// Record what the pod emitted even if the browser has gone away.
+	b.rec.Write(p)
 	b.writeMu.Lock()
 	defer b.writeMu.Unlock()
 	if err := b.conn.WriteMessage(websocket.BinaryMessage, p); err != nil {

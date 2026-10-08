@@ -34,6 +34,7 @@ import (
 	logpkg "k8s-dashboard/backend/internal/logging"
 	"k8s-dashboard/backend/internal/models"
 	"k8s-dashboard/backend/internal/rbac"
+	"k8s-dashboard/backend/internal/recording"
 	"k8s-dashboard/backend/internal/store"
 )
 
@@ -55,6 +56,8 @@ type Server struct {
 	// sessionToucher batches last_used_at writes so AuthMiddleware doesn't
 	// serialize every API call behind an UPDATE on SQLite's single writer.
 	sessionToucher *store.SessionToucher
+	// recorder captures pod exec sessions as asciicast files.
+	recorder *recording.Manager
 }
 
 // sessionValidator is the AuthMiddleware adapter around *store.Store. Returning
@@ -92,7 +95,7 @@ func (s *Server) authValidator() auth.SessionValidator {
 	return &sessionValidator{s: s.store, t: s.sessionToucher}
 }
 
-func NewServer(st *store.Store, auditLogger *audit.Logger, kubeManager *kube.Manager, staticDir string, dataDir string, timeZone string) *Server {
+func NewServer(st *store.Store, auditLogger *audit.Logger, kubeManager *kube.Manager, recorder *recording.Manager, staticDir string, dataDir string, timeZone string) *Server {
 	location, err := time.LoadLocation(timeZone)
 	if err != nil {
 		location = time.UTC
@@ -109,6 +112,7 @@ func NewServer(st *store.Store, auditLogger *audit.Logger, kubeManager *kube.Man
 		dataDir:        dataDir,
 		timezone:       location,
 		sessionToucher: toucher,
+		recorder:       recorder,
 	}
 	// Seed the active cluster id from whatever row is currently is_active.
 	// Called sync so permission checks on early requests see a stable value.
@@ -222,6 +226,10 @@ func (s *Server) Router() http.Handler {
 		// Live informer feed. ?namespace=<ns> filters; cluster-scoped events
 		// (Namespace, Node, cluster-level K8s Events) always pass through.
 		r.Get("/ws/events", s.handleEventsWS)
+
+		// Recording writes check admin in the handler so denials are audited.
+		r.Delete("/api/admin/recordings/{id}", s.handleDeleteRecording)
+		r.Put("/api/admin/recordings/settings", s.handleUpdateRecordingSettings)
 	})
 
 	r.Group(func(r chi.Router) {
@@ -283,6 +291,11 @@ func (s *Server) Router() http.Handler {
 		// entries carry session.revoke / session.revoke_all actions.
 		r.Get("/api/admin/sessions", s.handleListSessions)
 		r.Delete("/api/admin/sessions/{id}", s.handleRevokeSession)
+
+		r.Get("/api/admin/recordings", s.handleListRecordings)
+		r.Get("/api/admin/recordings/settings", s.handleGetRecordingSettings)
+		r.Get("/api/admin/recordings/{id}", s.handleGetRecording)
+		r.Get("/api/admin/recordings/{id}/cast", s.handleRecordingCast)
 		r.Post("/api/admin/users/{id}/revoke-sessions", s.handleRevokeAllForUser)
 
 		r.Post("/api/admin/customization/logo", s.handleUploadLogo)

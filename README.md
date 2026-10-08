@@ -17,6 +17,7 @@ Pods, Deployments, **DaemonSets**, **StatefulSets**, **HorizontalPodAutoscalers 
 - **Deployment / StatefulSet scale** (`deployments:scale`, `statefulsets:scale`)
 - **YAML view + edit + server dry-run + apply** for every workload above (`{resource}:edit`), powered by Monaco. Diff view, dry-run returns the server-canonicalized object, optimistic concurrency via `resourceVersion`.
 - **Pod shell** (`pods:exec`) over WebSocket with xterm.js.
+- **Pod shell session recording** — every shell is saved as an asciicast v2 file and can be replayed by admins (Admin → Recordings) with an in-browser player. See [Session Recording](#session-recording).
 - **Pod / Deployment logs** (`pods:logs`) with rate limiting.
 
 Every write action records `{resource}.{action}.{success|denied|failed|rate_limited}` audit entries and the HTTP response carries `X-Request-Id` for correlation with the audit mirror in stdout.
@@ -28,6 +29,7 @@ Every write action records `{resource}.{action}.{success|denied|failed|rate_limi
 - **Local users** (bcrypt) + **LDAP** (bind-based, searchable + importable) + **Azure AD** single-tenant login — all configurable via UI.
 - **JWT authentication** with forced password change on first login.
 - **Session management** (Admin → Sessions): list every active token, revoke individual sessions or every session for a user, change-password revokes everything.
+- **Session recordings** (Admin → Recordings): filter, replay (1x / 2x / 4x, seek, skip idle), download `.cast`, delete; retention, quota and on/off switch editable in the UI.
 - **Login brute-force protection** (5 fails per IP+user → 5-minute lock, audited).
 
 ### UX
@@ -42,11 +44,12 @@ Every write action records `{resource}.{action}.{success|denied|failed|rate_limi
 ### Security headers
 - Strict CSP, `X-Frame-Options: DENY`, `Permissions-Policy`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`.
 - CSP allows `cdn.jsdelivr.net` and `worker-src blob:` so Monaco (lazy-loaded) can run; tighten these if you self-host Monaco in an air-gapped deploy.
+- CSP `script-src` includes `'wasm-unsafe-eval'` so the bundled recording player can compile its WebAssembly terminal. It permits WebAssembly compilation only, not JavaScript `eval`.
 
 ## Architecture
 
 - **Backend**: Go + `client-go` + chi router + slog + sqlite (modernc.org/sqlite).
-- **Frontend**: React 18 + TypeScript + Vite + Tailwind + Monaco (lazy, CDN) + react-i18next + xterm.js.
+- **Frontend**: React 18 + TypeScript + Vite + Tailwind + Monaco (lazy, CDN) + react-i18next + xterm.js + asciinema-player (lazy, bundled — no CDN).
 - **Deployment**: single-container Docker image; Kubernetes manifests in `deploy/`.
 
 ## Build
@@ -102,6 +105,17 @@ The shipped `deploy/deployment.yaml` carries the recommended env, resource reque
 - `TIMEZONE` (default `UTC`) — Used for audit log timestamps.
 - `LOG_RETENTION_DAYS` (default `30`) — Audit log retention (purged automatically).
 - `MAX_REPLICAS` (default `100`) — Hard upper bound the Scale endpoint accepts for Deployment / StatefulSet scaling.
+
+### Session recording
+These **seed** the recording settings on first boot only; afterwards Admin → Recordings owns them (except `SESSION_RECORDING_DIR`, read on every start). See [Session Recording](#session-recording).
+
+- `SESSION_RECORDING_ENABLED` (default `true`) — record new pod shell sessions.
+- `SESSION_RECORDING_DIR` (default `<dir of DATA_PATH>/recordings`, i.e. `/data/recordings`) — where `.cast` files are written.
+- `SESSION_RECORDING_RETENTION_DAYS` (default `30`, `0` = never purge) — daily purge of older recordings.
+- `SESSION_RECORDING_MAX_SIZE_MB` (default `10`) — per-session cap; past it the recording stops and is flagged truncated.
+- `SESSION_RECORDING_MAX_TOTAL_MB` (default `2048`) — quota for all recordings together.
+- `SESSION_RECORDING_MIN_FREE_MB` (default `512`) — free space always left on the recordings volume.
+- `SESSION_RECORDING_DISK_POLICY` (default `evict_oldest`) — `evict_oldest` or `stop`; see below.
 
 ### Structured logging (slog)
 Logs go to stdout via Go's `log/slog`. In production set `LOG_FORMAT=json` so Filebeat / Fluent Bit / Vector can ship them directly to Elastic / Kibana / Loki.
@@ -309,12 +323,67 @@ Interactive shell into a running container, gated by application permission `pod
 - xterm.js UI with container picker on multi-container pods and shell picker (`/bin/sh`, `/bin/bash`, `/bin/ash`).
 - Idle timeout: **5 minutes** without stdin automatically closes the session.
 - Each session logs `pod.exec.start` and `pod.exec.end` (with duration and outcome) to both the audit DB and the structured console log.
+- Terminal output is recorded by default — see [Session Recording](#session-recording).
 - ClusterRole must grant `pods/exec: create` for this to work.
 
 **Security notes**
 - Exec is the highest-risk action in OpenConsole; grant it narrowly.
 - Non-root pod admission policies in your cluster still apply.
-- Session recording of stdout is deferred to a later milestone; command events (start/end) are already captured.
+
+# Session Recording
+
+Every pod shell session is recorded as an [asciicast v2](https://docs.asciinema.org/manual/asciicast/v2/) file and can be replayed by admins. Recording lives entirely inside OpenConsole — no extra ClusterRole permissions.
+
+**What is recorded**
+- Everything the container writes to the terminal (stdout + stderr — merged, since the shell runs on a TTY), with timing, plus terminal resizes.
+- Keystrokes are **not** recorded as input events. Anything the shell echoes back (typed commands, for example) is part of the output and therefore in the recording; input at hidden prompts (`sudo`, `read -s`) is not echoed and is not recorded.
+- Escape sequences from full-screen programs (`vim`, `less`, `top`) are kept as-is, so they replay faithfully.
+- Metadata per session: user, cluster, namespace, pod, container, start / end, size, truncated flag, and the `request_id` of the exec request.
+
+**Privacy.** If someone prints a secret (`cat` of a mounted secret, `env`, `kubectl get secret -o yaml`), that secret is now in the recording. The shell shows a red *"This session is being recorded"* banner that says so. The banner only appears when the server confirms that the session is actually being recorded. Recordings are admin-only, and every view or download is audited. Treat the recordings volume like the audit database.
+
+**Playback (Admin → Recordings)**
+- Filter by user, namespace, pod and date range. The table shows duration, size, and *in progress* / *truncated* badges.
+- ▶ opens an in-browser player: play / pause, timeline seek, 1x / 2x / 4x, and "skip idle time" (squeezes pauses longer than 2 s).
+- ⬇ downloads the `.cast` file. It plays in the `asciinema` CLI too: `asciinema play file.cast`.
+- 🗑 deletes the file and its row. A recording whose session is still running can't be deleted.
+
+**Settings (Admin → Recordings → Recording settings).** On/off, retention, per-session cap, total quota, free-space floor and disk policy. Changes apply to new sessions immediately, with no restart; a running session keeps the limits it started with. Lowering the retention triggers a purge right away.
+
+**Disk protection.** By default recordings share the PVC with `app.db`. If that volume filled up, SQLite could no longer write, and login and audit would break with it. Two limits prevent this. Both are checked before every new session and every 30 s while sessions are running:
+
+| Limit | Default | Meaning |
+|---|---|---|
+| Total quota | 2048 MB | All recordings together, plus room for one more full-size session |
+| Free-space floor | 512 MB | Always left free on the recordings volume |
+
+When a limit would be crossed, the **disk policy** decides what happens:
+
+- `evict_oldest` (default) — the oldest finished recordings are deleted, even before their retention ends, until the next session fits. Each eviction is audited as `recording.evicted`.
+- `stop` — existing recordings are kept. New shells still open but are **not** recorded (`pod.exec.session.record_skipped`), and running recordings stop with a truncation marker. The admin screen shows a warning until space is freed.
+
+The shell itself is never blocked by recording: a disabled, full or broken recorder only means the session isn't recorded. For full isolation, give recordings their own PVC; `deploy/pvc.yaml` and `deploy/deployment.yaml` contain a commented example. Then set `SESSION_RECORDING_DIR=/recordings`.
+
+**Retention.** A background job runs one minute after start and then daily. It deletes recordings older than the retention period (row and file, audited as `recording.purge`) and removes stray `.cast` files that have no database row. If the process crashes mid-session, the next start closes the open row using the file's size and modification time.
+
+**Audit events**
+
+| Event | When |
+|---|---|
+| `pod.exec.session.recorded` | Session end — `session_id`, `size`, `dur_ms`, truncation reason; same `request_id` as `pod.exec.start` / `end` |
+| `pod.exec.session.record_skipped` | Disk policy `stop` refused to record |
+| `pod.exec.session.record_failed` | Recorder error (e.g. directory not writable) |
+| `recording.view` / `recording.download` | An admin played or downloaded a recording |
+| `recording.delete.{success,denied,failed}` | Delete from the UI / API |
+| `recording.settings.update.{success,denied,failed}` | Settings change |
+| `recording.evicted` / `recording.purge` | Disk-policy eviction / retention purge (user `system`) |
+
+**API (admin only)**
+- `GET /api/admin/recordings?user=&namespace=&pod=&cluster=&from=&to=&limit=&offset=` → `{items, total}`
+- `GET /api/admin/recordings/{id}` — metadata
+- `GET /api/admin/recordings/{id}/cast` — `application/x-asciicast` (`?download=1` for an attachment)
+- `DELETE /api/admin/recordings/{id}`
+- `GET` / `PUT /api/admin/recordings/settings` — settings (+ disk usage on GET)
 
 # Deployment & workload write actions
 

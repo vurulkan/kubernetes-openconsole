@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import 'xterm/css/xterm.css';
-import { RefreshCw, X } from 'lucide-react';
+import { CircleDot, RefreshCw, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button, NativeSelect, Spinner } from './ui';
 import { useTheme } from './ThemeProvider';
@@ -47,6 +47,9 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
   const [container, setContainer] = useState<string>(containers[0] ?? '');
   const [shell, setShell] = useState<string>('auto');
   const [note, setNote] = useState<string | null>(null);
+  // Set when the server confirms this session is being recorded (it sends a
+  // {"type":"recording"} frame before any output). Drives the banner.
+  const [recordingId, setRecordingId] = useState<string | null>(null);
   const { effective } = useTheme();
 
   const theme = effective === 'dark' ? darkTheme : lightTheme;
@@ -58,6 +61,7 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
       socketRef.current = null;
     }
     setNote(null);
+    setRecordingId(null);
     setStatus('connecting');
 
     if (!termRef.current) {
@@ -93,6 +97,9 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
     const params = new URLSearchParams();
     if (container) params.set('container', container);
     if (shell) params.set('command', shell);
+    // Seeds the recording header size; the first resize frame refines it.
+    params.set('cols', String(Math.max(termRef.current?.cols ?? 0, 80)));
+    params.set('rows', String(Math.max(termRef.current?.rows ?? 0, 24)));
     params.set('token', token);
     const url = `${protocol}://${window.location.host}/ws/namespaces/${namespace}/pods/${pod}/exec?${params.toString()}`;
     const socket = new WebSocket(url);
@@ -127,6 +134,10 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
           const parsed = JSON.parse(event.data);
           if (parsed?.type === 'error' && typeof parsed.message === 'string') {
             term.writeln(`\x1b[31m${parsed.message}\x1b[0m`);
+            return;
+          }
+          if (parsed?.type === 'recording') {
+            setRecordingId(parsed.enabled ? String(parsed.sessionId ?? '') : null);
             return;
           }
         } catch (err) {
@@ -247,6 +258,7 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
     fitRef.current = null;
     setStatus('idle');
     setNote(null);
+    setRecordingId(null);
   }, [open]);
 
   // IMPORTANT: this useMemo must stay above the `if (!open) return null`
@@ -344,13 +356,33 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-amber-50 px-5 py-2 text-[11px] text-amber-800 dark:border-slate-800 dark:bg-amber-500/10 dark:text-amber-200">
-          Audit active: session start, end, outcome and duration are recorded
-          (keystrokes and output are not). Idle sessions close after 5 minutes.
-          {note && (
-            <span className="ml-auto font-medium text-rose-600 dark:text-rose-300">{note}</span>
-          )}
-        </div>
+        {recordingId !== null ? (
+          <div
+            role="status"
+            className="flex flex-wrap items-center gap-2 border-b border-rose-200 bg-rose-50 px-5 py-2 text-[11px] text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200"
+          >
+            <CircleDot size={13} className="shrink-0 animate-pulse text-rose-600 dark:text-rose-400" />
+            <span>
+              <strong className="font-semibold">{t('podExec.recordingTitle')}</strong>{' '}
+              {t('podExec.recordingBody')}
+            </span>
+            {recordingId && (
+              <span className="font-mono text-[10px] opacity-70" title={t('podExec.recordingId')}>
+                {recordingId.slice(0, 8)}
+              </span>
+            )}
+            {note && (
+              <span className="ml-auto font-medium text-rose-600 dark:text-rose-300">{note}</span>
+            )}
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-amber-50 px-5 py-2 text-[11px] text-amber-800 dark:border-slate-800 dark:bg-amber-500/10 dark:text-amber-200">
+            {t('podExec.auditBanner')}
+            {note && (
+              <span className="ml-auto font-medium text-rose-600 dark:text-rose-300">{note}</span>
+            )}
+          </div>
+        )}
 
         <div
           ref={terminalRef}

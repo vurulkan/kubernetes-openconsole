@@ -102,3 +102,53 @@ type SessionTokenRow struct {
 	IP         string     `json:"ip"`
 	UserAgent  string     `json:"userAgent"`
 }
+
+// SessionRecording is one pod-exec session captured as an asciicast v2 file.
+// EndedAt is nil while the session is still open (or the process crashed
+// mid-session and startup recovery has not closed the row yet).
+type SessionRecording struct {
+	ID         int        `json:"id"`
+	SessionID  string     `json:"sessionId"`
+	User       string     `json:"user"`
+	Cluster    string     `json:"cluster"`
+	Namespace  string     `json:"namespace"`
+	Pod        string     `json:"pod"`
+	Container  string     `json:"container"`
+	StartedAt  time.Time  `json:"startedAt"`
+	EndedAt    *time.Time `json:"endedAt,omitempty"`
+	DurationMs int64      `json:"durationMs"`
+	SizeBytes  int64      `json:"sizeBytes"`
+	Truncated  bool       `json:"truncated"`
+	RequestID  string     `json:"requestId"`
+	Path       string     `json:"-"`
+}
+
+// RecordingFilter narrows ListRecordings. Empty strings / nil times are
+// ignored; Limit <= 0 falls back to the store default.
+type RecordingFilter struct {
+	User      string
+	Cluster   string
+	Namespace string
+	Pod       string
+	From      *time.Time
+	To        *time.Time
+	Limit     int
+	Offset    int
+}
+
+// Disk policies for when the recording quota or the free-space floor is hit.
+const (
+	RecordingPolicyEvictOldest = "evict_oldest"
+	RecordingPolicyStop        = "stop"
+)
+
+// RecordingSettings is the admin-editable recording configuration. Env vars
+// only seed the row on first boot; after that the DB copy wins.
+type RecordingSettings struct {
+	Enabled       bool   `json:"enabled"`
+	RetentionDays int    `json:"retentionDays"` // 0 = never purge
+	MaxSessionMB  int    `json:"maxSessionMb"`
+	MaxTotalMB    int    `json:"maxTotalMb"`
+	MinFreeMB     int    `json:"minFreeMb"`
+	DiskPolicy    string `json:"diskPolicy"`
+}

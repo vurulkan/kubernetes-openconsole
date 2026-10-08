@@ -25,9 +25,12 @@ func securityHeaders(next http.Handler) http.Handler {
 			// jsdelivr by default. If an operator deploys in an air-gapped
 			// network, point @monaco-editor/react.loader.config() at a
 			// self-hosted path and tighten this CSP back to 'self'.
+			// 'wasm-unsafe-eval' lets the bundled asciinema-player compile its
+			// WebAssembly terminal (recording playback, 2.11.0+); it does not
+			// allow JS eval.
 			h.Set("Content-Security-Policy",
 				"default-src 'self'; "+
-					"script-src 'self' https://cdn.jsdelivr.net; "+
+					"script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; "+
 					"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; "+
 					"font-src 'self' https://fonts.gstatic.com data:; "+
 					"img-src 'self' data: blob:; "+

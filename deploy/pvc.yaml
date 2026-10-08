@@ -9,3 +9,22 @@ spec:
   resources:
     requests:
       storage: 5Gi
+# ── Optional: dedicated volume for pod shell session recordings (2.11.0+) ────
+# By default recordings live under /data/recordings on the PVC above, next to
+# app.db. The recording quota and free-space floor (Admin → Recordings) keep
+# them from filling that volume, but a separate PVC isolates the database
+# completely. To use it, uncomment this PVC plus the "recordings" volume and
+# mount in deployment.yaml, and set SESSION_RECORDING_DIR=/recordings.
+# Size it above the recording quota (default 2 GiB).
+# ---
+# apiVersion: v1
+# kind: PersistentVolumeClaim
+# metadata:
+#   name: kubernetes-openconsole-recordings
+#   namespace: kubernetes-openconsole
+# spec:
+#   accessModes:
+#     - ReadWriteOnce
+#   resources:
+#     requests:
+#       storage: 5Gi

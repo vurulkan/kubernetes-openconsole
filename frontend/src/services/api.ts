@@ -609,3 +609,112 @@ export const checkHealth = async () => {
     return { ok: false };
   }
 };
+
+// ─── Session recordings (2.11.0) ─────────────────────────────────────────────
+
+export type SessionRecording = {
+  id: number;
+  sessionId: string;
+  user: string;
+  cluster: string;
+  namespace: string;
+  pod: string;
+  container: string;
+  startedAt: string;
+  endedAt?: string | null;
+  durationMs: number;
+  sizeBytes: number;
+  truncated: boolean;
+  requestId: string;
+};
+
+export type RecordingFilter = {
+  user?: string;
+  namespace?: string;
+  pod?: string;
+  from?: string; // YYYY-MM-DD or RFC3339
+  to?: string;
+  limit?: number;
+  offset?: number;
+};
+
+export type RecordingDiskPolicy = 'evict_oldest' | 'stop';
+
+export type RecordingSettings = {
+  enabled: boolean;
+  retentionDays: number;
+  maxSessionMb: number;
+  maxTotalMb: number;
+  minFreeMb: number;
+  diskPolicy: RecordingDiskPolicy;
+};
+
+export type RecordingUsage = {
+  dir: string;
+  dirWritable: boolean;
+  dirError?: string;
+  count: number;
+  activeCount: number;
+  usedBytes: number;
+  maxTotalBytes: number;
+  freeBytes: number; // -1 = unknown
+  minFreeBytes: number;
+  limitReached: boolean;
+};
+
+export const listRecordings = (filter: RecordingFilter) => {
+  const qs = new URLSearchParams();
+  Object.entries(filter).forEach(([k, v]) => {
+    if (v !== undefined && v !== '') qs.set(k, String(v));
+  });
+  return apiRequest<{ items: SessionRecording[]; total: number }>(`/api/admin/recordings?${qs.toString()}`);
+};
+
+export const deleteRecording = (id: number) =>
+  apiRequest(`/api/admin/recordings/${id}`, { method: 'DELETE' });
+
+export const getRecordingSettings = () =>
+  apiRequest<{ settings: RecordingSettings; usage: RecordingUsage }>('/api/admin/recordings/settings');
+
+export const updateRecordingSettings = (settings: RecordingSettings) =>
+  apiRequest<{ settings: RecordingSettings }>('/api/admin/recordings/settings', {
+    method: 'PUT',
+    body: JSON.stringify(settings),
+  });
+
+// The cast endpoint needs the bearer token, so the player and the download
+// button both go through fetch instead of pointing at the URL directly.
+const fetchRecordingCast = async (id: number, download: boolean): Promise<Response> => {
+  const response = await fetch(`/api/admin/recordings/${id}/cast${download ? '?download=1' : ''}`, {
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {},
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    let message = text || response.statusText;
+    try {
+      message = (JSON.parse(text) as { error?: string }).error || message;
+    } catch {
+      /* not JSON */
+    }
+    throw new Error(message);
+  }
+  return response;
+};
+
+export const getRecordingCast = async (id: number) => (await fetchRecordingCast(id, false)).text();
+
+export const downloadRecordingCast = async (id: number) => {
+  const response = await fetchRecordingCast(id, true);
+  const disposition = response.headers.get('content-disposition') || '';
+  const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? `recording-${id}.cast`;
+  const url = URL.createObjectURL(await response.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};

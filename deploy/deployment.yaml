@@ -96,6 +96,60 @@ spec:
             - name: MAX_REPLICAS
               value: "100"
 
+            # ── Pod shell session recording (2.11.0+) ───────────────────────────
+            # Every pod exec session is saved as an asciicast v2 file and can be
+            # replayed under Admin → Recordings. Recordings hold everything the
+            # shell printed — including secrets someone cat'ed — so treat the
+            # volume like the audit DB.
+            #
+            # These env vars only SEED the settings on first boot. After that the
+            # admin UI (Admin → Recordings → Recording settings) owns the values
+            # and changing the env has no effect. SESSION_RECORDING_DIR is the
+            # exception: it is read on every start.
+            #
+            # SESSION_RECORDING_ENABLED: record new exec sessions. Default "true".
+            # - name: SESSION_RECORDING_ENABLED
+            #   value: "true"
+            #
+            # SESSION_RECORDING_DIR: where .cast files go. Default is a
+            # "recordings" folder next to DATA_PATH (→ /data/recordings), i.e.
+            # on the same PVC as app.db. Point it at a separate mount (see the
+            # commented "recordings" volume below) to keep a burst of large
+            # sessions away from the database volume.
+            # - name: SESSION_RECORDING_DIR
+            #   value: /recordings
+            #
+            # SESSION_RECORDING_RETENTION_DAYS: recordings older than this are
+            # deleted by a daily job. 0 = keep forever. Default 30.
+            # - name: SESSION_RECORDING_RETENTION_DAYS
+            #   value: "30"
+            #
+            # SESSION_RECORDING_MAX_SIZE_MB: per-session cap. Past it the
+            # recording stops (flagged "truncated"); the shell keeps running.
+            # Default 10.
+            # - name: SESSION_RECORDING_MAX_SIZE_MB
+            #   value: "10"
+            #
+            # SESSION_RECORDING_MAX_TOTAL_MB: quota for all recordings together.
+            # Default 2048. Keep it well below the PVC size.
+            # - name: SESSION_RECORDING_MAX_TOTAL_MB
+            #   value: "2048"
+            #
+            # SESSION_RECORDING_MIN_FREE_MB: always leave at least this much
+            # free on the recordings volume, so SQLite never runs out of disk
+            # when it shares the PVC. Default 512.
+            # - name: SESSION_RECORDING_MIN_FREE_MB
+            #   value: "512"
+            #
+            # SESSION_RECORDING_DISK_POLICY: what happens when the quota or the
+            # free-space floor would be crossed.
+            #   evict_oldest (default) — delete the oldest recordings, even
+            #                            before their retention ends.
+            #   stop                   — keep existing recordings; new shells
+            #                            open unrecorded (audited).
+            # - name: SESSION_RECORDING_DISK_POLICY
+            #   value: evict_oldest
+
             # ── Optional labels on every log record ──────────────────────────────
             # APP_ENV: deployment environment label (dev / staging / prod).
             # Shows up as "env=…" on every structured log line — useful for
@@ -150,7 +204,15 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            # Optional: separate volume for session recordings. Uncomment
+            # together with the "recordings" volume below, the second PVC in
+            # pvc.yaml, and SESSION_RECORDING_DIR=/recordings above.
+            # - name: recordings
+            #   mountPath: /recordings
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: kubernetes-openconsole-data
+        # - name: recordings
+        #   persistentVolumeClaim:
+        #     claimName: kubernetes-openconsole-recordings
