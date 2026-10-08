@@ -1123,7 +1123,7 @@ func (s *Server) handlePodYAML(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to render yaml")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(data)})
+	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(kube.PrettifyYAML(data))})
 }
 
 func (s *Server) handleDeploymentYAML(w http.ResponseWriter, r *http.Request) {
@@ -1143,7 +1143,7 @@ func (s *Server) handleDeploymentYAML(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to render yaml")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(data)})
+	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(kube.PrettifyYAML(data))})
 }
 
 func (s *Server) handleServiceYAML(w http.ResponseWriter, r *http.Request) {
@@ -1163,7 +1163,7 @@ func (s *Server) handleServiceYAML(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to render yaml")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(data)})
+	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(kube.PrettifyYAML(data))})
 }
 
 func (s *Server) handleConfigMapYAML(w http.ResponseWriter, r *http.Request) {
@@ -1183,7 +1183,7 @@ func (s *Server) handleConfigMapYAML(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to render yaml")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(data)})
+	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(kube.PrettifyYAML(data))})
 }
 
 func (s *Server) handleConfigMapData(w http.ResponseWriter, r *http.Request) {
@@ -1245,7 +1245,7 @@ func (s *Server) handleCronJobYAML(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.recordAudit(r, "get", namespace, "cronjobs", item.Name)
-	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(data)})
+	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(kube.PrettifyYAML(data))})
 }
 
 func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
@@ -1280,7 +1280,7 @@ func (s *Server) handleJobYAML(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.recordAudit(r, "get", namespace, "jobs", item.Name)
-	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(data)})
+	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(kube.PrettifyYAML(data))})
 }
 
 func (s *Server) handleIngressYAML(w http.ResponseWriter, r *http.Request) {
@@ -1301,7 +1301,7 @@ func (s *Server) handleIngressYAML(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.recordAudit(r, "get", namespace, "ingresses", item.Name)
-	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(data)})
+	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(kube.PrettifyYAML(data))})
 }
 
 func (s *Server) handlePodEvents(w http.ResponseWriter, r *http.Request) {

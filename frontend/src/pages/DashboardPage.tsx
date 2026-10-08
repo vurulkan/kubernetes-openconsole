@@ -1494,10 +1494,31 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
       </div>
 
       {/* ── Modal ─────────────────────────────────────────────────── */}
+      {/* Live-translate the modal title: setModalTitle stores an English
+          kind-marker like "Pod Logs - foo", which the branching logic below
+          already parses. Here we recompute the user-facing title from that
+          marker on every render so a locale switch while the modal is open
+          updates the title without a refresh. */}
       <Modal
         open={modalOpen}
         onClose={closeModal}
-        title={modalTitle}
+        title={(() => {
+          if (!modalTitle) return '';
+          const dashAt = modalTitle.indexOf(' - ');
+          if (dashAt < 0) return modalTitle;
+          const kind = modalTitle.slice(0, dashAt);
+          const name = modalTitle.slice(dashAt + 3);
+          const map: Record<string, string> = {
+            'Pod Logs': 'podLogs',
+            'Deployment Logs': 'deploymentLogs',
+            'Job Logs': 'jobLogs',
+            'ConfigMap Data': 'configmapData',
+            'PODS Events': 'podEvents',
+            'DEPLOYMENTS Events': 'deploymentEvents',
+          };
+          const key = map[kind];
+          return key ? t(`dashboard.modalTitles.${key}`, { name }) : modalTitle;
+        })()}
         onKeyDown={handleModalSelectAll}
         footer={
           <>
@@ -1574,7 +1595,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
         <Modal
           open={restartTarget !== null}
           onClose={() => (actionBusy ? undefined : setRestartTarget(null))}
-          title={`Restart deployment · ${restartTarget}`}
+          title={t('dashboard.restartConfirm.title', { name: restartTarget })}
           size="sm"
           footer={
             <>
@@ -1584,7 +1605,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                 onClick={() => setRestartTarget(null)}
                 disabled={actionBusy !== null}
               >
-                Cancel
+                {t('actions.cancel')}
               </Button>
               <Button
                 variant="primary"
@@ -1613,8 +1634,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
           }
         >
           <p className="text-sm text-slate-700 dark:text-slate-200">
-            This triggers a rolling restart. All pods managed by this deployment are
-            replaced one at a time while service remains available.
+            {t('dashboard.restartConfirm.message', { name: restartTarget })}
           </p>
         </Modal>
       )}

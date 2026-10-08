@@ -13,6 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
 
+	"k8s-dashboard/backend/internal/kube"
 	"k8s-dashboard/backend/internal/logging"
 	"k8s-dashboard/backend/internal/models"
 )
@@ -67,7 +68,7 @@ func (s *Server) handleDaemonSetYAML(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to render yaml")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(data)})
+	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(kube.PrettifyYAML(data))})
 }
 
 func (s *Server) handleStatefulSets(w http.ResponseWriter, r *http.Request) {
@@ -115,7 +116,7 @@ func (s *Server) handleStatefulSetYAML(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to render yaml")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(data)})
+	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(kube.PrettifyYAML(data))})
 }
 
 // handleStatefulSetScale mirrors handleDeploymentScale: same rate limiter
@@ -231,7 +232,7 @@ func (s *Server) handleHPAYAML(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to render yaml")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(data)})
+	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(kube.PrettifyYAML(data))})
 }
 
 func (s *Server) recordWorkloadAudit(user, namespace, name, resourceType, action, outcome, details, requestID string) {

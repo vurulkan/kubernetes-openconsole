@@ -872,6 +872,7 @@ const AddPermissionsModal: React.FC<{
     editingGroup?: { namespaces: string[]; allPermissions: NamespacePermission[] };
   }) => void | Promise<void>;
 }> = ({ seed, clusters, namespaces, existing, onCancel, onApply }) => {
+  const { t: tr } = useTranslation();
   const [clusterId, setClusterId] = useState(seed.clusterId);
   const [selectedNs, setSelectedNs] = useState<string[]>(seed.namespaces);
   const [matrix, setMatrix] = useState(seed.matrix);
@@ -880,9 +881,9 @@ const AddPermissionsModal: React.FC<{
   const [nsFilter, setNsFilter] = useState('');
   const isEdit = seed.mode === 'edit';
 
-  const applyTemplate = (t: Template) => {
-    setTemplate(t);
-    setMatrix(buildTemplateMatrix(t));
+  const applyTemplate = (tplKey: Template) => {
+    setTemplate(tplKey);
+    setMatrix(buildTemplateMatrix(tplKey));
   };
 
   const toggle = (resource: string, action: string) => {
@@ -949,11 +950,11 @@ const AddPermissionsModal: React.FC<{
       open
       size="lg"
       onClose={applying ? () => {} : onCancel}
-      title={isEdit ? 'Edit permissions' : 'Add permissions'}
+      title={isEdit ? tr('rolePermissions.editPermissions') : tr('rolePermissions.addPermissions')}
       footer={
         <>
           <Button variant="outline" size="sm" onClick={onCancel} disabled={applying}>
-            Cancel
+            {tr('actions.cancel')}
           </Button>
           <Button
             variant="primary"
@@ -980,10 +981,10 @@ const AddPermissionsModal: React.FC<{
             }}
           >
             {applying
-              ? 'Saving…'
+              ? tr('yamlEditor.saving')
               : preview.mode === 'edit'
-              ? `Save (${preview.adds} added, ${preview.dels} removed)`
-              : `Add ${preview.total} permission${preview.total === 1 ? '' : 's'}`}
+              ? tr('rolePermissions.saveNadded', { adds: preview.adds, dels: preview.dels })
+              : tr('rolePermissions.addN', { count: preview.total })}
           </Button>
         </>
       }
@@ -992,13 +993,13 @@ const AddPermissionsModal: React.FC<{
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-              Cluster
+              {tr('rolePermissions.cluster')}
             </label>
             <NativeSelect
               value={String(clusterId)}
               onChange={(e) => setClusterId(Number(e.target.value))}
             >
-              <option value="0">All clusters (wildcard)</option>
+              <option value="0">{tr('rolePermissions.allClusters')}</option>
               {clusters.map((c) => (
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
@@ -1006,10 +1007,10 @@ const AddPermissionsModal: React.FC<{
           </div>
           <div>
             <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-              Namespaces · {selectedNs.length} selected
+              {tr('rolePermissions.namespacesLabel', { count: selectedNs.length })}
             </label>
             <Input
-              placeholder="Filter namespaces…"
+              placeholder={tr('rolePermissions.nsFilter')}
               value={nsFilter}
               onChange={(e) => setNsFilter(e.target.value)}
             />
@@ -1028,16 +1029,16 @@ const AddPermissionsModal: React.FC<{
                 disabled={filteredNamespaces.length === 0}
                 className="font-medium text-brand-600 hover:underline disabled:text-slate-300 disabled:no-underline dark:text-brand-300 dark:disabled:text-slate-600"
               >
-                + Select {filteredNamespaces.length} matching
+                {tr('rolePermissions.selectMatching', { count: filteredNamespaces.length })}
               </button>
               <span className="text-slate-300 dark:text-slate-700">·</span>
               <button
                 type="button"
                 onClick={() => setSelectedNs([])}
                 disabled={selectedNs.length === 0}
-                className="font-medium text-slate-500 hover:text-rose-600 hover:underline disabled:text-slate-300 disabled:no-underline dark:text-slate-400 dark:hover:text-rose-300 dark:disabled:text-slate-600"
+                className="font-medium text-slate-500 hover:text-rose-600 hover:underline disabled:text-slate-400 dark:disabled:text-slate-600 dark:text-slate-400 dark:hover:text-rose-300"
               >
-                Clear selection
+                {tr('rolePermissions.clearSelection')}
               </button>
             </div>
             <div className="mt-2 flex max-h-32 flex-wrap gap-1 overflow-auto rounded-md border border-slate-200 p-2 dark:border-slate-700">
@@ -1063,7 +1064,7 @@ const AddPermissionsModal: React.FC<{
                 );
               })}
               {filteredNamespaces.length === 0 && (
-                <span className="text-xs text-slate-400 dark:text-slate-500">No match.</span>
+                <span className="text-xs text-slate-400 dark:text-slate-500">{tr('rolePermissions.noMatch')}</span>
               )}
             </div>
           </div>
@@ -1071,21 +1072,21 @@ const AddPermissionsModal: React.FC<{
 
         <div>
           <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-            Template
+            {tr('rolePermissions.template')}
           </label>
           <div className="flex flex-wrap gap-1.5">
-            {(Object.keys(TEMPLATE_LABELS) as Template[]).map((t) => (
+            {(Object.keys(TEMPLATE_LABELS) as Template[]).map((tplKey) => (
               <button
-                key={t}
+                key={tplKey}
                 type="button"
-                onClick={() => applyTemplate(t)}
+                onClick={() => applyTemplate(tplKey)}
                 className={`rounded-md border px-2.5 py-1 text-[11px] font-medium transition-colors ${
-                  template === t
+                  template === tplKey
                     ? 'border-brand-400 bg-brand-50 text-brand-700 dark:border-brand-500/50 dark:bg-brand-500/15 dark:text-brand-200'
                     : 'border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800'
                 }`}
               >
-                {TEMPLATE_LABELS[t]}
+                {tr(`rolePermissions.templates.${tplKey}`)}
               </button>
             ))}
           </div>
@@ -1155,15 +1156,15 @@ const AddPermissionsModal: React.FC<{
         {preview.mode === 'edit' ? (
           <Alert severity={preview.adds === 0 && preview.dels === 0 ? 'info' : 'success'}>
             {preview.adds === 0 && preview.dels === 0
-              ? 'No changes. Toggle a chip or add/remove a namespace to make an edit.'
-              : `${preview.adds} grant${preview.adds === 1 ? '' : 's'} will be added · ${preview.dels} will be removed.`}
+              ? tr('rolePermissions.noChanges')
+              : tr('rolePermissions.editCounter', { adds: preview.adds, dels: preview.dels })}
           </Alert>
         ) : (
           <Alert severity={preview.total === 0 ? 'info' : 'success'}>
             {preview.total === 0
-              ? 'Nothing to add. Pick a namespace and at least one action.'
-              : `Will create ${preview.total} new permission${preview.total === 1 ? '' : 's'}${
-                  preview.skipped > 0 ? ` · ${preview.skipped} already granted, will be skipped` : ''
+              ? tr('rolePermissions.nothingToAdd')
+              : `${tr('rolePermissions.willCreate', { count: preview.total })}${
+                  preview.skipped > 0 ? ` · ${tr('rolePermissions.skipped', { count: preview.skipped })}` : ''
                 }.`}
           </Alert>
         )}
@@ -1180,6 +1181,7 @@ const CopyFromRoleModal: React.FC<{
   onCancel: () => void;
   onPick: (sourceRoleId: number) => void | Promise<void>;
 }> = ({ currentRoleId, roles, onCancel, onPick }) => {
+  const { t: tr } = useTranslation();
   const [picked, setPicked] = useState<number | null>(null);
   const [applying, setApplying] = useState(false);
   return (
@@ -1187,11 +1189,11 @@ const CopyFromRoleModal: React.FC<{
       open
       size="sm"
       onClose={applying ? () => {} : onCancel}
-      title="Copy permissions from another role"
+      title={tr('rolePermissions.copyTitle')}
       footer={
         <>
           <Button variant="outline" size="sm" onClick={onCancel} disabled={applying}>
-            Cancel
+            {tr('actions.cancel')}
           </Button>
           <Button
             variant="primary"
@@ -1207,13 +1209,13 @@ const CopyFromRoleModal: React.FC<{
               }
             }}
           >
-            {applying ? 'Copying…' : 'Copy'}
+            {applying ? tr('rolePermissions.copying') : tr('rolePermissions.copy')}
           </Button>
         </>
       }
     >
       <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">
-        Rows that already exist on this role are skipped.
+        {tr('rolePermissions.copySubtitle')}
       </p>
       <ul className="flex flex-col gap-1">
         {roles

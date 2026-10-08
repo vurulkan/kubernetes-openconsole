@@ -1159,7 +1159,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                 </div>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                   <NativeSelect
-                    label="Role"
+                    label={tr("common.role")}
                     value={selectedRoleId ?? ''}
                     onChange={(e) => {
                       const val = e.target.value;
@@ -1180,7 +1180,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   </NativeSelect>
 
                   <NativeSelect
-                    label="Cluster scope"
+                    label={tr("common.clusterScope")}
                     value={newPermissionClusterId}
                     onChange={(e) => setNewPermissionClusterId(Number(e.target.value))}
                   >
@@ -1193,7 +1193,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   </NativeSelect>
 
                   <MultiSelect
-                    label="Namespaces"
+                    label={tr("common.namespaces")}
                     options={[
                       { id: '*', label: '* (all namespaces)' },
                       ...namespaceOptions.map((ns) => ({ id: ns, label: ns })),
@@ -1205,7 +1205,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                     onChange={(value: MultiSelectOption[]) =>
                       setNewPermissionNamespaces(value.map((v) => String(v.id)))
                     }
-                    placeholder="Pick namespaces (or * for all)…"
+                    placeholder={tr("common.pickNsOrStar")}
                     noOptionsText={
                       namespaceOptions.length === 0
                         ? 'No namespaces visible — activate a cluster first.'
@@ -1393,10 +1393,10 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   <Checkbox
                     checked={ldapUpdatePassword}
                     onChange={setLdapUpdatePassword}
-                    label="Update Bind Password"
+                    label={tr("common.updateBindPassword")}
                   />
                   <Input
-                    label="Bind Password"
+                    label={tr("common.bindPassword")}
                     type="password"
                     disabled={!ldapUpdatePassword && (ldapConfig.passwordConfigured ?? false)}
                     value={
@@ -1409,14 +1409,14 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                     }
                   />
                   <Input
-                    label="User Base DN (single)"
+                    label={tr("common.userBaseDnSingle")}
                     value={ldapConfig.userBaseDn}
                     onChange={(e) =>
                       setLdapConfig({ ...ldapConfig, userBaseDn: e.target.value })
                     }
                   />
                   <Input
-                    label="User Base DNs (comma separated)"
+                    label={tr("common.userBaseDnMulti")}
                     value={ldapConfig.userBaseDns.join(',')}
                     onChange={(e) =>
                       setLdapConfig({
@@ -1429,14 +1429,14 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                     }
                   />
                   <Input
-                    label="User Filter"
+                    label={tr("common.userFilter")}
                     value={ldapConfig.userFilter}
                     onChange={(e) =>
                       setLdapConfig({ ...ldapConfig, userFilter: e.target.value })
                     }
                   />
                   <Input
-                    label="Username Attribute"
+                    label={tr("common.usernameAttribute")}
                     value={ldapConfig.usernameAttribute}
                     onChange={(e) =>
                       setLdapConfig({ ...ldapConfig, usernameAttribute: e.target.value })
@@ -1461,7 +1461,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
               <SectionCard title="Import LDAP Users">
                 <div className="flex flex-wrap gap-3">
                   <Input
-                    label="Search Query"
+                    label={tr("common.searchQuery")}
                     value={ldapSearchQuery}
                     onChange={(e) => setLdapSearchQuery(e.target.value)}
                     className="w-60"
@@ -1487,7 +1487,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
 
                 {ldapSearchResults.length > 0 && (
                   <MultiSelect
-                    label="LDAP Users"
+                    label={tr("common.ldapUsers")}
                     className="mt-3"
                     options={ldapSearchResults.map((u) => ({
                       id: u.username,
@@ -1503,7 +1503,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                       setLdapSelectedUsers(value.map((v) => String(v.id)))
                     }
                     noOptionsText="No LDAP users found"
-                    placeholder="Select users to import..."
+                    placeholder={tr("common.selectToImport")}
                   />
                 )}
 
@@ -1559,10 +1559,10 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                 <Checkbox
                   checked={azureAdUpdateSecret}
                   onChange={setAzureAdUpdateSecret}
-                  label="Update Client Secret"
+                  label={tr("common.updateClientSecret")}
                 />
                 <Input
-                  label="Client Secret"
+                  label={tr("common.clientSecret")}
                   type="password"
                   disabled={!azureAdUpdateSecret && (azureAdConfig.passwordConfigured ?? false)}
                   value={
@@ -1595,7 +1595,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
           {tab === 'session' && (
             <SectionCard title={tr('admin.sections.sessionSettings')}>
               <Input
-                label="Session Lifetime (minutes)"
+                label={tr("common.sessionLifetime")}
                 type="number"
                 value={sessionMinutes}
                 onChange={(e) => setSessionMinutes(Number(e.target.value))}
@@ -1664,10 +1664,10 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                               disabled={clusterBusy !== null}
                               onClick={async () => {
                                 const ok = await confirm({
-                                  title: `Deactivate ${c.name}?`,
+                                  title: tr('common.deactivateTitle', { name: c.name }),
                                   message:
                                     'The Dashboard will have no active cluster until you activate one.',
-                                  confirmText: 'Deactivate',
+                                  confirmText: tr('common.deactivate'),
                                   variant: 'danger',
                                 });
                                 if (!ok) return;
@@ -1675,17 +1675,17 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                                 setClustersStatus(null);
                                 try {
                                   await deactivateCluster(c.id);
-                                  setClustersStatus({ status: 'success', message: `Deactivated ${c.name}. Reloading…` });
+                                  setClustersStatus({ status: 'success', message: tr('common.deactivated', { name: c.name }) });
                                   setTimeout(() => window.location.reload(), 600);
                                 } catch (err) {
-                                  setClustersStatus({ status: 'error', message: (err as Error).message || 'Deactivate failed.' });
+                                  setClustersStatus({ status: 'error', message: (err as Error).message || tr('common.deactivateFailed', { name: c.name }) });
                                 } finally {
                                   setClusterBusy(null);
                                 }
                               }}
                             >
                               <PowerOff size={13} />
-                              Deactivate
+                              {tr('common.deactivate')}
                             </Button>
                           ) : (
                             <Button
@@ -1697,17 +1697,17 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                                 setClustersStatus(null);
                                 try {
                                   await activateCluster(c.id);
-                                  setClustersStatus({ status: 'success', message: `Activated ${c.name}. Reloading…` });
+                                  setClustersStatus({ status: 'success', message: tr('common.activated', { name: c.name }) });
                                   setTimeout(() => window.location.reload(), 600);
                                 } catch (err) {
-                                  setClustersStatus({ status: 'error', message: (err as Error).message || 'Activation failed.' });
+                                  setClustersStatus({ status: 'error', message: (err as Error).message || tr('common.activateFailed', { name: c.name }) });
                                 } finally {
                                   setClusterBusy(null);
                                 }
                               }}
                             >
                               <Power size={13} />
-                              Activate
+                              {tr('common.activate')}
                             </Button>
                           )}
                           <Button
@@ -1774,19 +1774,19 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
               >
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <Input
-                    label="Name"
+                    label={tr("common.name")}
                     value={newClusterName}
                     onChange={(e) => setNewClusterName(e.target.value)}
                     placeholder="e.g. prod-west, staging"
                   />
                   <Input
-                    label="Description"
+                    label={tr("common.description")}
                     value={newClusterDesc}
                     onChange={(e) => setNewClusterDesc(e.target.value)}
-                    placeholder="Optional"
+                    placeholder={tr("common.optional")}
                   />
                   <NativeSelect
-                    label="Method"
+                    label={tr("common.method")}
                     value={newClusterMethod}
                     onChange={(e) => setNewClusterMethod(e.target.value as 'kubeconfig' | 'token')}
                   >
@@ -1829,18 +1829,18 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   {newClusterMethod === 'token' && (
                     <>
                       <Input
-                        label="API Server"
+                        label={tr("common.apiServer")}
                         value={newClusterServer}
                         onChange={(e) => setNewClusterServer(e.target.value)}
-                        placeholder="https://..."
+                        placeholder={tr("common.httpsExample")}
                       />
                       <Input
-                        label="Token"
+                        label={tr("common.token")}
                         value={newClusterToken}
                         onChange={(e) => setNewClusterToken(e.target.value)}
                       />
                       <Input
-                        label="CA Cert (base64, optional)"
+                        label={tr("common.caCert")}
                         value={newClusterCA}
                         onChange={(e) => setNewClusterCA(e.target.value)}
                       />
@@ -1937,24 +1937,24 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
             >
               <div className="flex flex-col gap-3">
                 <Input
-                  label="Name"
+                  label={tr("common.name")}
                   value={editCluster.name}
                   onChange={(e) => setEditCluster({ ...editCluster, name: e.target.value })}
                 />
                 <Input
-                  label="Description"
+                  label={tr("common.description")}
                   value={editCluster.description}
                   onChange={(e) => setEditCluster({ ...editCluster, description: e.target.value })}
                 />
                 <Checkbox
                   checked={editCluster.replaceSecrets}
                   onChange={(v) => setEditCluster({ ...editCluster, replaceSecrets: v })}
-                  label="Replace credentials (otherwise saved secrets are kept)"
+                  label={tr("common.replaceCreds")}
                 />
                 {editCluster.replaceSecrets && (
                   <>
                     <NativeSelect
-                      label="Method"
+                      label={tr("common.method")}
                       value={editCluster.method}
                       onChange={(e) =>
                         setEditCluster({ ...editCluster, method: e.target.value as 'kubeconfig' | 'token' })
@@ -1997,17 +1997,17 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                     {editCluster.method === 'token' && (
                       <>
                         <Input
-                          label="API Server"
+                          label={tr("common.apiServer")}
                           value={editCluster.server}
                           onChange={(e) => setEditCluster({ ...editCluster, server: e.target.value })}
                         />
                         <Input
-                          label="Token"
+                          label={tr("common.token")}
                           value={editCluster.token}
                           onChange={(e) => setEditCluster({ ...editCluster, token: e.target.value })}
                         />
                         <Input
-                          label="CA Cert (base64, optional)"
+                          label={tr("common.caCert")}
                           value={editCluster.caCertBase64}
                           onChange={(e) =>
                             setEditCluster({ ...editCluster, caCertBase64: e.target.value })
@@ -2231,13 +2231,13 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
               }}
             >
               <Input
-                label="Username"
+                label={tr("common.username")}
                 value={newUser.username}
                 onChange={(e) => setNewUser({ ...newUser, username: e.target.value })}
                 autoFocus
               />
               <Input
-                label="Password"
+                label={tr("common.password")}
                 type="password"
                 value={newUser.password}
                 onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
@@ -2245,7 +2245,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
               <Checkbox
                 checked={newUser.isAdmin}
                 onChange={(v) => setNewUser({ ...newUser, isAdmin: v })}
-                label="Grant admin privileges"
+                label={tr("common.grantAdmin")}
               />
               <button type="submit" className="hidden" aria-hidden="true" />
             </form>
@@ -2286,7 +2286,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   Cancel
                 </Button>
                 <Button variant="primary" size="sm" disabled={savingDrawer} onClick={submit}>
-                  {savingDrawer ? 'Saving…' : 'Save'}
+                  {savingDrawer ? tr('yamlEditor.saving') : tr('actions.save')}
                 </Button>
               </>
             }
@@ -2299,7 +2299,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
               }}
             >
               <Input
-                label="Username"
+                label={tr("common.username")}
                 value={editingUser.username}
                 onChange={(e) => setEditingUser({ ...editingUser, username: e.target.value })}
                 autoFocus
@@ -2308,16 +2308,16 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                 <Checkbox
                   checked={editingUser.isActive}
                   onChange={(v) => setEditingUser({ ...editingUser, isActive: v })}
-                  label="Active"
+                  label={tr("common.active")}
                 />
                 <Checkbox
                   checked={editingUser.isAdmin}
                   onChange={(v) => setEditingUser({ ...editingUser, isAdmin: v })}
-                  label="Admin"
+                  label={tr("common.admin")}
                 />
               </div>
               <MultiSelect
-                label="Groups"
+                label={tr("common.groups")}
                 options={groups.map((g) => ({ id: g.id, label: g.name }))}
                 value={editingUser.groupIds.map((id) => {
                   const g = groups.find((grp) => grp.id === id);
@@ -2329,7 +2329,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                     groupIds: value.map((v) => Number(v.id)),
                   })
                 }
-                placeholder="Assign groups…"
+                placeholder={tr("common.assignGroups")}
                 noOptionsText="No groups found"
               />
               <button type="submit" className="hidden" aria-hidden="true" />
@@ -2422,7 +2422,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   Cancel
                 </Button>
                 <Button variant="primary" size="sm" disabled={savingDrawer} onClick={submit}>
-                  {savingDrawer ? 'Saving…' : 'Save'}
+                  {savingDrawer ? tr('yamlEditor.saving') : tr('actions.save')}
                 </Button>
               </>
             }
@@ -2435,7 +2435,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
               }}
             >
               <Input
-                label="Name"
+                label={tr("common.name")}
                 value={editingGroup.name}
                 onChange={(e) => setEditingGroup({ ...editingGroup, name: e.target.value })}
                 autoFocus
@@ -2507,13 +2507,13 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
               }}
             >
               <Input
-                label="Name"
+                label={tr("common.name")}
                 value={newRole.name}
                 onChange={(e) => setNewRole({ ...newRole, name: e.target.value })}
                 autoFocus
               />
               <Input
-                label="Description"
+                label={tr("common.description")}
                 value={newRole.description}
                 onChange={(e) => setNewRole({ ...newRole, description: e.target.value })}
               />
@@ -2554,7 +2554,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   Cancel
                 </Button>
                 <Button variant="primary" size="sm" disabled={savingDrawer} onClick={submit}>
-                  {savingDrawer ? 'Saving…' : 'Save'}
+                  {savingDrawer ? tr('yamlEditor.saving') : tr('actions.save')}
                 </Button>
               </>
             }
@@ -2567,13 +2567,13 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
               }}
             >
               <Input
-                label="Name"
+                label={tr("common.name")}
                 value={editingRole.name}
                 onChange={(e) => setEditingRole({ ...editingRole, name: e.target.value })}
                 autoFocus
               />
               <Input
-                label="Description"
+                label={tr("common.description")}
                 value={editingRole.description}
                 onChange={(e) => setEditingRole({ ...editingRole, description: e.target.value })}
               />
