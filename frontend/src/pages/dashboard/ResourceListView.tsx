@@ -7,6 +7,7 @@ import {
   Scaling,
   Terminal,
 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { Badge } from '../../components/ui';
 import { PodNotReadyBadge } from '../../components/PodNotReadyBadge';
 import { Column, DataTable, IconButton } from '../../components/DataTable';
@@ -60,6 +61,7 @@ export const ResourceListView: React.FC<Props> = ({
   onScale,
   onScaleStatefulSet,
 }) => {
+  const { t } = useTranslation();
   // Column assembly per-tab. Name always left; actions always right; age is
   // the last data column before actions so it's where operators expect it.
   const columns: Column<Item>[] = React.useMemo(() => {
@@ -112,7 +114,7 @@ export const ResourceListView: React.FC<Props> = ({
             const allReady = cs.length > 0 && cs.every((c) => c.ready);
             const running = (it.status as any)?.phase === 'Running';
             const healthy = allReady && running;
-            if (healthy) return <Badge variant="success">Running</Badge>;
+            if (healthy) return <Badge variant="success">{t("dashboard.status.running")}</Badge>;
             return (
               <PodNotReadyBadge namespace={selectedNamespace} podName={nameOf(it)} />
             );
@@ -208,9 +210,9 @@ export const ResourceListView: React.FC<Props> = ({
           cell: (it) => {
             const desired = ((it.spec as any)?.replicas as number) ?? 0;
             const ready = ((it.status as any)?.readyReplicas as number) ?? 0;
-            if (desired === 0) return <Badge variant="default">Scaled to 0</Badge>;
-            if (ready >= desired) return <Badge variant="success">Available</Badge>;
-            return <Badge variant="warning">Progressing</Badge>;
+            if (desired === 0) return <Badge variant="default">{t("dashboard.status.scaledToZero")}</Badge>;
+            if (ready >= desired) return <Badge variant="success">{t("dashboard.status.available")}</Badge>;
+            return <Badge variant="warning">{t("dashboard.status.progressing")}</Badge>;
           },
         },
         {
@@ -453,9 +455,9 @@ export const ResourceListView: React.FC<Props> = ({
           sortValue: (it) => (((it.spec as any)?.suspend as boolean) ? 0 : 1),
           cell: (it) =>
             ((it.spec as any)?.suspend as boolean) ? (
-              <Badge variant="warning">Suspended</Badge>
+              <Badge variant="warning">{t("dashboard.status.suspended")}</Badge>
             ) : (
-              <Badge variant="success">Active</Badge>
+              <Badge variant="success">{t("dashboard.status.active")}</Badge>
             ),
         },
         ageCol,
@@ -494,10 +496,10 @@ export const ResourceListView: React.FC<Props> = ({
             const succeeded = (st.succeeded as number) ?? 0;
             const failed = (st.failed as number) ?? 0;
             const active = (st.active as number) ?? 0;
-            if (failed > 0) return <Badge variant="error">Failed · {failed}</Badge>;
-            if (active > 0) return <Badge variant="warning">Running · {active}</Badge>;
-            if (succeeded > 0) return <Badge variant="success">Succeeded</Badge>;
-            return <Badge variant="default">Pending</Badge>;
+            if (failed > 0) return <Badge variant="error">{t("dashboard.status.failedN", { count: failed })}</Badge>;
+            if (active > 0) return <Badge variant="warning">{t("dashboard.status.runningN", { count: active })}</Badge>;
+            if (succeeded > 0) return <Badge variant="success">{t("dashboard.status.succeeded")}</Badge>;
+            return <Badge variant="default">{t("dashboard.status.pending")}</Badge>;
           },
         },
         {
@@ -553,9 +555,9 @@ export const ResourceListView: React.FC<Props> = ({
           cell: (it) => {
             const desired = ((it.status as any)?.desiredNumberScheduled as number) ?? 0;
             const ready = ((it.status as any)?.numberReady as number) ?? 0;
-            if (desired === 0) return <Badge variant="default">No nodes</Badge>;
-            if (ready >= desired) return <Badge variant="success">Ready {ready}/{desired}</Badge>;
-            return <Badge variant="warning">Ready {ready}/{desired}</Badge>;
+            if (desired === 0) return <Badge variant="default">{t("dashboard.status.noNodes")}</Badge>;
+            if (ready >= desired) return <Badge variant="success">{t("dashboard.status.ready", { ready, desired })}</Badge>;
+            return <Badge variant="warning">{t("dashboard.status.ready", { ready, desired })}</Badge>;
           },
         },
         {
@@ -608,9 +610,9 @@ export const ResourceListView: React.FC<Props> = ({
           cell: (it) => {
             const desired = ((it.spec as any)?.replicas as number) ?? 0;
             const ready = ((it.status as any)?.readyReplicas as number) ?? 0;
-            if (desired === 0) return <Badge variant="default">Scaled to 0</Badge>;
-            if (ready >= desired) return <Badge variant="success">Available {ready}/{desired}</Badge>;
-            return <Badge variant="warning">Progressing {ready}/{desired}</Badge>;
+            if (desired === 0) return <Badge variant="default">{t("dashboard.status.scaledToZero")}</Badge>;
+            if (ready >= desired) return <Badge variant="success">{t("dashboard.status.availableCount", { ready, desired })}</Badge>;
+            return <Badge variant="warning">{t("dashboard.status.progressingCount", { ready, desired })}</Badge>;
           },
         },
         {

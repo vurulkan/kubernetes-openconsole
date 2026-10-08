@@ -3,6 +3,7 @@ import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import 'xterm/css/xterm.css';
 import { RefreshCw, X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { Button, NativeSelect, Spinner } from './ui';
 import { useTheme } from './ThemeProvider';
 
@@ -35,6 +36,7 @@ const darkTheme = {
 };
 
 const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containers = [] }) => {
+  const { t } = useTranslation();
   const terminalRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -267,13 +269,13 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
           </span>
         );
       case 'error':
-        return <span className="text-xs text-rose-600 dark:text-rose-300">Error</span>;
+        return <span className="text-xs text-rose-600 dark:text-rose-300">{t('common.error')}</span>;
       case 'closed':
-        return <span className="text-xs text-slate-500 dark:text-slate-400">Closed</span>;
+        return <span className="text-xs text-slate-500 dark:text-slate-400">{t('common.closed')}</span>;
       default:
-        return <span className="text-xs text-slate-500 dark:text-slate-400">Idle</span>;
+        return <span className="text-xs text-slate-500 dark:text-slate-400">{t('common.idle')}</span>;
     }
-  }, [status]);
+  }, [status, t]);
 
   if (!open) return null;
 

@@ -754,7 +754,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     setLdapTestStatus(null);
     try {
       await testLdapConnection();
-      setLdapTestStatus({ status: 'success', message: 'LDAP connection successful.' });
+      setLdapTestStatus({ status: 'success', message: tr('common.ldapTestOk') });
     } catch (err) {
       setLdapTestStatus({
         status: 'error',
@@ -779,7 +779,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     setAzureAdTestStatus(null);
     try {
       await testAzureAdConnection();
-      setAzureAdTestStatus({ status: 'success', message: 'Azure AD connection successful.' });
+      setAzureAdTestStatus({ status: 'success', message: tr('common.azureTestOk') });
     } catch (err) {
       setAzureAdTestStatus({
         status: 'error',
@@ -848,7 +848,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     if (!isClusterConfigValid()) {
       setClusterValidation({
         status: 'error',
-        message: 'Please provide required cluster details before applying.',
+        message: tr('common.clusterNeedsFields'),
       });
       return;
     }
@@ -875,7 +875,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
       if (result.status === 'starting') {
         setClusterValidation({
           status: 'success',
-          message: 'Connection syncing in background. Check Ready status shortly.',
+          message: tr('common.clusterSyncing'),
         });
       }
       setLastAppliedCluster((prev) => ({ ...prev, status: 'applied', error: '' }));
@@ -907,13 +907,13 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     if (!isClusterConfigValid()) {
       setClusterValidation({
         status: 'error',
-        message: 'Please provide required cluster details before validating.',
+        message: tr('common.clusterValidateNeeds'),
       });
       return;
     }
     try {
       await validateCluster(clusterConfig);
-      setClusterValidation({ status: 'success', message: 'Kubeconfig validated successfully.' });
+      setClusterValidation({ status: 'success', message: tr('common.clusterValidated') });
     } catch (err) {
       setClusterValidation({
         status: 'error',
@@ -924,13 +924,13 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
 
   const handleUploadLogo = async () => {
     if (!logoFile) {
-      setLogoStatus({ status: 'error', message: 'Please select a logo file to upload.' });
+      setLogoStatus({ status: 'error', message: tr('common.logoSelectFile') });
       return;
     }
     setLogoStatus(null);
     try {
       await uploadLogo(logoFile);
-      setLogoStatus({ status: 'success', message: 'Logo uploaded successfully.' });
+      setLogoStatus({ status: 'success', message: tr('common.logoUploaded') });
       setLogoPreviewUrl(`/api/customization/logo?ts=${Date.now()}`);
       setLogoFile(null);
     } catch (err) {
@@ -945,7 +945,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     setLogoStatus(null);
     try {
       await deleteLogo();
-      setLogoStatus({ status: 'success', message: 'Logo removed successfully.' });
+      setLogoStatus({ status: 'success', message: tr('common.logoRemoved') });
       setLogoPreviewUrl('');
       setLogoFile(null);
     } catch (err) {
@@ -1001,7 +1001,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
         <div>
           <div className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400">
             <Settings size={14} className="text-brand-600 dark:text-brand-300" />
-            <span className="uppercase tracking-wider">Administration</span>
+            <span className="uppercase tracking-wider">{tr("common.administration")}</span>
           </div>
           <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
             {ADMIN_TABS.find((t) => t.value === tab)?.label ?? 'Admin'}
@@ -1043,7 +1043,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
               }
               onDelete={async (u) => {
                 const ok = await confirm({
-                  title: `Delete user "${u.username}"?`,
+                  title: tr("common.deleteUser", { name: u.username }),
                   message:
                     'This removes the user. If they are the last active admin, the operation will be refused.',
                   confirmText: 'Delete',
@@ -1084,7 +1084,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
               }
               onDelete={async (g) => {
                 const ok = await confirm({
-                  title: `Delete group "${g.name}"?`,
+                  title: tr("common.deleteGroup", { name: g.name }),
                   message:
                     'Members of this group will lose any roles they inherited through it.',
                   confirmText: 'Delete',
@@ -1119,7 +1119,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                 }
                 onDelete={async (r) => {
                   const ok = await confirm({
-                    title: `Delete role "${r.name}"?`,
+                    title: tr("common.deleteRole", { name: r.name }),
                     message:
                       'All permissions attached to this role and all group assignments pointing to it are removed.',
                     confirmText: 'Delete',
@@ -1184,7 +1184,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                     value={newPermissionClusterId}
                     onChange={(e) => setNewPermissionClusterId(Number(e.target.value))}
                   >
-                    <option value={0}>All clusters</option>
+                    <option value={0}>{tr("common.allClusters")}</option>
                     {clustersList.map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.name}
@@ -1286,7 +1286,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                             <tr key={`${group.clusterId}:${group.namespace}`}>
                               <td className="px-4 py-3">
                                 {group.clusterId === 0 ? (
-                                  <Badge variant="info">All clusters</Badge>
+                                  <Badge variant="info">{tr("common.allClusters")}</Badge>
                                 ) : (
                                   <span className="font-mono text-xs text-slate-700 dark:text-slate-200">
                                     {group.clusterName || `#${group.clusterId}`}
@@ -1649,7 +1649,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                               <span className="truncate font-mono text-sm font-semibold text-slate-900 dark:text-slate-100">
                                 {c.name}
                               </span>
-                              {c.isActive && <Badge variant="success">Active</Badge>}
+                              {c.isActive && <Badge variant="success">{tr("common.active")}</Badge>}
                             </div>
                             <div className="truncate text-xs text-slate-500 dark:text-slate-400">
                               {c.description || c.server || `method: ${c.method}`}
@@ -1666,7 +1666,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                                 const ok = await confirm({
                                   title: tr('common.deactivateTitle', { name: c.name }),
                                   message:
-                                    'The Dashboard will have no active cluster until you activate one.',
+                                    tr('common.deactivateMessage'),
                                   confirmText: tr('common.deactivate'),
                                   variant: 'danger',
                                 });
@@ -1738,7 +1738,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                             disabled={c.isActive || clusterBusy !== null}
                             onClick={async () => {
                               const ok = await confirm({
-                                title: `Delete cluster "${c.name}"?`,
+                                title: tr("common.deleteCluster", { name: c.name }),
                                 message:
                                   'The cluster entry and its stored credentials are removed. If this cluster is active, deactivate it first.',
                                 confirmText: 'Delete',
@@ -1790,8 +1790,8 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                     value={newClusterMethod}
                     onChange={(e) => setNewClusterMethod(e.target.value as 'kubeconfig' | 'token')}
                   >
-                    <option value="kubeconfig">Kubeconfig</option>
-                    <option value="token">ServiceAccount Token</option>
+                    <option value="kubeconfig">{tr("common.kubeconfig")}</option>
+                    <option value="token">{tr("common.serviceAccountToken")}</option>
                   </NativeSelect>
                   {newClusterMethod === 'kubeconfig' && (
                     <div className="flex flex-col gap-1">
@@ -1874,7 +1874,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                       setNewClusterCA('');
                       const refreshed = await listClustersAdmin();
                       setClustersList(refreshed.items ?? []);
-                      setClustersStatus({ status: 'success', message: 'Cluster added.' });
+                      setClustersStatus({ status: 'success', message: tr('common.clusterAdded') });
                     } catch (err) {
                       setClustersStatus({ status: 'error', message: (err as Error).message || 'Create failed.' });
                     } finally {
@@ -1921,7 +1921,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                         });
                         const refreshed = await listClustersAdmin();
                         setClustersList(refreshed.items ?? []);
-                        setClustersStatus({ status: 'success', message: 'Cluster updated.' });
+                        setClustersStatus({ status: 'success', message: tr('common.clusterUpdated') });
                         setEditCluster(null);
                       } catch (err) {
                         setClustersStatus({ status: 'error', message: (err as Error).message || 'Update failed.' });
@@ -1960,8 +1960,8 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                         setEditCluster({ ...editCluster, method: e.target.value as 'kubeconfig' | 'token' })
                       }
                     >
-                      <option value="kubeconfig">Kubeconfig</option>
-                      <option value="token">ServiceAccount Token</option>
+                      <option value="kubeconfig">{tr("common.kubeconfig")}</option>
+                      <option value="token">{tr("common.serviceAccountToken")}</option>
                     </NativeSelect>
                     {editCluster.method === 'kubeconfig' && (
                       <div className="flex flex-col gap-1">
