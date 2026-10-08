@@ -42,16 +42,36 @@ func walkYAMLNode(n *yamlv3.Node) {
 	// renders every embedded newline on its own line.
 	if n.Kind == yamlv3.ScalarNode && (n.Tag == "!!str" || n.Tag == "") && strings.Contains(n.Value, "\n") {
 		// Skip strings that would need escaping anyway (control chars other
-		// than LF and TAB make block scalars illegal in YAML). Falling back
-		// to the original double-quoted scalar is safer than producing
-		// invalid YAML.
+		// than LF and TAB make block scalars illegal in YAML).
 		if yamlStringBlockSafe(n.Value) {
+			// YAML spec: a block scalar line can't end with whitespace, and
+			// the string as a whole can't end with trailing spaces. yaml.v3's
+			// encoder silently falls back to the ugly double-quoted single-
+			// liner when either rule is violated — hiding the structure for
+			// values like a Spring Boot application.yml ConfigMap that end a
+			// line with "boh:      ". Normalize by stripping trailing
+			// whitespace from each line so the block scalar actually emits.
+			// Trade-off: a handful of trailing spaces in the original value
+			// are lost in the UI's YAML view; byte-for-byte fidelity is still
+			// available via `kubectl get -o yaml`.
+			n.Value = trimLineTrailingSpaces(n.Value)
 			n.Style = yamlv3.LiteralStyle
 		}
 	}
 	for _, child := range n.Content {
 		walkYAMLNode(child)
 	}
+}
+
+// trimLineTrailingSpaces removes trailing spaces / tabs from every line (and
+// from the string as a whole) so the content is eligible to be emitted as a
+// YAML block scalar. Interior content is untouched.
+func trimLineTrailingSpaces(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimRight(line, " \t")
+	}
+	return strings.Join(lines, "\n")
 }
 
 // yamlStringBlockSafe returns true when s is OK to render as a block scalar.
