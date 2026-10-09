@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   Boxes,
@@ -121,6 +121,21 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   });
   const [items, setItems] = useState<Array<Record<string, unknown>>>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  // Search text a restored saved view brings along. Changing tab/namespace
+  // clears the search (effect below), so a restore that also changes them
+  // parks its search here for that effect to apply instead. A view restored
+  // across clusters reloads the page and stages it in localStorage.
+  const pendingSearch = useRef<string | null>(
+    (() => {
+      try {
+        const v = localStorage.getItem('dashboardPendingSearch');
+        localStorage.removeItem('dashboardPendingSearch');
+        return v;
+      } catch {
+        return null;
+      }
+    })(),
+  );
   const [namespaceSearch, setNamespaceSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -464,7 +479,8 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   }, [loadResources]);
 
   useEffect(() => {
-    setSearchQuery('');
+    setSearchQuery(pendingSearch.current ?? '');
+    pendingSearch.current = null;
   }, [activeTab, selectedNamespace]);
 
   // Log modal shortcuts: p toggles pause, w toggles word-wrap. Must run even
@@ -763,16 +779,16 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
         type="text"
         value={namespaceSearch}
         onChange={(e) => setNamespaceSearch(e.target.value)}
-        placeholder="Search namespaces…"
+        placeholder={t('dashboard.namespacesSearch')}
         data-shortcut="namespace-search"
         className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 dark:placeholder:text-slate-500 dark:text-slate-100 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/15"
       />
       <div className="scrollbar-thin flex flex-col gap-0.5 overflow-auto pr-1">
         {filteredNamespaces.length === 0 && (
-          <p className="rounded-md px-3 py-2 text-xs text-slate-400 dark:text-slate-500">
+          <p className="rounded-md px-3 py-2 text-xs text-slate-500 dark:text-slate-400">
             {namespaces.length === 0
-              ? 'No namespaces available.'
-              : 'No namespaces match your search.'}
+              ? t('dashboard.namespacesEmpty')
+              : t('dashboard.namespacesNoMatch')}
           </p>
         )}
         {filteredNamespaces.map((ns) => {
@@ -821,11 +837,11 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
         <div className="flex items-center gap-2">
           <Badge variant="info" className="gap-1.5">
             <span className="h-1.5 w-1.5 rounded-full bg-brand-500" />
-            {namespaces.length} namespaces
+            {t('dashboard.overviewBadge.namespaces', { count: namespaces.length })}
           </Badge>
           {selectedNamespace && (
             <Badge variant="default" className="gap-1.5">
-              <span className="font-mono text-[11px] text-slate-500 dark:text-slate-400">ns</span>
+              <span className="font-mono text-[11px] text-slate-600 dark:text-slate-400">ns</span>
               <span className="font-mono">{selectedNamespace}</span>
             </Badge>
           )}
@@ -863,15 +879,15 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
             <div className="relative">
               <SearchIcon
                 size={14}
-                className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500"
+                className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400"
               />
               <Input
-                placeholder={activeTab ? `Search ${activeTab} · try label:app=foo…` : 'Search…'}
+                placeholder={activeTab ? t('dashboard.search', { resource: activeTab }) : t('dashboard.searchGeneric')}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="h-9 w-64 pl-8"
                 data-shortcut="dashboard-search"
-                title="Supports plain name search AND label:key=value / label:key tokens, space-separated"
+                title={t('dashboard.searchHint')}
               />
             </div>
           </div>
@@ -890,6 +906,9 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                 viewMode,
               }}
               onRestore={(v) => {
+                if ((v.namespace && v.namespace !== selectedNamespace) || (v.tab && v.tab !== activeTab)) {
+                  pendingSearch.current = v.search;
+                }
                 if (v.namespace) setSelectedNamespace(v.namespace);
                 if (v.tab) setActiveTab(v.tab);
                 setSearchQuery(v.search);
@@ -912,7 +931,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
         <div className="border-b border-slate-200 dark:border-slate-800/70 bg-white dark:bg-slate-900">
           <div className="flex items-center gap-1 overflow-x-auto px-3 py-2">
             {orderedResources.length === 0 && (
-              <p className="px-2 py-2 text-xs text-slate-400 dark:text-slate-500">
+              <p className="px-2 py-2 text-xs text-slate-500 dark:text-slate-400">
                 {t('dashboard.noResourcePerms')}
               </p>
             )}
@@ -932,7 +951,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                 >
                   <Icon
                     size={14}
-                    className={active ? 'text-brand-600 dark:text-brand-300' : 'text-slate-400 dark:text-slate-500 group-hover:text-slate-600 dark:text-slate-300'}
+                    className={active ? 'text-brand-600 dark:text-brand-300' : 'text-slate-500 dark:text-slate-400 group-hover:text-slate-600 dark:text-slate-300'}
                   />
                   {t(`resources.${resource}`, { defaultValue: meta?.label ?? resource })}
                 </button>
@@ -945,8 +964,8 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                   type="button"
                   onClick={() => setViewMode('card')}
                   aria-pressed={viewMode === 'card'}
-                  aria-label="Card view"
-                  title="Card view"
+                  aria-label={t('dashboard.cardView')}
+                  title={t('dashboard.cardView')}
                   className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
                     viewMode === 'card'
                       ? 'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-200'
@@ -959,8 +978,8 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                   type="button"
                   onClick={() => setViewMode('list')}
                   aria-pressed={viewMode === 'list'}
-                  aria-label="List view"
-                  title="List view"
+                  aria-label={t('dashboard.listView')}
+                  title={t('dashboard.listView')}
                   className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
                     viewMode === 'list'
                       ? 'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-200'
@@ -1016,13 +1035,13 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
           {filteredItems.length === 0 && !loading && (
             <div className="col-span-full">
               <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60 px-6 py-10 text-center">
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">
                   <SearchIcon size={16} />
                 </div>
                 <p className="text-sm font-medium text-slate-600 dark:text-slate-300">
                   {searchQuery ? t('dashboard.emptyFiltered') : t('dashboard.empty')}
                 </p>
-                <p className="text-xs text-slate-400 dark:text-slate-500">
+                <p className="text-xs text-slate-500 dark:text-slate-400">
                   {searchQuery ? t('dashboard.emptyHintSearch') : t('dashboard.emptyHint')}
                 </p>
               </div>
@@ -1207,13 +1226,13 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
 
                 <div className="flex flex-col gap-1 text-[11px] text-slate-500 dark:text-slate-400">
                   <div className="flex items-center gap-1.5">
-                    <Calendar size={11} className="text-slate-400 dark:text-slate-500" />
+                    <Calendar size={11} className="text-slate-500 dark:text-slate-400" />
                     <span>{formatAge(createdAt)}</span>
                   </div>
 
                   {activeTab === 'pods' && (
                     <div className="flex items-center gap-1.5">
-                      <RefreshCw size={11} className="text-slate-400 dark:text-slate-500" />
+                      <RefreshCw size={11} className="text-slate-500 dark:text-slate-400" />
                       <span>Restarts: <span className="font-medium text-slate-700 dark:text-slate-200">{restartCount}</span></span>
                     </div>
                   )}
@@ -1233,13 +1252,13 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                   {activeTab === 'ingresses' && (
                     <>
                       <div className="truncate">
-                        <span className="text-slate-400 dark:text-slate-500">Hosts:</span>{' '}
+                        <span className="text-slate-500 dark:text-slate-400">Hosts:</span>{' '}
                         <span className="font-mono text-slate-700 dark:text-slate-200">
                           {ingressHosts.length > 0 ? ingressHosts.join(', ') : 'N/A'}
                         </span>
                       </div>
                       <div className="truncate">
-                        <span className="text-slate-400 dark:text-slate-500">Paths:</span>{' '}
+                        <span className="text-slate-500 dark:text-slate-400">Paths:</span>{' '}
                         <span className="font-mono text-slate-700 dark:text-slate-200">
                           {ingressPaths.length > 0 ? ingressPaths.join(', ') : 'N/A'}
                         </span>
@@ -1257,11 +1276,11 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                   {activeTab === 'cronjobs' && (
                     <>
                       <div>
-                        <span className="text-slate-400 dark:text-slate-500">Schedule:</span>{' '}
+                        <span className="text-slate-500 dark:text-slate-400">Schedule:</span>{' '}
                         <span className="font-mono text-slate-700 dark:text-slate-200">{cronSchedule}</span>
                       </div>
                       <div>
-                        <span className="text-slate-400 dark:text-slate-500">Last run:</span>{' '}
+                        <span className="text-slate-500 dark:text-slate-400">Last run:</span>{' '}
                         <span className="font-mono text-slate-700 dark:text-slate-200">{lastSchedule}</span>
                       </div>
                     </>
@@ -1288,7 +1307,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                           </span>
                         )}
                         {st.completionTime && (
-                          <span className="text-slate-400 dark:text-slate-500">
+                          <span className="text-slate-500 dark:text-slate-400">
                             done {st.completionTime}
                           </span>
                         )}

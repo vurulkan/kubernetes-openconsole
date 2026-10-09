@@ -205,4 +205,3 @@ func closeAfterPendingWrites(db *sql.DB) {
 		_ = conn.Close()
 	}
 }
-

@@ -29,6 +29,8 @@ jobs:
       - run: npm ci
       # vite build does not type-check; this does.
       - run: npx tsc --noEmit -p .
+      # Unit + component tests, i18n parity, axe accessibility checks.
+      - run: npm test
       - run: npm run build
 
   backend:
@@ -54,11 +56,14 @@ jobs:
     needs: [frontend, backend]
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
+      # Both architectures, so an arm64 break shows up on the PR, not at release.
       - name: Build image
         uses: docker/build-push-action@v5
         with:
           context: .
+          platforms: linux/amd64,linux/arm64
           push: false
           tags: kubernetes-openconsole:${{ github.sha }}
           cache-from: type=gha
@@ -71,13 +76,23 @@ jobs:
     # CI is the only publisher of image tags, so a manual push can never race
     # it: main → :latest + :<sha>, release tag vX.Y.Z → :X.Y.Z.
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    permissions:
+      contents: read
+      packages: write
+      # Keyless cosign signing uses the workflow's OIDC identity.
+      id-token: write
     steps:
       - uses: actions/checkout@v4
+      # Only the runtime stage (apk add) runs under emulation for arm64; the
+      # Go and npm stages cross-compile on the runner.
+      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
+      - uses: sigstore/cosign-installer@v3
       - name: Compute image tags
         id: tags
         run: |
           IMG="ghcr.io/${{ github.repository_owner }}/kubernetes-openconsole"
+          echo "image=$IMG" >> "$GITHUB_OUTPUT"
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             echo "tags=$IMG:${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
           else
@@ -90,10 +105,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push
+        id: push
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.tags.outputs.tags }}
+          # SBOM (SPDX) and SLSA provenance are attached as attestations.
+          sbom: true
+          provenance: mode=max
           cache-from: type=gha
+      - name: Sign image (cosign keyless)
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          IMG: ${{ steps.tags.outputs.image }}
+        run: cosign sign --yes "${IMG}@${DIGEST}"

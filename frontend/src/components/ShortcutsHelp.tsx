@@ -46,6 +46,12 @@ const GROUPS: Group[] = [
     { keys: ['[', 'ğ'], join: 'or', descKey: 'prevSub' },
     { keys: [']', 'ü'], join: 'or', descKey: 'nextSub' },
   ]},
+  { titleKey: 'tables', rows: [
+    { keys: ['j', 'k'], join: 'or', descKey: 'rowDownUp' },
+    { keys: ['↵'], descKey: 'rowOpen' },
+    { keys: ['d'], descKey: 'rowDelete' },
+    { keys: ['n', 'p'], join: 'or', descKey: 'pageNextPrev' },
+  ]},
   { titleKey: 'logs', rows: [
     { keys: ['p'], descKey: 'togglePause' },
     { keys: ['w'], descKey: 'toggleWrap' },
@@ -112,7 +118,7 @@ export const ShortcutsHelp: React.FC = () => {
                     {row.keys.map((k, i) => (
                       <React.Fragment key={i}>
                         {i > 0 && (
-                          <span className="text-[10px] text-slate-400 dark:text-slate-500">
+                          <span className="text-[10px] text-slate-500 dark:text-slate-400">
                             {row.join === 'or' ? orLabel : thenLabel}
                           </span>
                         )}

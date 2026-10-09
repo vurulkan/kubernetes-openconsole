@@ -190,7 +190,7 @@ export const CommandPalette: React.FC<Props> = ({ user, namespaces, onPickNamesp
     if (items.length === 0) return null;
     return (
       <div>
-        <p className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400 dark:text-slate-500">
+        <p className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
           {title}
         </p>
         <ul>
@@ -210,10 +210,10 @@ export const CommandPalette: React.FC<Props> = ({ user, namespaces, onPickNamesp
                       : 'text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800'
                   }`}
                 >
-                  <Icon size={14} className="shrink-0 text-slate-400 dark:text-slate-500" />
+                  <Icon size={14} className="shrink-0 text-slate-500 dark:text-slate-400" />
                   <span className="flex-1 truncate">{c.label}</span>
                   {c.hint && (
-                    <span className="text-[11px] text-slate-400 dark:text-slate-500">{c.hint}</span>
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400">{c.hint}</span>
                   )}
                 </button>
               </li>
@@ -251,13 +251,13 @@ export const CommandPalette: React.FC<Props> = ({ user, namespaces, onPickNamesp
         </div>
         <div className="max-h-[50vh] overflow-auto py-1">
           {flat.length === 0 && (
-            <p className="px-3 py-6 text-center text-sm text-slate-400">No results.</p>
+            <p className="px-3 py-6 text-center text-sm text-slate-500 dark:text-slate-400">No results.</p>
           )}
           {section('Navigate', grouped.nav)}
           {section('Theme', grouped.theme)}
           {section('Namespaces', grouped.namespace)}
         </div>
-        <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50/60 px-3 py-1.5 text-[10px] text-slate-400 dark:border-slate-800 dark:bg-slate-900/60">
+        <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50/60 px-3 py-1.5 text-[10px] text-slate-500 dark:text-slate-400 dark:border-slate-800 dark:bg-slate-900/60">
           <span>↑↓ Navigate · ↵ Select</span>
           <span>
             <kbd className="rounded border border-slate-200 bg-white px-1 dark:border-slate-700 dark:bg-slate-800">

@@ -1,12 +1,12 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Bookmark, Check, Plus, Trash2 } from 'lucide-react';
+import { Bookmark, Check, Plus, Share2, Trash2, Users } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from './ui';
 import { SAVED_VIEWS_EVENT_NAME } from '../hooks/useGlobalShortcuts';
+import { deleteView, getActiveCluster, listViews, saveView, selectCluster, ServerView, shareView } from '../services/api';
 
 export type SavedView = {
-  id: string;
   name: string;
   namespace: string | null;
   tab: string;
@@ -15,47 +15,70 @@ export type SavedView = {
 };
 
 type Props = {
-  current: Omit<SavedView, 'id' | 'name'>;
+  current: Omit<SavedView, 'name'>;
   onRestore: (view: SavedView) => void;
 };
 
-const STORAGE_KEY = 'dashboardSavedViews';
+// Views saved before 2.14.0 lived only in this browser; they are uploaded to
+// the server once and then removed from localStorage.
+const LEGACY_STORAGE_KEY = 'dashboardSavedViews';
 
-function load(): SavedView[] {
+async function migrateLegacyViews(): Promise<void> {
+  let legacy: Array<Omit<SavedView, 'namespace'> & { namespace: string | null }> = [];
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
+    const raw = localStorage.getItem(LEGACY_STORAGE_KEY);
+    if (!raw) return;
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    legacy = Array.isArray(parsed) ? parsed : [];
   } catch {
-    return [];
+    return;
   }
-}
-
-function save(views: SavedView[]) {
+  for (const v of legacy) {
+    try {
+      await saveView({ name: v.name, namespace: v.namespace ?? '', tab: v.tab, search: v.search, viewMode: v.viewMode });
+    } catch {
+      return; // keep the local copy; retry on the next load
+    }
+  }
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(views));
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
   } catch {
-    /* ignore quota */
+    /* ignore */
   }
 }
 
 /**
- * Tiny dropdown that stores Dashboard filter state (ns + tab + search +
- * view mode) under a name. Lets the operator jump between contexts like
- * "prod payments / pods / label:app=api" or "staging / deployments /
- * label:tier=front" without retyping anything.
+ * Dropdown that stores Dashboard filter state (cluster + ns + tab + search +
+ * view mode) under a name, on the server, so views follow the user across
+ * browsers. Views can be shared with everyone; shared views from others show
+ * their owner and are read-only. Restoring a view saved on another cluster
+ * switches the user's cluster first.
  */
 const SavedViewsMenu: React.FC<Props> = ({ current, onRestore }) => {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const [views, setViews] = useState<SavedView[]>(() => load());
+  const [views, setViews] = useState<ServerView[]>([]);
   const [naming, setNaming] = useState(false);
   const [draftName, setDraftName] = useState('');
+  const [shareDraft, setShareDraft] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [focusedIdx, setFocusedIdx] = useState(0);
   const buttonRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const res = await listViews();
+      setViews(res.items ?? []);
+    } catch {
+      setViews([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void migrateLegacyViews().then(refresh);
+  }, [refresh]);
 
   useEffect(() => {
     if (!open) return;
@@ -76,6 +99,42 @@ const SavedViewsMenu: React.FC<Props> = ({ current, onRestore }) => {
     const r = buttonRef.current.getBoundingClientRect();
     setPos({ top: r.bottom + 6, right: window.innerWidth - r.right });
   }, [open]);
+
+  const restore = useCallback(
+    async (v: ServerView) => {
+      setOpen(false);
+      const view: SavedView = {
+        name: v.name,
+        namespace: v.namespace || null,
+        tab: v.tab,
+        search: v.search,
+        viewMode: v.viewMode,
+      };
+      if (v.clusterId > 0) {
+        try {
+          const active = await getActiveCluster();
+          if (active.active?.id !== v.clusterId) {
+            // Saved on another cluster: switch, stage the filters, reload.
+            await selectCluster(v.clusterId);
+            try {
+              if (view.namespace) localStorage.setItem('dashboardNamespace', view.namespace);
+              if (view.tab) localStorage.setItem('dashboardResourceTab', view.tab);
+              localStorage.setItem('dashboardViewMode', view.viewMode);
+              if (view.search) localStorage.setItem('dashboardPendingSearch', view.search);
+            } catch {
+              /* ignore */
+            }
+            window.location.reload();
+            return;
+          }
+        } catch {
+          /* cluster unavailable or no longer allowed: apply on the current one */
+        }
+      }
+      onRestore(view);
+    },
+    [onRestore],
+  );
 
   // Global 'v' opens the menu. Nothing to do when there are no views yet,
   // except still open the menu so the "Save current view" footer is reachable
@@ -115,51 +174,55 @@ const SavedViewsMenu: React.FC<Props> = ({ current, onRestore }) => {
       if (e.key === 'Enter') {
         e.preventDefault();
         const target = views[focusedIdx];
-        if (target) {
-          onRestore(target);
-          setOpen(false);
-        }
+        if (target) void restore(target);
         return;
       }
       if (/^[1-9]$/.test(e.key)) {
         const idx = Number(e.key) - 1;
         if (idx < views.length) {
           e.preventDefault();
-          onRestore(views[idx]);
-          setOpen(false);
+          void restore(views[idx]);
         }
       }
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [open, naming, views, focusedIdx, onRestore]);
+  }, [open, naming, views, focusedIdx, restore]);
 
-  const commit = (next: SavedView[]) => {
-    setViews(next);
-    save(next);
-  };
-
-  const handleSave = () => {
+  const handleSave = async () => {
     const name = draftName.trim();
     if (!name) return;
-    const next: SavedView[] = [
-      ...views.filter((v) => v.name !== name),
-      {
-        id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    setError(null);
+    try {
+      await saveView({
         name,
-        namespace: current.namespace,
+        namespace: current.namespace ?? '',
         tab: current.tab,
         search: current.search,
         viewMode: current.viewMode,
-      },
-    ];
-    commit(next);
-    setDraftName('');
-    setNaming(false);
+        shared: shareDraft,
+      });
+      setDraftName('');
+      setShareDraft(false);
+      setNaming(false);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
   };
 
-  const isCurrent = (v: SavedView) =>
-    v.namespace === current.namespace &&
+  const run = async (fn: () => Promise<unknown>) => {
+    setError(null);
+    try {
+      await fn();
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const isCurrent = (v: ServerView) =>
+    (v.namespace || null) === current.namespace &&
     v.tab === current.tab &&
     v.search === current.search &&
     v.viewMode === current.viewMode;
@@ -195,7 +258,7 @@ const SavedViewsMenu: React.FC<Props> = ({ current, onRestore }) => {
           </div>
           <ul className="max-h-72 overflow-auto">
             {views.length === 0 && (
-              <li className="px-3 py-3 text-xs text-slate-400 dark:text-slate-500">
+              <li className="px-3 py-3 text-xs text-slate-500 dark:text-slate-400">
                 {t('dashboard.views.empty')}
               </li>
             )}
@@ -209,10 +272,7 @@ const SavedViewsMenu: React.FC<Props> = ({ current, onRestore }) => {
               >
                 <button
                   type="button"
-                  onClick={() => {
-                    onRestore(v);
-                    setOpen(false);
-                  }}
+                  onClick={() => void restore(v)}
                   className="flex min-w-0 flex-1 items-center gap-2 rounded px-1 py-1 text-left"
                 >
                   <span className="flex h-4 w-4 shrink-0 items-center justify-center">
@@ -228,22 +288,49 @@ const SavedViewsMenu: React.FC<Props> = ({ current, onRestore }) => {
                       {v.name}
                     </div>
                     <div className="truncate text-[10px] text-slate-500 dark:text-slate-400">
+                      {v.clusterName ? `${v.clusterName} · ` : ''}
                       {v.namespace ? `${v.namespace}/${v.tab}` : v.tab}
                       {v.search ? ` · ${v.search}` : ''}
+                      {!v.mine ? ` · ${t('dashboard.views.by', { owner: v.owner })}` : ''}
                     </div>
                   </div>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => commit(views.filter((x) => x.id !== v.id))}
-                  className="rounded p-1 text-slate-300 opacity-0 transition-opacity hover:text-rose-600 group-hover:opacity-100"
-                  aria-label={`Delete view ${v.name}`}
-                >
-                  <Trash2 size={12} />
-                </button>
+                {v.mine ? (
+                  <div className="flex shrink-0 items-center">
+                    <button
+                      type="button"
+                      onClick={() => void run(() => shareView(v.id, !v.shared))}
+                      className={`rounded p-1 transition-opacity hover:text-brand-600 ${
+                        v.shared ? 'text-brand-500' : 'text-slate-300 opacity-0 group-hover:opacity-100'
+                      }`}
+                      title={v.shared ? t('dashboard.views.unshare') : t('dashboard.views.share')}
+                      aria-label={v.shared ? t('dashboard.views.unshare') : t('dashboard.views.share')}
+                    >
+                      <Share2 size={12} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void run(() => deleteView(v.id))}
+                      className="rounded p-1 text-slate-300 opacity-0 transition-opacity hover:text-rose-600 group-hover:opacity-100"
+                      title={t('dashboard.views.delete')}
+                      aria-label={t('dashboard.views.delete')}
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                ) : (
+                  <span className="shrink-0 p-1 text-slate-400" title={t('dashboard.views.sharedBy', { owner: v.owner })}>
+                    <Users size={12} />
+                  </span>
+                )}
               </li>
             ))}
           </ul>
+          {error && (
+            <div className="border-t border-slate-100 px-3 py-1.5 text-[11px] text-rose-600 dark:border-slate-800/70 dark:text-rose-300">
+              {error}
+            </div>
+          )}
           <div className="border-t border-slate-100 p-2 dark:border-slate-800/70">
             {!naming ? (
               <button
@@ -259,7 +346,7 @@ const SavedViewsMenu: React.FC<Props> = ({ current, onRestore }) => {
                 className="flex items-center gap-1"
                 onSubmit={(e) => {
                   e.preventDefault();
-                  handleSave();
+                  void handleSave();
                 }}
               >
                 <input
@@ -269,6 +356,10 @@ const SavedViewsMenu: React.FC<Props> = ({ current, onRestore }) => {
                   placeholder={t('dashboard.views.namePlaceholder')}
                   className="min-w-0 flex-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-900 placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/15 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500"
                 />
+                <label className="flex shrink-0 items-center gap-1 text-[10px] text-slate-500 dark:text-slate-400" title={t('dashboard.views.shareHint')}>
+                  <input type="checkbox" checked={shareDraft} onChange={(e) => setShareDraft(e.target.checked)} />
+                  {t('dashboard.views.shareShort')}
+                </label>
                 <button
                   type="submit"
                   disabled={!draftName.trim()}

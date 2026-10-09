@@ -7,7 +7,8 @@ Modern, production-ready Kubernetes visibility and operations console with stric
 ### Observability & live data
 - **Informer-driven lister cache** — list endpoints read from a `client-go` SharedInformerFactory, so the UI is instant and the API server isn't hammered by polling.
 - **Live Events side panel** — streams `added` / `updated` / `deleted` plus native `corev1.Event` objects over a WebSocket. Filter by All / K8s events / Warnings.
-- **Prometheus `/metrics`**, dedicated `/livez` (process) and `/readyz` (DB) endpoints. Clusters are left out of readiness, so one unreachable cluster can't take the console down.
+- **Prometheus `/metrics`**, dedicated `/livez` (process) and `/readyz` (DB) endpoints. Clusters are left out of readiness, so one unreachable cluster can't take the console down. See [Metrics](#metrics).
+- **OpenTelemetry tracing** (opt-in): one span per API request, named after its route, with the Kubernetes API calls it made as child spans. Exported over OTLP/HTTP to any collector (Jaeger, Tempo, Elastic APM, …). See [Tracing](#tracing-opentelemetry).
 
 ### Workloads shown in the Dashboard
 Pods, Deployments, **DaemonSets**, **StatefulSets**, **HorizontalPodAutoscalers (v2)**, Services, ConfigMaps, **Secrets**, Ingresses, CronJobs, Jobs — card view, list view, label filters, saved views.
@@ -37,9 +38,11 @@ Every write action records `{resource}.{action}.{success|denied|failed|rate_limi
 - **Light / Dark / System theme** (persisted; respects OS).
 - **Internationalization — English & Turkish** (locale switcher next to the theme toggle; defaults to browser language, persists user override). TR covers nav, Dashboard, Admin, audit, keyboard cheat sheet.
 - **Keyboard-first navigation**: `⌘K` / `Ctrl+K` command palette, `?` cheat sheet, chord shortcuts for nav/theme, `c` cluster switcher, `v` saved views, `e` live events panel, `n` namespace filter focus. TR keyboard positions (`ğ` / `ü` / `.`) are mapped to the US `[` / `]` / `/` by physical key, so the shortcuts don't break on a TR Q layout.
-- **Saved views** — persist (namespace, tab, search, viewMode) under a name in localStorage.
+- **Saved views** — store (cluster, namespace, tab, search, view mode) under a name on the server, so they follow you to any browser; **share** a view with every user.
+- **Keyboard table navigation** — `j` / `k` move through rows of the admin tables, `Enter` opens, `d` deletes (with confirmation), `n` / `p` change page.
 - **Label filters in the search box** — `label:app=foo`, `label:tier`, name tokens, AND-combined.
-- **Audit logs** with pagination, filters, CSV export.
+- **Audit logs** with pagination, filters, CSV export; **users and groups CSV export** for access reviews.
+- **Accessible**: WCAG 2.1 AA contrast in light and dark themes, labelled controls, focusable scroll regions — checked with axe in the test suite and in a real browser.
 - **Admin Role Permissions redesign** — role sidebar, grouped grant cards (namespaces that share identical grants merge), bulk Add Permissions modal with templates (Viewer / Developer / SRE / Admin), copy-from-role, inline edit.
 
 ### Security headers
@@ -64,29 +67,49 @@ docker build -t kubernetes-openconsole:local .
 ### Option B — prebuilt image (GHCR)
 
 ```yaml
-image: ghcr.io/vurulkan/kubernetes-openconsole:2.12.0   # pin a release
+image: ghcr.io/vurulkan/kubernetes-openconsole:2.14.0   # pin a release
 ```
 
-CI is the only publisher of image tags (linux/amd64):
+Images are multi-arch (**linux/amd64** and **linux/arm64**: Graviton, Ampere, Apple silicon); the runtime picks the right one. CI is the only publisher of image tags:
 
 | Tag | Built from | Moves? |
 |---|---|---|
-| `X.Y.Z` (e.g. `2.12.0`) | the `vX.Y.Z` git tag | no — use this in production |
+| `X.Y.Z` (e.g. `2.14.0`) | the `vX.Y.Z` git tag | no — use this in production |
 | `latest` | every push to `main` | yes |
 | `<full commit sha>` | every push to `main` | no |
 
 Releasing = push the `vX.Y.Z` tag; CI builds and pushes `:X.Y.Z`.
+
+#### Verifying an image
+
+Every published image (since 2.14.0) is signed with [cosign](https://docs.sigstore.dev/) keyless signing by the CI workflow, and carries an SPDX **SBOM** and SLSA **provenance** attestation.
+
+```bash
+# Signature: must have been produced by this repository's CI workflow
+cosign verify ghcr.io/vurulkan/kubernetes-openconsole:2.14.0 \
+  --certificate-identity-regexp '^https://github.com/vurulkan/kubernetes-openconsole/\.github/workflows/ci\.yml@refs/(heads/main|tags/v.*)$' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+# SBOM (packages in the image) and build provenance
+docker buildx imagetools inspect ghcr.io/vurulkan/kubernetes-openconsole:2.14.0 --format '{{ json .SBOM }}'
+docker buildx imagetools inspect ghcr.io/vurulkan/kubernetes-openconsole:2.14.0 --format '{{ json .Provenance }}'
+```
+
+Admission controllers such as Kyverno or Sigstore policy-controller can enforce the same identity before a pod is admitted.
 
 ### Tests
 
 CI runs these on every push. Run them locally before you open a PR:
 
 ```bash
-cd backend && go vet ./... && go test -race ./...    # recorder, exec bridge, RBAC engine, API authorization
-cd frontend && npx tsc --noEmit -p . && npm run build
+cd backend && go vet ./... && go test -race ./...    # recorder, exec bridge, RBAC engine, API, store, LDAP, Azure AD, tracing
+cd frontend && npx tsc --noEmit -p . && npm test && npm run build
 ```
 
-The API tests run the real router and SQLite store against client-go's fake clientset. They check that every admin endpoint, namespace / resource / cluster-scoped grant, write action (403 + `denied` audit) and secret reveal is enforced.
+- The API tests run the real router and SQLite store against client-go's fake clientset. They check that every admin endpoint, namespace / resource / cluster-scoped grant, write action (403 + `denied` audit) and secret reveal is enforced, plus feature flags, saved views, CSV exports, the password policy and the exec session limit.
+- Store tests upgrade a pre-2.x database schema and check that every migration is idempotent and that credentials are encrypted at rest.
+- LDAP is tested end to end against an in-process LDAP server (configure → test → search → import → sign in → disable); Azure AD against a fake Entra token endpoint (state, audience, issuer and expiry are all rejected when wrong).
+- Frontend (`npm test`, Vitest + Testing Library + axe-core): EN / TR dictionaries have the same keys and every `t('…')` key used in the code exists, table keyboard navigation, dialogs, and accessibility checks on the main components.
 
 ## Run (local Docker, no cluster)
 
@@ -94,7 +117,7 @@ The API tests run the real router and SQLite store against client-go's fake clie
 docker run --rm -p 8080:8080 \
   -e TIMEZONE=Europe/Istanbul \
   -v kubernetes-openconsole-data:/data \
-  ghcr.io/vurulkan/kubernetes-openconsole:2.12.0
+  ghcr.io/vurulkan/kubernetes-openconsole:2.14.0
 ```
 
 The image defaults to `DATA_PATH=/data/app.db` and `STATIC_DIR=/app/public`; the SQLite DB and session recordings live under `/data`. Drop the `-v` for a throwaway instance. Then open http://localhost:8080 and add a cluster ([Connecting clusters](#connecting-clusters)).
@@ -120,7 +143,7 @@ Then:
 1. Open the UI and log in as `admin` / `admin` ([First login](#first-login)).
 2. Add the cluster in **Admin → Clusters** ([Connecting clusters](#connecting-clusters)). The backend never picks up a cluster on its own.
 
-To upgrade, run `kubectl -n kubernetes-openconsole rollout restart deploy/kubernetes-openconsole`. The pod pulls the newest `:latest` image. To stay on a fixed version, set a release tag (e.g. `2.12.0`) in `deployment.yaml` or through the `images:` override in `kustomization.yaml`, then re-apply.
+To upgrade, run `kubectl -n kubernetes-openconsole rollout restart deploy/kubernetes-openconsole`. The pod pulls the newest `:latest` image. To stay on a fixed version, set a release tag (e.g. `2.14.0`) in `deployment.yaml` or through the `images:` override in `kustomization.yaml`, then re-apply.
 
 ## Environment variables
 
@@ -141,6 +164,48 @@ You normally set none of these. Recording is configured in **Admin → Recording
 - `SESSION_RECORDING_MAX_TOTAL_MB` (default `2048`) — quota for all recordings together.
 - `SESSION_RECORDING_MIN_FREE_MB` (default `512`) — free space always left on the recordings volume.
 - `SESSION_RECORDING_DISK_POLICY` (default `evict_oldest`) — `evict_oldest` or `stop`; see below.
+
+### Security & limits
+- `PASSWORD_MIN_LENGTH` (default `8`) — minimum length of local passwords (create, change, admin reset). Passwords are also capped at 72 bytes (bcrypt), must not be blank, and a change must actually change the password.
+- `EXEC_IDLE_TIMEOUT` (default `5m`, minimum `30s`) — a pod shell with no input for this long is closed. Go duration syntax: `90s`, `10m`, `1h`.
+- `MAX_EXEC_SESSIONS_PER_USER` (default `3`, `0` = unlimited) — concurrent pod shells per user; one more is refused with 429 and audited as `pod.exec.rate_limited`.
+
+### Feature flags
+Switch a capability off **for everyone, admins included**, regardless of role permissions — for example to keep pod shells closed in production for a while. Set `FEATURE_<NAME>=false` (or `0` / `no`); anything else, or unset, leaves it on.
+
+| Variable | Turns off |
+|---|---|
+| `FEATURE_POD_EXEC` | pod shell (`pods:exec`) |
+| `FEATURE_YAML_EDIT` | YAML edit / apply on every resource except Secrets (`{resource}:edit`) |
+| `FEATURE_WORKLOAD_ACTIONS` | deployment restart / scale, statefulset scale |
+| `FEATURE_SECRETS` | the whole Secrets tab (every `secrets:*`) |
+| `FEATURE_SECRET_REVEAL` | revealing secret values (`secrets:reveal`) |
+| `FEATURE_SECRET_EDIT` | editing secrets (`secrets:edit`) |
+
+A disabled feature disappears from the UI and every endpoint for it answers 403 *"this feature is disabled by the operator"* and writes the usual `denied` audit entry. `GET /api/features` shows the current state; the startup log lists what is off.
+
+### Tracing (OpenTelemetry)
+Off unless an OTLP endpoint is set. Uses the standard OpenTelemetry variables:
+
+- `OTEL_EXPORTER_OTLP_ENDPOINT` (e.g. `http://otel-collector.observability:4318`) or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` — OTLP/HTTP receiver. Setting either one turns tracing on.
+- `OTEL_SERVICE_NAME` (default `openconsole`), `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_EXPORTER_OTLP_HEADERS` (e.g. an API key), `OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG` (e.g. `parentbased_traceidratio` / `0.1`) — as defined by the OpenTelemetry spec.
+- `APP_VERSION` and `APP_ENV` become `service.version` and `deployment.environment`.
+
+Each API request is one span named after its route (`GET /api/namespaces/{namespace}/pods`) with `enduser.id`, `openconsole.cluster` and `openconsole.request_id`; the Kubernetes API calls it made are child spans. Incoming W3C `traceparent` headers are honoured, so a span from your ingress or gateway becomes the parent. Health probes and `/metrics` are not traced, and background informer traffic produces no traces. While tracing is on, every `http.request` log line also carries `trace_id`, so you can jump from a log line to its trace.
+
+### Metrics
+`GET /metrics` (Prometheus text format, unauthenticated — scrape it from inside the cluster; don't expose it through your Ingress):
+
+| Metric | Meaning |
+|---|---|
+| `openconsole_http_requests_total`, `openconsole_http_requests_status_total{code}` | API requests, by status class |
+| `openconsole_http_request_duration_ms_sum` / `_count` | request latency |
+| `openconsole_cluster_requests_total{cluster}` | authenticated API requests per cluster |
+| `openconsole_cluster_connected{cluster}` | 1 while OpenConsole holds a working connection to that cluster |
+| `openconsole_pod_exec_sessions_total`, `openconsole_pod_exec_active` | pod shells started / open right now |
+| `openconsole_pod_log_streams_total` | log streams opened |
+| `openconsole_deployment_actions_total` | restart / scale actions |
+| `openconsole_audit_events_total` | audit entries written |
 
 ### Structured logging (slog)
 Logs go to stdout via Go's `log/slog`. In production set `LOG_FORMAT=json` so Filebeat / Fluent Bit / Vector can ship them directly to Elastic / Kibana / Loki.
@@ -165,7 +230,9 @@ Example JSON record (`LOG_FORMAT=json`):
 Every HTTP response also carries an `X-Request-Id` header matching the `request_id` field.
 
 ### Azure AD OAuth (only if used)
-Configured through **Admin → Azure AD** at runtime — no env vars.
+Configured through **Admin → Azure AD** at runtime. The only env var is for national clouds:
+
+- `AZURE_AD_AUTHORITY` (default `https://login.microsoftonline.com`) — e.g. `https://login.microsoftonline.us` (US Government) or `https://login.chinacloudapi.cn` (China).
 
 ### LDAP (only if used)
 Configured through **Admin → LDAP** at runtime — no env vars.
@@ -327,8 +394,10 @@ Interactive shell into a running container, gated by application permission `pod
 
 - Endpoint: `GET /ws/namespaces/{namespace}/pods/{name}/exec?container=<c>&command=/bin/sh` (WebSocket).
 - xterm.js UI with container picker on multi-container pods and shell picker (`/bin/sh`, `/bin/bash`, `/bin/ash`).
-- Idle timeout: **5 minutes** without stdin automatically closes the session.
-- Each session logs `pod.exec.start` and `pod.exec.end` (with duration and outcome) to both the audit DB and the structured console log.
+- Idle timeout: **5 minutes** without input closes the session (`EXEC_IDLE_TIMEOUT`).
+- At most **3** open shells per user (`MAX_EXEC_SESSIONS_PER_USER`); the next one is refused with 429 and audited as `pod.exec.rate_limited`.
+- Each session logs `pod.exec.start` and `pod.exec.end` to both the audit DB and the structured console log. The end entry carries `exit=<code>` (the shell's exit status; `-1` when the session was cut — idle timeout, closed tab, network), `bytes_in`, `bytes_out` and `dur_ms`. A shell that ends with a non-zero status, e.g. after a failed last command, is a normal end.
+- Can be switched off for everyone with `FEATURE_POD_EXEC=false` ([Feature flags](#feature-flags)).
 - Terminal output is recorded by default — see [Session Recording](#session-recording).
 - ClusterRole must grant `pods/exec: create` for this to work.
 
@@ -452,6 +521,7 @@ Open the full cheat sheet with `?`. The core set:
 - Theme: `t l` light, `t d` dark, `t s` system.
 - Dashboard: `[` / `]` (or `ğ` / `ü` on a TR Q layout) previous / next resource tab, `r` refresh, `/` (or `.`) focus the search box, `n` focus the namespace filter, `e` toggle Live Events, `c` open the cluster switcher, `v` open Saved Views.
 - Cluster switcher / Saved Views when open: `1`–`9` pick by index, `↑/↓` move focus, `Enter` activate, `Esc` close.
+- Admin tables (Users, Groups, Roles, Sessions, Recordings): `j` / `k` next / previous row (across pages), `Enter` open the row (edit / play), `d` its delete action (always asks first), `n` / `p` next / previous page, `Esc` clear the selection. Clicking anywhere clears it too.
 
 # Internationalization
 
@@ -505,9 +575,10 @@ On the very first start a default admin is created: **`admin` / `admin`**. You m
 
 - **New user** creates a local account. The admin sets the first password; tick **Admin** for full access. Non-admins see nothing until they are in a group with a role ([below](#groups-roles-and-permissions)).
 - **Edit** (pencil): admin flag, active / disabled, group membership. A disabled user is signed out on the next request.
-- **Reset password** (key icon, **local users only**): sets a new password (min. 8 characters) and by default forces a change at next login. All of that user's sessions are signed out, and the reset is audited as `user.password_reset.*`. LDAP and Azure AD users have no reset here: their password lives in the directory, and a local one would let them bypass it.
+- **Reset password** (key icon, **local users only**): sets a new password (min. 8 characters, see `PASSWORD_MIN_LENGTH`) and by default forces a change at next login. All of that user's sessions are signed out, and the reset is audited as `user.password_reset.*`. LDAP and Azure AD users have no reset here: their password lives in the directory, and a local one would let them bypass it.
 - Users change their own password from the header menu. Doing so signs out all their other sessions.
 - **Delete** removes the account and its group memberships. The last active admin can't be deleted or demoted.
+- **Export CSV** (Users and Groups tabs): users with source, admin / active flags and groups; groups with members and roles. Handy for periodic access reviews. Each export is audited as `admin.export`.
 
 ## LDAP / Active Directory
 
@@ -583,7 +654,8 @@ Every user works on **their own** cluster:
 
 - **Namespaces** (left panel): only the ones you have access to, with a filter (`n`). The selection is remembered.
 - **Resource tabs**: only the resources you may list. `[` / `]` switch tabs. There are **card** and **list** views; list columns are sortable.
-- **Search** (`/`): name tokens plus `label:key=value` or `label:key`, combined with AND. **Saved views** (`v`) store namespace + tab + search + view mode in your browser.
+- **Search** (`/`): name tokens plus `label:key=value` or `label:key`, combined with AND.
+- **Saved views** (`v`): save the current cluster + namespace + tab + search + view mode under a name. Views are stored on the server, so they follow you to every browser. Opening a view saved on another cluster switches you to that cluster. The share icon makes a view visible to **every user** (marked with its owner); others can use it but only you can rename, unshare or delete it, and admins can remove shared views. A shared view never grants access: someone without permission on its namespace just sees an empty list. Views saved in the browser by older versions are moved to the server the first time you open the menu.
 - **Live Events** (`e`): adds, updates, deletes and Kubernetes Events in real time, with filters for warnings.
 - **Pods**: logs (live stream), events, **Shell** (`pods:exec`, recorded), YAML.
 - **Deployments / StatefulSets**: restart, scale, logs across all pods, YAML edit with server dry-run and a diff before apply.
@@ -593,6 +665,7 @@ Every user works on **their own** cluster:
 ## Admin tools
 
 - **Audit Logs**: every read and write action with user, cluster, namespace and resource. Filter by user / action / namespace / date and export to CSV. Retention: `LOG_RETENTION_DAYS`.
+- **Users / Groups → Export CSV**: who has access and through which group and role.
 - **Sessions**: every issued token; revoke one or all of a user's ([Sessions](#sessions-admin--sessions)).
 - **Recordings**: replay, download (with a warning) or delete pod shell sessions, and set retention / disk limits ([Session Recording](#session-recording)).
 

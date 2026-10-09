@@ -54,7 +54,7 @@ const LogoMark: React.FC<{ compact?: boolean }> = ({ compact = false }) => (
         <span className="text-[13px] font-semibold tracking-tight text-slate-900 dark:text-slate-100">
           Kubernetes OpenConsole
         </span>
-        <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-slate-400 dark:text-slate-500">
+        <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
           Cluster Visibility
         </span>
       </div>
@@ -134,7 +134,7 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, children }) => {
                 {user.username}
               </span>
               {user.isAdmin && (
-                <span className="text-[10px] font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                <span className="text-[10px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
                   {t('nav.administrator')}
                 </span>
               )}
@@ -191,7 +191,7 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, children }) => {
                 className={`group relative flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
                   active
                     ? 'bg-brand-600/20 text-brand-200 ring-1 ring-inset ring-brand-500/40'
-                    : 'text-slate-400 dark:text-slate-500 hover:bg-slate-800/80 hover:text-white'
+                    : 'text-slate-500 dark:text-slate-400 hover:bg-slate-800/80 hover:text-white'
                 }`}
                 aria-label={RAIL_LABELS[item.key] ?? item.label}
                 title={RAIL_LABELS[item.key] ?? item.label}
@@ -235,7 +235,7 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, children }) => {
             </span>
             <button
               onClick={closeDrawer}
-              className="rounded p-1 text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800"
+              className="rounded p-1 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800"
               aria-label="Close"
             >
               <X size={16} />

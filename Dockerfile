@@ -1,18 +1,22 @@
 # syntax=docker/dockerfile:1
 
-FROM node:20-alpine AS frontend-build
+# The build stages run on the builder's own platform and cross-compile, so a
+# multi-arch (amd64 + arm64) build needs no emulation for Go or npm.
+FROM --platform=$BUILDPLATFORM node:20-alpine AS frontend-build
 WORKDIR /app
 COPY frontend/package.json ./
 RUN npm install
 COPY frontend ./
 RUN npm run build
 
-FROM golang:1.21-alpine AS backend-build
+FROM --platform=$BUILDPLATFORM golang:1.21-alpine AS backend-build
+ARG TARGETOS
+ARG TARGETARCH
 WORKDIR /app
 COPY backend/go.mod ./
 COPY backend ./
 ENV CGO_ENABLED=0
-RUN go build -o /app/server ./cmd/server
+RUN GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /app/server ./cmd/server
 
 FROM alpine:3.19 AS runtime
 RUN apk add --no-cache ca-certificates iputils bind-tools busybox-extras \

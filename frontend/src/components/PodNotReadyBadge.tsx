@@ -144,7 +144,7 @@ export const PodNotReadyBadge: React.FC<Props> = ({ namespace, podName }) => {
                   </li>
                 ))}
                 {events.length > 3 && (
-                  <p className="text-[10px] text-slate-400 dark:text-slate-500">
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400">
                     +{events.length - 3} more warning event(s) — open Events for the full list.
                   </p>
                 )}

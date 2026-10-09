@@ -23,6 +23,9 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"github.com/gorilla/websocket"
 	"golang.org/x/time/rate"
 	"sigs.k8s.io/yaml"
@@ -60,6 +63,8 @@ type Server struct {
 	sessionToucher *store.SessionToucher
 	// recorder captures pod exec sessions as asciicast files.
 	recorder *recording.Manager
+	// execSessions enforces MAX_EXEC_SESSIONS_PER_USER.
+	execSessions execSessionTracker
 }
 
 // sessionValidator is the AuthMiddleware adapter around *store.Store. Returning
@@ -116,6 +121,7 @@ func NewServer(st *store.Store, auditLogger *audit.Logger, clusters *kube.Regist
 		sessionToucher: toucher,
 		recorder:       recorder,
 	}
+	clusterStatusFn = s.clusterStatus
 	// Seed the default cluster id from whatever row is currently is_active.
 	if cluster, err := st.GetActiveCluster(context.Background()); err == nil && cluster != nil {
 		s.defaultClusterID.Store(int64(cluster.ID))
@@ -173,6 +179,11 @@ func (s *Server) Router() http.Handler {
 		r.Use(s.clusterMiddleware)
 		r.Get("/api/cluster/active", s.handleGetActiveCluster)
 		r.Post("/api/cluster/select", s.handleSelectCluster)
+		r.Get("/api/features", s.handleFeatures)
+		r.Get("/api/views", s.handleListViews)
+		r.Post("/api/views", s.handleSaveView)
+		r.Put("/api/views/{id}", s.handleShareView)
+		r.Delete("/api/views/{id}", s.handleDeleteView)
 		r.Get("/api/clusters/public", s.handleListClustersPublic)
 		r.Get("/api/namespaces", s.handleNamespaces)
 		r.Get("/api/namespaces/{namespace}/permissions", s.handleNamespacePermissions)
@@ -235,6 +246,8 @@ func (s *Server) Router() http.Handler {
 		r.Use(s.clusterMiddleware)
 		r.Use(s.requireAdmin)
 		r.Get("/api/admin/users", s.handleListUsers)
+		r.Get("/api/admin/users/export", s.handleExportUsers)
+		r.Get("/api/admin/groups/export", s.handleExportGroups)
 		r.Post("/api/admin/users", s.handleCreateUser)
 		r.Put("/api/admin/users/{id}", s.handleUpdateUser)
 		r.Delete("/api/admin/users/{id}", s.handleDeleteUser)
@@ -306,7 +319,19 @@ func (s *Server) Router() http.Handler {
 		r.MethodNotAllowed(s.serveSPA)
 	}
 
-	return r
+
+	// Tracing: one server span per request, named after the chi route
+	// pattern (set in requestLogger); probes and metrics are not traced.
+	// With no OTLP endpoint configured the global provider is a no-op.
+	return otelhttp.NewHandler(r, "http.request",
+		otelhttp.WithFilter(func(r *http.Request) bool {
+			switch r.URL.Path {
+			case "/healthz", "/livez", "/readyz", "/metrics":
+				return false
+			}
+			return true
+		}),
+	)
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
@@ -417,7 +442,7 @@ func requestLogger(next http.Handler) http.Handler {
 			level = slog.LevelWarn
 		}
 
-		slog.LogAttrs(r.Context(), level, "http.request",
+		attrs := []slog.Attr{
 			slog.String("method", r.Method),
 			slog.String("path", r.URL.Path),
 			slog.Int("status", recorder.status),
@@ -425,7 +450,17 @@ func requestLogger(next http.Handler) http.Handler {
 			slog.String("remote_ip", clientIP(r)),
 			slog.String("request_id", logpkg.RequestIDFrom(r.Context())),
 			slog.String("user_agent", r.UserAgent()),
-		)
+		}
+		// Name the request's span after the route pattern (low cardinality)
+		// and link the log line to the trace.
+		if span := trace.SpanFromContext(r.Context()); span.SpanContext().IsValid() {
+			if rc := chi.RouteContext(r.Context()); rc != nil && rc.RoutePattern() != "" {
+				span.SetName(r.Method + " " + rc.RoutePattern())
+			}
+			span.SetAttributes(attribute.String("openconsole.request_id", logpkg.RequestIDFrom(r.Context())))
+			attrs = append(attrs, slog.String("trace_id", span.SpanContext().TraceID().String()))
+		}
+		slog.LogAttrs(r.Context(), level, "http.request", attrs...)
 		metricsRecordRequest(recorder.status, duration.Milliseconds())
 	})
 }
@@ -852,6 +887,14 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
+	if err := auth.CheckPasswordPolicy(request.NewPassword); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if request.NewPassword == request.CurrentPassword {
+		writeError(w, http.StatusBadRequest, "the new password must differ from the current one")
+		return
+	}
 	hash, err := auth.HashPassword(request.NewPassword)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -920,7 +963,7 @@ func (s *Server) handleNamespacePermissions(w http.ResponseWriter, r *http.Reque
 	}
 	if user.IsAdmin {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"resources": map[string][]string{
+			"resources": filterByFeatures(map[string][]string{
 				"pods":         {"list", "get", "logs", "exec", "edit"},
 				"deployments":  {"list", "get", "restart", "scale", "edit"},
 				"daemonsets":   {"list", "get", "edit"},
@@ -932,7 +975,7 @@ func (s *Server) handleNamespacePermissions(w http.ResponseWriter, r *http.Reque
 				"ingresses":    {"list", "get", "edit"},
 				"cronjobs":     {"list", "get", "edit"},
 				"jobs":         {"list", "get", "edit"},
-			},
+			}),
 		})
 		return
 	}
@@ -941,7 +984,7 @@ func (s *Server) handleNamespacePermissions(w http.ResponseWriter, r *http.Reque
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-	permissions := engine.AllowedResources(clusterIDFrom(r.Context()), namespace)
+	permissions := filterByFeatures(engine.AllowedResources(clusterIDFrom(r.Context()), namespace))
 	if len(permissions) == 0 {
 		w.WriteHeader(http.StatusForbidden)
 		return
@@ -1392,6 +1435,15 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+	request.Username = strings.TrimSpace(request.Username)
+	if request.Username == "" {
+		writeError(w, http.StatusBadRequest, "username is required")
+		return
+	}
+	if err := auth.CheckPasswordPolicy(request.Password); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	hash, err := auth.HashPassword(request.Password)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -1399,7 +1451,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := s.store.CreateUser(r.Context(), request.Username, hash)
 	if err != nil {
-		w.WriteHeader(http.StatusConflict)
+		writeError(w, http.StatusConflict, "a user with this name already exists")
 		return
 	}
 	user, err := s.store.GetUserByID(r.Context(), id)
@@ -2213,6 +2265,10 @@ func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, resou
 		return "", false
 	}
 	namespace := chi.URLParam(r, "namespace")
+	if !featureAllows(resource, action) {
+		writeError(w, http.StatusForbidden, "this feature is disabled by the operator")
+		return "", false
+	}
 	if user.IsAdmin {
 		return namespace, true
 	}
@@ -2229,6 +2285,9 @@ func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, resou
 }
 
 func (s *Server) can(ctx context.Context, userID int, namespace, resource, action string) bool {
+	if !featureAllows(resource, action) {
+		return false
+	}
 	user, err := s.store.GetUserByID(ctx, userID)
 	if err != nil {
 		return false

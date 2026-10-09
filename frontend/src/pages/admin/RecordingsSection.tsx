@@ -375,6 +375,7 @@ export const RecordingsSection: React.FC = () => {
       {notice && <Alert severity="success">{notice}</Alert>}
 
       <DataTable
+        keyboardNav
         rows={rows}
         columns={columns}
         rowKey={(r) => r.id}

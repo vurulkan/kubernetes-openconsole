@@ -200,7 +200,7 @@ export const ClusterSwitcher: React.FC<Props> = () => {
           className="fixed z-[1000] w-56 animate-slide-up overflow-hidden rounded-xl border border-slate-200 bg-white shadow-elevated dark:border-slate-800 dark:bg-slate-900"
           style={{ top: menuPos.top, left: menuPos.left }}
         >
-          <div className="px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400 dark:text-slate-500">
+          <div className="px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
             {t('clusterSwitcher.clusters')}
           </div>
           <ul className="max-h-72 overflow-auto pb-1">
@@ -238,13 +238,13 @@ export const ClusterSwitcher: React.FC<Props> = () => {
                   )}
                   {c.selected && <Check size={14} className="text-brand-600 dark:text-brand-300" />}
                   {busy === c.id && (
-                    <span className="text-[10px] text-slate-400">{t('clusterSwitcher.switching')}</span>
+                    <span className="text-[10px] text-slate-500 dark:text-slate-400">{t('clusterSwitcher.switching')}</span>
                   )}
                 </button>
               </li>
             ))}
           </ul>
-          <div className="border-t border-slate-200 px-3 py-1.5 text-[10px] text-slate-400 dark:border-slate-800">
+          <div className="border-t border-slate-200 px-3 py-1.5 text-[10px] text-slate-500 dark:text-slate-400 dark:border-slate-800">
             {t('clusterSwitcher.onlyYou')}
           </div>
         </div>,

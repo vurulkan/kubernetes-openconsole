@@ -513,8 +513,8 @@ export const RolePermissionsPanel: React.FC<Props> = ({
                       {r.name}
                     </span>
                     {summary && (
-                      <span className="text-[10px] text-slate-500 dark:text-slate-400">
-                        {summary.count} perms · {summary.ns} ns · {summary.cl} cluster{summary.cl === 1 ? '' : 's'}
+                      <span className={`text-[10px] ${active ? 'text-slate-600 dark:text-slate-300' : 'text-slate-500 dark:text-slate-400'}`}>
+                        {t('rolePermissions.summary', { perms: summary.count, namespaces: summary.ns, count: summary.cl })}
                       </span>
                     )}
                   </button>
@@ -522,7 +522,7 @@ export const RolePermissionsPanel: React.FC<Props> = ({
               );
             })}
             {filteredRoles.length === 0 && (
-              <li className="px-2.5 py-4 text-center text-[11px] text-slate-400 dark:text-slate-500">
+              <li className="px-2.5 py-4 text-center text-[11px] text-slate-500 dark:text-slate-400">
                 {t('rolePermissions.noRoles')}
               </li>
             )}
@@ -532,7 +532,7 @@ export const RolePermissionsPanel: React.FC<Props> = ({
         {/* ── Main pane ─────────────────────────────────────────── */}
         <section className="flex flex-col gap-3">
           {!selectedRole && (
-            <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-400 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-500">
+            <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400">
               {t('rolePermissions.pickRole')}
             </div>
           )}
@@ -560,11 +560,11 @@ export const RolePermissionsPanel: React.FC<Props> = ({
               </div>
 
               {loading && (
-                <div className="text-xs text-slate-400 dark:text-slate-500">Loading…</div>
+                <div className="text-xs text-slate-500 dark:text-slate-400">Loading…</div>
               )}
 
               {!loading && groups.length === 0 && (
-                <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-400 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-500">
+                <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400">
                   {t('rolePermissions.noPerms')}
                 </div>
               )}
@@ -1073,7 +1073,7 @@ const AddPermissionsModal: React.FC<{
                 );
               })}
               {filteredNamespaces.length === 0 && (
-                <span className="text-xs text-slate-400 dark:text-slate-500">{tr('rolePermissions.noMatch')}</span>
+                <span className="text-xs text-slate-500 dark:text-slate-400">{tr('rolePermissions.noMatch')}</span>
               )}
             </div>
           </div>
@@ -1141,11 +1141,12 @@ const AddPermissionsModal: React.FC<{
                             <button
                               key={a.key}
                               type="button"
+                              aria-pressed={on}
                               onClick={() => toggle(resource, a.key)}
                               className={`inline-flex items-center gap-1 rounded px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide transition-all ${
                                 on
                                   ? FAMILY_CLASS[a.family]
-                                  : 'bg-white text-slate-400 ring-1 ring-inset ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-500 dark:ring-slate-700 dark:hover:bg-slate-800'
+                                  : 'bg-white text-slate-500 ring-1 ring-inset ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-400 dark:ring-slate-700 dark:hover:bg-slate-800'
                               } ${everywhereExists ? 'opacity-50 line-through' : ''}`}
                               title={everywhereExists ? 'Already granted on every selected namespace — will be skipped' : a.family}
                             >
@@ -1241,7 +1242,7 @@ const CopyFromRoleModal: React.FC<{
                 }`}
               >
                 <span className="font-mono text-xs text-slate-800 dark:text-slate-100">{r.name}</span>
-                <span className="text-[10px] text-slate-400 dark:text-slate-500">{r.description || '—'}</span>
+                <span className="text-[10px] text-slate-500 dark:text-slate-400">{r.description || '—'}</span>
               </button>
             </li>
           ))}

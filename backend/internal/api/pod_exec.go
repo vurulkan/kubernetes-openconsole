@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -17,6 +18,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/remotecommand"
+	utilexec "k8s.io/client-go/util/exec"
 
 	"k8s-dashboard/backend/internal/auth"
 	"k8s-dashboard/backend/internal/logging"
@@ -27,8 +29,61 @@ import (
 // Default shells tried in order when the client did not pick one.
 var defaultShells = []string{"/bin/bash", "/bin/sh", "/bin/ash"}
 
-// Max idle time with no stdin before we close an exec session.
-const execIdleTimeout = 5 * time.Minute
+// Exec limits, set from EXEC_IDLE_TIMEOUT / MAX_EXEC_SESSIONS_PER_USER at
+// startup (SetExecLimits).
+var (
+	// execIdleTimeout closes a session after this long without stdin.
+	execIdleTimeout = 5 * time.Minute
+	// maxExecSessionsPerUser caps concurrent shells per user; 0 = no cap.
+	maxExecSessionsPerUser = 3
+)
+
+// SetExecLimits applies the configured exec limits.
+func SetExecLimits(idle time.Duration, maxPerUser int) {
+	if idle > 0 {
+		execIdleTimeout = idle
+	}
+	if maxPerUser >= 0 {
+		maxExecSessionsPerUser = maxPerUser
+	}
+}
+
+// execSessionTracker counts open shells per user.
+type execSessionTracker struct {
+	mu     sync.Mutex
+	byUser map[int]int
+}
+
+// acquire reserves a slot; false when the user is at the limit.
+func (t *execSessionTracker) acquire(userID int) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.byUser == nil {
+		t.byUser = map[int]int{}
+	}
+	if maxExecSessionsPerUser > 0 && t.byUser[userID] >= maxExecSessionsPerUser {
+		return false
+	}
+	t.byUser[userID]++
+	metricExecActive.Add(1)
+	return true
+}
+
+func (t *execSessionTracker) release(userID int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.byUser[userID] > 0 {
+		t.byUser[userID]--
+		metricExecActive.Add(-1)
+	}
+	if t.byUser[userID] == 0 {
+		delete(t.byUser, userID)
+	}
+}
+
+// closeTooManySessions is the WebSocket close code (application range) sent
+// when the per-user shell limit is reached.
+const closeTooManySessions = 4429
 
 // execWriteTimeout bounds a single WebSocket write so a stalled browser can't
 // hold the write lock (and with it the idle watchdog) forever.
@@ -60,6 +115,30 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Concurrent-shell cap. Browsers hide the status of a failed WebSocket
+	// handshake from scripts, so a browser gets the socket, a readable error
+	// frame and close code 4429; any other client gets a plain 429.
+	if !s.execSessions.acquire(claims.UserID) {
+		s.recordExecAudit(claims.Username, namespace, pod, "rate_limited",
+			"max_sessions="+strconv.Itoa(maxExecSessionsPerUser), r)
+		msg := "too many open shells (limit " + strconv.Itoa(maxExecSessionsPerUser) + " per user); close one first"
+		if websocket.IsWebSocketUpgrade(r) {
+			upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+			if conn, err := upgrader.Upgrade(w, r, nil); err == nil {
+				writeExecSessionInfo(conn)
+				_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"error","code":"too_many_sessions","limit":`+
+					strconv.Itoa(maxExecSessionsPerUser)+`,"message":`+jsonString(msg)+`}`))
+				_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(closeTooManySessions, "too many open shells"),
+					time.Now().Add(time.Second))
+				_ = conn.Close()
+			}
+			return
+		}
+		writeError(w, http.StatusTooManyRequests, msg)
+		return
+	}
+	defer s.execSessions.release(claims.UserID)
+
 	container := strings.TrimSpace(r.URL.Query().Get("container"))
 	command := strings.TrimSpace(r.URL.Query().Get("command"))
 	if command == "" {
@@ -84,6 +163,7 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+	writeExecSessionInfo(conn)
 
 	req := client.CoreV1().RESTClient().Post().
 		Resource("pods").
@@ -138,21 +218,40 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 		TerminalSizeQueue: bridge,
 	})
 
+	// A shell that exits with a non-zero code (`exit 3`, last command
+	// failed) is a normal end, not a failure: record the code. Exit code -1
+	// = the session was cut (browser closed, idle timeout).
 	outcome := "end"
-	detail := ""
-	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.EOF) {
+	exitCode := -1
+	errDetail := ""
+	var exitErr utilexec.ExitError
+	switch {
+	case err == nil:
+		exitCode = 0
+	case errors.As(err, &exitErr):
+		exitCode = exitErr.ExitStatus()
+	case errors.Is(err, context.Canceled), errors.Is(err, io.EOF):
+	default:
 		outcome = "failed"
-		detail = err.Error()
+		errDetail = err.Error() + ";"
 		bridge.writeError("exec ended: " + err.Error())
 	}
 	duration := time.Since(start)
+	bytesIn, bytesOut := bridge.bytesIn.Load(), bridge.bytesOut.Load()
 	s.recordExecAudit(claims.Username, namespace, pod, outcome,
-		detail+";dur_ms="+itoa(duration.Milliseconds()), r)
+		errDetail+"container="+container+
+			";exit="+strconv.Itoa(exitCode)+
+			";bytes_in="+strconv.FormatInt(bytesIn, 10)+
+			";bytes_out="+strconv.FormatInt(bytesOut, 10)+
+			";dur_ms="+itoa(duration.Milliseconds()), r)
 	slog.Info("pod.exec.end",
 		slog.String("user", claims.Username),
 		slog.String("namespace", namespace),
 		slog.String("pod", pod),
 		slog.String("outcome", outcome),
+		slog.Int("exit_code", exitCode),
+		slog.Int64("bytes_in", bytesIn),
+		slog.Int64("bytes_out", bytesOut),
 		slog.Int64("duration_ms", duration.Milliseconds()),
 		slog.String("request_id", requestID),
 	)
@@ -232,6 +331,13 @@ func splitCommand(cmd string) []string {
 		return []string{"/bin/sh"}
 	}
 	return parts
+}
+
+// writeExecSessionInfo tells the client the configured idle timeout so its
+// banner shows the real value.
+func writeExecSessionInfo(conn *websocket.Conn) {
+	_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"session","idleTimeoutSeconds":`+
+		strconv.Itoa(int(execIdleTimeout/time.Second))+`}`))
 }
 
 func writeExecError(conn *websocket.Conn, msg string) {
@@ -316,6 +422,10 @@ type execBridge struct {
 
 	lastInput time.Time
 	lastMu    sync.Mutex
+
+	// Traffic counters for the session-end audit entry.
+	bytesIn  atomic.Int64 // stdin from the browser
+	bytesOut atomic.Int64 // stdout/stderr from the pod
 }
 
 func newExecBridge(conn *websocket.Conn, cancel context.CancelFunc, rec *recording.Session) *execBridge {
@@ -340,7 +450,11 @@ func (b *execBridge) markInput() {
 }
 
 func (b *execBridge) idleWatchdog() {
-	t := time.NewTicker(30 * time.Second)
+	tick := 30 * time.Second
+	if execIdleTimeout < 2*tick {
+		tick = execIdleTimeout / 2
+	}
+	t := time.NewTicker(tick)
 	defer t.Stop()
 	for {
 		select {
@@ -372,6 +486,7 @@ func (b *execBridge) readLoop() {
 		switch msgType {
 		case websocket.BinaryMessage:
 			b.markInput()
+			b.bytesIn.Add(int64(len(data)))
 			select {
 			case b.stdinCh <- data:
 			case <-b.done:
@@ -420,6 +535,7 @@ func (b *execBridge) Read(p []byte) (int, error) {
 func (b *execBridge) Write(p []byte) (int, error) {
 	// Record what the pod emitted even if the browser has gone away.
 	b.rec.Write(p)
+	b.bytesOut.Add(int64(len(p)))
 	if err := b.writeFrame(websocket.BinaryMessage, p); err != nil {
 		return 0, err
 	}

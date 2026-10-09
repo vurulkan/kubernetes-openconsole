@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -21,6 +22,13 @@ type Config struct {
 	LogIncludeAudit bool   // mirror audit records to console
 	Env             string // deployment env label (dev|prod|...)
 	Version         string // build/release version, surfaced in logs
+
+	// PasswordMinLength is the minimum length for local account passwords.
+	PasswordMinLength int
+
+	// Pod shell limits.
+	ExecIdleTimeout        time.Duration
+	MaxExecSessionsPerUser int
 
 	// Pod exec session recording. These only seed recording_settings on
 	// first boot (except Dir); afterwards the admin UI owns the values.
@@ -75,6 +83,11 @@ func Load() Config {
 		Env:             envOr("APP_ENV", ""),
 		Version:         envOr("APP_VERSION", ""),
 
+		PasswordMinLength: envIntMin("PASSWORD_MIN_LENGTH", 8, 1),
+
+		ExecIdleTimeout:        envDurationMin("EXEC_IDLE_TIMEOUT", 5*time.Minute, 30*time.Second),
+		MaxExecSessionsPerUser: envIntMin("MAX_EXEC_SESSIONS_PER_USER", 3, 0),
+
 		Recording: RecordingConfig{
 			Enabled:       envBool("SESSION_RECORDING_ENABLED", true),
 			Dir:           os.Getenv("SESSION_RECORDING_DIR"),
@@ -106,6 +119,31 @@ func envIntMin(key string, fallback, min int) int {
 		return fallback
 	}
 	return parsed
+}
+
+// envDurationMin parses a Go duration ("10m", "90s"), falling back when it is
+// unset, malformed or below min.
+func envDurationMin(key string, fallback, min time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d < min {
+		return fallback
+	}
+	return d
+}
+
+// DisabledFeatures reads FEATURE_<NAME>=false for each known feature name.
+func DisabledFeatures(names []string) []string {
+	var off []string
+	for _, n := range names {
+		if !envBool("FEATURE_"+strings.ToUpper(n), true) {
+			off = append(off, n)
+		}
+	}
+	return off
 }
 
 func envBool(key string, fallback bool) bool {

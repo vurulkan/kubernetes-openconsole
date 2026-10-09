@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { KeyRound, Pencil, Plus, Search as SearchIcon, Trash2 } from 'lucide-react';
+import { Download, KeyRound, Pencil, Plus, Search as SearchIcon, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { confirm } from '../../components/ConfirmDialog';
 import { Alert, Badge, Button, Checkbox, Input, Modal } from '../../components/ui';
 import { Column, DataTable, IconButton } from '../../components/DataTable';
-import { resetUserPassword, User } from '../../services/api';
+import { exportUsersCsv, resetUserPassword, User } from '../../services/api';
 
 const MIN_PASSWORD_LENGTH = 8;
 
@@ -65,7 +66,7 @@ export const UsersSection: React.FC<Props> = ({
         u.isAdmin ? (
           <Badge variant="info">{t('admin.users.adminBadge')}</Badge>
         ) : (
-          <span className="text-xs text-slate-400 dark:text-slate-500">—</span>
+          <span className="text-xs text-slate-500 dark:text-slate-400">—</span>
         ),
     },
     {
@@ -85,7 +86,7 @@ export const UsersSection: React.FC<Props> = ({
       cell: (u) => {
         const list = userGroups[u.id] ?? [];
         if (list.length === 0)
-          return <span className="text-xs text-slate-400 dark:text-slate-500">—</span>;
+          return <span className="text-xs text-slate-500 dark:text-slate-400">—</span>;
         return (
           <div className="flex flex-wrap gap-1">
             {list.slice(0, 3).map((g) => (
@@ -144,12 +145,19 @@ export const UsersSection: React.FC<Props> = ({
             className="h-9 pl-8"
           />
         </div>
-        <Button variant="primary" size="sm" onClick={onNew}>
-          <Plus size={14} />
-          {t('admin.users.new')}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => void exportUsersCsv().catch((err) => alertExport(err))}>
+            <Download size={14} />
+            {t('admin.exportCsv')}
+          </Button>
+          <Button variant="primary" size="sm" onClick={onNew}>
+            <Plus size={14} />
+            {t('admin.users.new')}
+          </Button>
+        </div>
       </div>
       <DataTable
+        keyboardNav
         rows={rows}
         columns={columns}
         rowKey={(u) => u.id}
@@ -217,7 +225,7 @@ const ResetPasswordModal: React.FC<{ user: User | null; onClose: () => void }> =
             <Button variant="outline" size="sm" onClick={close}>
               {t('actions.cancel')}
             </Button>
-            <Button variant="danger" size="sm" onClick={() => submit()} disabled={saving}>
+            <Button variant="danger" size="sm" type="submit" form="reset-password-form" disabled={saving}>
               {t('admin.users.resetSubmit')}
             </Button>
           </>
@@ -227,7 +235,7 @@ const ResetPasswordModal: React.FC<{ user: User | null; onClose: () => void }> =
       {done ? (
         <Alert severity="success">{t('admin.users.resetDone', { name: user?.username ?? '' })}</Alert>
       ) : (
-        <form onSubmit={submit} className="flex flex-col gap-3">
+        <form id="reset-password-form" onSubmit={submit} className="flex flex-col gap-3">
           <p className="text-xs text-slate-500 dark:text-slate-400">{t('admin.users.resetHelp')}</p>
           <Input
             type="password"
@@ -246,8 +254,6 @@ const ResetPasswordModal: React.FC<{ user: User | null; onClose: () => void }> =
           />
           <Checkbox checked={mustChange} onChange={setMustChange} label={t('admin.users.resetMustChange')} />
           {error && <Alert severity="error">{error}</Alert>}
-          {/* Enter submits */}
-          <button type="submit" className="hidden" />
         </form>
       )}
     </Modal>
@@ -255,3 +261,13 @@ const ResetPasswordModal: React.FC<{ user: User | null; onClose: () => void }> =
 };
 
 export default UsersSection;
+
+// Export failures are rare (session expired); show them in the app dialog.
+function alertExport(err: unknown) {
+  void confirm({
+    title: 'CSV',
+    message: err instanceof Error ? err.message : String(err),
+    confirmText: 'OK',
+  });
+}
+

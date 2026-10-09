@@ -716,4 +716,3 @@ func (s *Store) SetUserAuthSource(ctx context.Context, userID int, source string
 	_, err := s.conn.ExecContext(ctx, `UPDATE users SET auth_source = ? WHERE id = ?`, source, userID)
 	return err
 }
-

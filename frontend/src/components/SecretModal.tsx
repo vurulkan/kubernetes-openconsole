@@ -122,7 +122,7 @@ export const SecretModal: React.FC<Props> = ({ open, namespace, name, canReveal,
                 {[...labels.map(([k, v]) => ({ k, v, kind: 'label' })), ...annotations.map(([k, v]) => ({ k, v, kind: 'annotation' }))].map(
                   ({ k, v, kind }) => (
                     <div key={kind + k} className="flex min-w-0 gap-2 text-[11px]">
-                      <span className="shrink-0 text-slate-400 dark:text-slate-500">
+                      <span className="shrink-0 text-slate-500 dark:text-slate-400">
                         {kind === 'label' ? t('secrets.label') : t('secrets.annotation')}
                       </span>
                       <span className="truncate font-mono text-slate-700 dark:text-slate-200" title={`${k}=${v}`}>

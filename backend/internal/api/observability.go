@@ -1,6 +1,7 @@
 package api
 
 import (
+	"strings"
 	"net/http"
 	"strconv"
 	"sync"
@@ -122,9 +123,31 @@ type httpMetrics struct {
 	execSessionsTotal   atomic.Int64
 	wsLogStreamsStarted atomic.Int64
 	deployActionsTotal  atomic.Int64
+	// requestsByCluster counts authenticated API requests per cluster name.
+	requestsByCluster sync.Map // map[string]*atomic.Int64
 }
 
 var metricsStore = &httpMetrics{}
+
+// metricExecActive is the number of open pod shells.
+var metricExecActive atomic.Int64
+
+// clusterStatusFn reports cluster name → connected for /metrics; set by
+// NewServer from the cluster registry.
+var clusterStatusFn func() map[string]bool
+
+func metricsRecordClusterRequest(cluster string) {
+	if cluster == "" {
+		return
+	}
+	v, _ := metricsStore.requestsByCluster.LoadOrStore(cluster, &atomic.Int64{})
+	v.(*atomic.Int64).Add(1)
+}
+
+// promLabel escapes a Prometheus label value.
+func promLabel(v string) string {
+	return strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`).Replace(v)
+}
 
 func metricsRecordRequest(status int, durationMs int64) {
 	metricsStore.requestsTotal.Add(1)
@@ -189,4 +212,23 @@ func handleMetrics(w http.ResponseWriter, _ *http.Request) {
 	writeMetric(w, "openconsole_deployment_actions_total",
 		"Deployment restart or scale actions attempted.", "counter",
 		metricsStore.deployActionsTotal.Load(), "")
+	writeMetric(w, "openconsole_pod_exec_active", "Pod exec sessions currently open.", "gauge",
+		metricExecActive.Load(), "")
+
+	_, _ = w.Write([]byte("# HELP openconsole_cluster_requests_total Authenticated API requests per cluster.\n# TYPE openconsole_cluster_requests_total counter\n"))
+	metricsStore.requestsByCluster.Range(func(key, value any) bool {
+		_, _ = w.Write([]byte("openconsole_cluster_requests_total{cluster=\"" + promLabel(key.(string)) + "\"} " +
+			strconv.FormatInt(value.(*atomic.Int64).Load(), 10) + "\n"))
+		return true
+	})
+	if fn := clusterStatusFn; fn != nil {
+		_, _ = w.Write([]byte("# HELP openconsole_cluster_connected 1 when OpenConsole holds a live connection to the cluster.\n# TYPE openconsole_cluster_connected gauge\n"))
+		for name, up := range fn() {
+			v := "0"
+			if up {
+				v = "1"
+			}
+			_, _ = w.Write([]byte("openconsole_cluster_connected{cluster=\"" + promLabel(name) + "\"} " + v + "\n"))
+		}
+	}
 }

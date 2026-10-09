@@ -22,7 +22,7 @@ const LocaleSwitcher: React.FC<{ className?: string }> = ({ className = '' }) =>
       role="group"
       aria-label="Language"
     >
-      <Languages size={12} className="ml-1 text-slate-400 dark:text-slate-500" />
+      <Languages size={12} className="ml-1 text-slate-500 dark:text-slate-400" />
       {SUPPORTED_LOCALES.map((l) => {
         const active = current === l;
         return (
