@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/trace"
 
 	"k8s-dashboard/backend/internal/models"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -190,8 +191,13 @@ func buildConfig(creds models.KubeCredentials) (*rest.Config, error) {
 		return nil, err
 	}
 	// Kubernetes API calls become child spans of the request that made them
-	// (no-op when tracing is off).
-	cfg.Wrap(func(rt http.RoundTripper) http.RoundTripper { return otelhttp.NewTransport(rt) })
+	// (no-op when tracing is off). Background informer list/watch traffic
+	// has no parent span and is not traced.
+	cfg.Wrap(func(rt http.RoundTripper) http.RoundTripper {
+		return otelhttp.NewTransport(rt, otelhttp.WithFilter(func(r *http.Request) bool {
+			return trace.SpanFromContext(r.Context()).SpanContext().IsValid()
+		}))
+	})
 	return cfg, nil
 }
 
