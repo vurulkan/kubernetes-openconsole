@@ -67,14 +67,14 @@ docker build -t kubernetes-openconsole:local .
 ### Option B — prebuilt image (GHCR)
 
 ```yaml
-image: ghcr.io/vurulkan/kubernetes-openconsole:2.14.0   # pin a release
+image: ghcr.io/vurulkan/kubernetes-openconsole:2.14.1   # pin a release
 ```
 
 Images are multi-arch (**linux/amd64** and **linux/arm64**: Graviton, Ampere, Apple silicon); the runtime picks the right one. CI is the only publisher of image tags:
 
 | Tag | Built from | Moves? |
 |---|---|---|
-| `X.Y.Z` (e.g. `2.14.0`) | the `vX.Y.Z` git tag | no — use this in production |
+| `X.Y.Z` (e.g. `2.14.1`) | the `vX.Y.Z` git tag | no — use this in production |
 | `latest` | every push to `main` | yes |
 | `<full commit sha>` | every push to `main` | no |
 
@@ -86,13 +86,13 @@ Every published image (since 2.14.0) is signed with [cosign](https://docs.sigsto
 
 ```bash
 # Signature: must have been produced by this repository's CI workflow
-cosign verify ghcr.io/vurulkan/kubernetes-openconsole:2.14.0 \
+cosign verify ghcr.io/vurulkan/kubernetes-openconsole:2.14.1 \
   --certificate-identity-regexp '^https://github.com/vurulkan/kubernetes-openconsole/\.github/workflows/ci\.yml@refs/(heads/main|tags/v.*)$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
 # SBOM (packages in the image) and build provenance
-docker buildx imagetools inspect ghcr.io/vurulkan/kubernetes-openconsole:2.14.0 --format '{{ json .SBOM }}'
-docker buildx imagetools inspect ghcr.io/vurulkan/kubernetes-openconsole:2.14.0 --format '{{ json .Provenance }}'
+docker buildx imagetools inspect ghcr.io/vurulkan/kubernetes-openconsole:2.14.1 --format '{{ json .SBOM }}'
+docker buildx imagetools inspect ghcr.io/vurulkan/kubernetes-openconsole:2.14.1 --format '{{ json .Provenance }}'
 ```
 
 Admission controllers such as Kyverno or Sigstore policy-controller can enforce the same identity before a pod is admitted.
@@ -117,7 +117,7 @@ cd frontend && npx tsc --noEmit -p . && npm test && npm run build
 docker run --rm -p 8080:8080 \
   -e TIMEZONE=Europe/Istanbul \
   -v kubernetes-openconsole-data:/data \
-  ghcr.io/vurulkan/kubernetes-openconsole:2.14.0
+  ghcr.io/vurulkan/kubernetes-openconsole:2.14.1
 ```
 
 The image defaults to `DATA_PATH=/data/app.db` and `STATIC_DIR=/app/public`; the SQLite DB and session recordings live under `/data`. Drop the `-v` for a throwaway instance. Then open http://localhost:8080 and add a cluster ([Connecting clusters](#connecting-clusters)).
@@ -143,7 +143,7 @@ Then:
 1. Open the UI and log in as `admin` / `admin` ([First login](#first-login)).
 2. Add the cluster in **Admin → Clusters** ([Connecting clusters](#connecting-clusters)). The backend never picks up a cluster on its own.
 
-To upgrade, run `kubectl -n kubernetes-openconsole rollout restart deploy/kubernetes-openconsole`. The pod pulls the newest `:latest` image. To stay on a fixed version, set a release tag (e.g. `2.14.0`) in `deployment.yaml` or through the `images:` override in `kustomization.yaml`, then re-apply.
+To upgrade, run `kubectl -n kubernetes-openconsole rollout restart deploy/kubernetes-openconsole`. The pod pulls the newest `:latest` image. To stay on a fixed version, set a release tag (e.g. `2.14.1`) in `deployment.yaml` or through the `images:` override in `kustomization.yaml`, then re-apply.
 
 ## Environment variables
 

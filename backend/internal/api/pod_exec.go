@@ -193,6 +193,7 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 	defer rec.Close()
 
 	start := time.Now()
+	MetricsExecIncr()
 	s.recordExecAudit(claims.Username, namespace, pod, "start",
 		"container="+container+";cmd="+command, r)
 	slog.Info("pod.exec.start",

@@ -67,6 +67,7 @@ func (s *Server) handleDeploymentRestart(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	MetricsDeployAction()
 	stamp, err := s.resources.RestartDeployment(r.Context(), namespace, name)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "deployment.restart.failed",
@@ -130,6 +131,7 @@ func (s *Server) handleDeploymentScale(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	MetricsDeployAction()
 	previous, err := s.resources.ScaleDeployment(r.Context(), namespace, name, body.Replicas)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "deployment.scale.failed",

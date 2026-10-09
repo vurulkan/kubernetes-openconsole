@@ -78,6 +78,7 @@ func (s *Server) handleJobLogsWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+	MetricsLogStreamIncr()
 
 	go s.audit.Record(s.auditCtx(r), models.AuditLog{
 		User:         claims.Username,

@@ -1139,6 +1139,7 @@ func (s *Server) handlePodLogsWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+	MetricsLogStreamIncr()
 
 	podName := chi.URLParam(r, "name")
 	container := r.URL.Query().Get("container")

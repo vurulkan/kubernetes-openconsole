@@ -159,7 +159,7 @@ spec:
             # Handy if you deploy multiple parallel versions (canary, blue /
             # green). Uncomment to use.
             # - name: APP_VERSION
-            #   value: "2.14.0"
+            #   value: "2.14.1"
 
             # ── Tracing (OpenTelemetry, 2.14.0+) ────────────────────────────────
             # Off unless an OTLP/HTTP endpoint is set. Standard OTEL_* variables
