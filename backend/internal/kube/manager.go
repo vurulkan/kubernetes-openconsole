@@ -3,8 +3,11 @@ package kube
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"sync"
 	"time"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"k8s-dashboard/backend/internal/models"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -182,6 +185,17 @@ func (m *Manager) Stop() {
 }
 
 func buildConfig(creds models.KubeCredentials) (*rest.Config, error) {
+	cfg, err := buildConfigRaw(creds)
+	if err != nil {
+		return nil, err
+	}
+	// Kubernetes API calls become child spans of the request that made them
+	// (no-op when tracing is off).
+	cfg.Wrap(func(rt http.RoundTripper) http.RoundTripper { return otelhttp.NewTransport(rt) })
+	return cfg, nil
+}
+
+func buildConfigRaw(creds models.KubeCredentials) (*rest.Config, error) {
 	switch creds.Method {
 	case "kubeconfig":
 		return clientcmd.RESTConfigFromKubeConfig(creds.Kubeconfig)

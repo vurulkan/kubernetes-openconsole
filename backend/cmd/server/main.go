@@ -21,11 +21,16 @@ import (
 	"k8s-dashboard/backend/internal/models"
 	"k8s-dashboard/backend/internal/recording"
 	"k8s-dashboard/backend/internal/store"
+	"k8s-dashboard/backend/internal/telemetry"
 )
 
 func main() {
 	cfg := config.Load()
 	auth.MinPasswordLength = cfg.PasswordMinLength
+	shutdownTracing, err := telemetry.Setup(context.Background(), cfg.Version, cfg.Env)
+	if err != nil {
+		slog.Warn("tracing disabled: exporter setup failed", slog.Any("error", err))
+	}
 	api.SetExecLimits(cfg.ExecIdleTimeout, cfg.MaxExecSessionsPerUser)
 	api.SetDisabledFeatures(config.DisabledFeatures(api.AllFeatures))
 	if v := os.Getenv("AZURE_AD_AUTHORITY"); v != "" {
@@ -132,6 +137,9 @@ func main() {
 	defer cancel()
 	if err := httpServer.Shutdown(ctx); err != nil {
 		slog.Error("shutdown error", slog.Any("error", err))
+	}
+	if err := shutdownTracing(ctx); err != nil {
+		slog.Warn("tracing flush failed", slog.Any("error", err))
 	}
 	slog.Info("server stopped")
 }

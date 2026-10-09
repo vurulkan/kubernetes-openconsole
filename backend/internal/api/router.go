@@ -23,6 +23,9 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"github.com/gorilla/websocket"
 	"golang.org/x/time/rate"
 	"sigs.k8s.io/yaml"
@@ -316,7 +319,19 @@ func (s *Server) Router() http.Handler {
 		r.MethodNotAllowed(s.serveSPA)
 	}
 
-	return r
+
+	// Tracing: one server span per request, named after the chi route
+	// pattern (set in requestLogger); probes and metrics are not traced.
+	// With no OTLP endpoint configured the global provider is a no-op.
+	return otelhttp.NewHandler(r, "http.request",
+		otelhttp.WithFilter(func(r *http.Request) bool {
+			switch r.URL.Path {
+			case "/healthz", "/livez", "/readyz", "/metrics":
+				return false
+			}
+			return true
+		}),
+	)
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
@@ -427,7 +442,7 @@ func requestLogger(next http.Handler) http.Handler {
 			level = slog.LevelWarn
 		}
 
-		slog.LogAttrs(r.Context(), level, "http.request",
+		attrs := []slog.Attr{
 			slog.String("method", r.Method),
 			slog.String("path", r.URL.Path),
 			slog.Int("status", recorder.status),
@@ -435,7 +450,17 @@ func requestLogger(next http.Handler) http.Handler {
 			slog.String("remote_ip", clientIP(r)),
 			slog.String("request_id", logpkg.RequestIDFrom(r.Context())),
 			slog.String("user_agent", r.UserAgent()),
-		)
+		}
+		// Name the request's span after the route pattern (low cardinality)
+		// and link the log line to the trace.
+		if span := trace.SpanFromContext(r.Context()); span.SpanContext().IsValid() {
+			if rc := chi.RouteContext(r.Context()); rc != nil && rc.RoutePattern() != "" {
+				span.SetName(r.Method + " " + rc.RoutePattern())
+			}
+			span.SetAttributes(attribute.String("openconsole.request_id", logpkg.RequestIDFrom(r.Context())))
+			attrs = append(attrs, slog.String("trace_id", span.SpanContext().TraceID().String()))
+		}
+		slog.LogAttrs(r.Context(), level, "http.request", attrs...)
 		metricsRecordRequest(recorder.status, duration.Milliseconds())
 	})
 }

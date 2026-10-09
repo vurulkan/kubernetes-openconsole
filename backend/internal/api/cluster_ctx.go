@@ -6,6 +6,9 @@ import (
 	"log/slog"
 	"net/http"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	"k8s-dashboard/backend/internal/auth"
 	"k8s-dashboard/backend/internal/kube"
 	logpkg "k8s-dashboard/backend/internal/logging"
@@ -58,6 +61,10 @@ func (s *Server) clusterMiddleware(next http.Handler) http.Handler {
 		}
 		ci := s.resolveCluster(r.Context(), user)
 		metricsRecordClusterRequest(ci.Name)
+		trace.SpanFromContext(r.Context()).SetAttributes(
+			attribute.String("enduser.id", user.Username),
+			attribute.String("openconsole.cluster", ci.Name),
+		)
 		ctx := context.WithValue(r.Context(), clusterCtxKey{}, ci)
 		ctx = context.WithValue(ctx, logpkg.ClusterKey, ci.Name)
 		if ci.ID > 0 {
