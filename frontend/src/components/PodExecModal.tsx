@@ -50,6 +50,12 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
   // Set when the server confirms this session is being recorded (it sends a
   // {"type":"recording"} frame before any output). Drives the banner.
   const [recordingId, setRecordingId] = useState<string | null>(null);
+  // Server-configured idle timeout (EXEC_IDLE_TIMEOUT), sent when the shell opens.
+  const [idleSeconds, setIdleSeconds] = useState(300);
+  const idleText =
+    idleSeconds % 60 === 0
+      ? t('podExec.minutes', { count: idleSeconds / 60 })
+      : t('podExec.seconds', { count: idleSeconds });
   const { effective } = useTheme();
 
   const theme = effective === 'dark' ? darkTheme : lightTheme;
@@ -133,7 +139,16 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
         try {
           const parsed = JSON.parse(event.data);
           if (parsed?.type === 'error' && typeof parsed.message === 'string') {
-            term.writeln(`\x1b[31m${parsed.message}\x1b[0m`);
+            const message =
+              parsed.code === 'too_many_sessions'
+                ? t('podExec.tooManySessions', { limit: parsed.limit })
+                : parsed.message;
+            term.writeln(`\x1b[31m${message}\x1b[0m`);
+            if (parsed.code === 'too_many_sessions') setNote(message);
+            return;
+          }
+          if (parsed?.type === 'session' && typeof parsed.idleTimeoutSeconds === 'number') {
+            setIdleSeconds(parsed.idleTimeoutSeconds);
             return;
           }
           if (parsed?.type === 'recording') {
@@ -154,7 +169,8 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
 
     socket.onclose = (event) => {
       setStatus('closed');
-      if (event.code !== 1000) {
+      // 4429 (shell limit) already put its own message in the note.
+      if (event.code !== 1000 && event.code !== 4429) {
         setNote(t('podExec.sessionClosed', { code: event.code }));
       }
     };
@@ -298,6 +314,9 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
         onClick={status === 'open' ? undefined : onClose}
       />
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('podExec.title', { pod })}
         className="relative z-10 flex animate-slide-up flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-elevated dark:border-slate-800 dark:bg-slate-950"
         style={{ width: '95vw', height: '90vh' }}
       >
@@ -364,7 +383,7 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
             <CircleDot size={13} className="shrink-0 animate-pulse text-rose-600 dark:text-rose-400" />
             <span>
               <strong className="font-semibold">{t('podExec.recordingTitle')}</strong>{' '}
-              {t('podExec.recordingBody')}
+              {t('podExec.recordingBody', { idle: idleText })}
             </span>
             {recordingId && (
               <span className="font-mono text-[10px] opacity-70" title={t('podExec.recordingId')}>
@@ -377,7 +396,7 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
           </div>
         ) : (
           <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-amber-50 px-5 py-2 text-[11px] text-amber-800 dark:border-slate-800 dark:bg-amber-500/10 dark:text-amber-200">
-            {t('podExec.auditBanner')}
+            {t('podExec.auditBanner', { idle: idleText })}
             {note && (
               <span className="ml-auto font-medium text-rose-600 dark:text-rose-300">{note}</span>
             )}

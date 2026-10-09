@@ -81,6 +81,10 @@ func (t *execSessionTracker) release(userID int) {
 	}
 }
 
+// closeTooManySessions is the WebSocket close code (application range) sent
+// when the per-user shell limit is reached.
+const closeTooManySessions = 4429
+
 // execWriteTimeout bounds a single WebSocket write so a stalled browser can't
 // hold the write lock (and with it the idle watchdog) forever.
 const execWriteTimeout = 15 * time.Second
@@ -111,13 +115,26 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Concurrent-shell cap, checked before the upgrade so the client gets a
-	// plain 429 instead of a socket that closes immediately.
+	// Concurrent-shell cap. Browsers hide the status of a failed WebSocket
+	// handshake from scripts, so a browser gets the socket, a readable error
+	// frame and close code 4429; any other client gets a plain 429.
 	if !s.execSessions.acquire(claims.UserID) {
 		s.recordExecAudit(claims.Username, namespace, pod, "rate_limited",
 			"max_sessions="+strconv.Itoa(maxExecSessionsPerUser), r)
-		writeError(w, http.StatusTooManyRequests,
-			"too many open shells (limit "+strconv.Itoa(maxExecSessionsPerUser)+" per user); close one first")
+		msg := "too many open shells (limit " + strconv.Itoa(maxExecSessionsPerUser) + " per user); close one first"
+		if websocket.IsWebSocketUpgrade(r) {
+			upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+			if conn, err := upgrader.Upgrade(w, r, nil); err == nil {
+				writeExecSessionInfo(conn)
+				_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"error","code":"too_many_sessions","limit":`+
+					strconv.Itoa(maxExecSessionsPerUser)+`,"message":`+jsonString(msg)+`}`))
+				_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(closeTooManySessions, "too many open shells"),
+					time.Now().Add(time.Second))
+				_ = conn.Close()
+			}
+			return
+		}
+		writeError(w, http.StatusTooManyRequests, msg)
 		return
 	}
 	defer s.execSessions.release(claims.UserID)
@@ -146,6 +163,7 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+	writeExecSessionInfo(conn)
 
 	req := client.CoreV1().RESTClient().Post().
 		Resource("pods").
@@ -313,6 +331,13 @@ func splitCommand(cmd string) []string {
 		return []string{"/bin/sh"}
 	}
 	return parts
+}
+
+// writeExecSessionInfo tells the client the configured idle timeout so its
+// banner shows the real value.
+func writeExecSessionInfo(conn *websocket.Conn) {
+	_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"session","idleTimeoutSeconds":`+
+		strconv.Itoa(int(execIdleTimeout/time.Second))+`}`))
 }
 
 func writeExecError(conn *websocket.Conn, msg string) {

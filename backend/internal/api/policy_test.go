@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gorilla/websocket"
+
 	"k8s-dashboard/backend/internal/auth"
 )
 
@@ -44,6 +46,25 @@ func TestExecConcurrentSessionLimit(t *testing.T) {
 	}
 	e.expect("GET", "/ws/namespaces/team-a/pods/api-1/exec", bob, nil, http.StatusTooManyRequests)
 	e.waitAudit("pod.exec.rate_limited", "max_sessions=2")
+
+	// A browser (WebSocket upgrade) can't see a handshake status, so it gets
+	// an error frame it can show, then close code 4429.
+	wsURL := "ws" + strings.TrimPrefix(e.http.URL, "http") + "/ws/namespaces/team-a/pods/api-1/exec"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, http.Header{"Authorization": {"Bearer " + bob}})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	if _, info, err := conn.ReadMessage(); err != nil || !strings.Contains(string(info), `"type":"session"`) {
+		t.Fatalf("session frame = %s, %v", info, err)
+	}
+	_, frame, err := conn.ReadMessage()
+	if err != nil || !strings.Contains(string(frame), `"code":"too_many_sessions"`) || !strings.Contains(string(frame), `"limit":2`) {
+		t.Fatalf("first frame = %s, %v", frame, err)
+	}
+	if _, _, err := conn.ReadMessage(); !websocket.IsCloseError(err, closeTooManySessions) {
+		t.Fatalf("close = %v, want %d", err, closeTooManySessions)
+	}
 
 	// Closing one frees a slot (the request then proceeds past the limit and
 	// fails later only because this plain GET is not a WebSocket upgrade).
