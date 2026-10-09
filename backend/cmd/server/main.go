@@ -26,6 +26,7 @@ func main() {
 	cfg := config.Load()
 	auth.MinPasswordLength = cfg.PasswordMinLength
 	api.SetExecLimits(cfg.ExecIdleTimeout, cfg.MaxExecSessionsPerUser)
+	api.SetDisabledFeatures(config.DisabledFeatures(api.AllFeatures))
 
 	logger := logpkg.New(logpkg.Config{
 		Level:        cfg.LogLevel,

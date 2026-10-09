@@ -176,6 +176,7 @@ func (s *Server) Router() http.Handler {
 		r.Use(s.clusterMiddleware)
 		r.Get("/api/cluster/active", s.handleGetActiveCluster)
 		r.Post("/api/cluster/select", s.handleSelectCluster)
+		r.Get("/api/features", s.handleFeatures)
 		r.Get("/api/clusters/public", s.handleListClustersPublic)
 		r.Get("/api/namespaces", s.handleNamespaces)
 		r.Get("/api/namespaces/{namespace}/permissions", s.handleNamespacePermissions)
@@ -931,7 +932,7 @@ func (s *Server) handleNamespacePermissions(w http.ResponseWriter, r *http.Reque
 	}
 	if user.IsAdmin {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"resources": map[string][]string{
+			"resources": filterByFeatures(map[string][]string{
 				"pods":         {"list", "get", "logs", "exec", "edit"},
 				"deployments":  {"list", "get", "restart", "scale", "edit"},
 				"daemonsets":   {"list", "get", "edit"},
@@ -943,7 +944,7 @@ func (s *Server) handleNamespacePermissions(w http.ResponseWriter, r *http.Reque
 				"ingresses":    {"list", "get", "edit"},
 				"cronjobs":     {"list", "get", "edit"},
 				"jobs":         {"list", "get", "edit"},
-			},
+			}),
 		})
 		return
 	}
@@ -952,7 +953,7 @@ func (s *Server) handleNamespacePermissions(w http.ResponseWriter, r *http.Reque
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-	permissions := engine.AllowedResources(clusterIDFrom(r.Context()), namespace)
+	permissions := filterByFeatures(engine.AllowedResources(clusterIDFrom(r.Context()), namespace))
 	if len(permissions) == 0 {
 		w.WriteHeader(http.StatusForbidden)
 		return
@@ -2233,6 +2234,10 @@ func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, resou
 		return "", false
 	}
 	namespace := chi.URLParam(r, "namespace")
+	if !featureAllows(resource, action) {
+		writeError(w, http.StatusForbidden, "this feature is disabled by the operator")
+		return "", false
+	}
 	if user.IsAdmin {
 		return namespace, true
 	}
@@ -2249,6 +2254,9 @@ func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, resou
 }
 
 func (s *Server) can(ctx context.Context, userID int, namespace, resource, action string) bool {
+	if !featureAllows(resource, action) {
+		return false
+	}
 	user, err := s.store.GetUserByID(ctx, userID)
 	if err != nil {
 		return false

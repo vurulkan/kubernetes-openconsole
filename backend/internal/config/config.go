@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -132,6 +133,17 @@ func envDurationMin(key string, fallback, min time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+// DisabledFeatures reads FEATURE_<NAME>=false for each known feature name.
+func DisabledFeatures(names []string) []string {
+	var off []string
+	for _, n := range names {
+		if !envBool("FEATURE_"+strings.ToUpper(n), true) {
+			off = append(off, n)
+		}
+	}
+	return off
 }
 
 func envBool(key string, fallback bool) bool {
