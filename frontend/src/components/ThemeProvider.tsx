@@ -86,7 +86,7 @@ export const useTheme = (): ThemeCtx => {
   return ctx;
 };
 
-const OPTIONS: Array<{ value: ThemeMode; label: string; Icon: React.ComponentType<{ size?: number }> }> = [
+const OPTIONS: Array<{ value: ThemeMode; label: string; Icon: React.ComponentType<{ size?: number | string }> }> = [
   { value: 'light', label: 'Light', Icon: Sun },
   { value: 'dark', label: 'Dark', Icon: Moon },
   { value: 'system', label: 'System', Icon: Monitor },

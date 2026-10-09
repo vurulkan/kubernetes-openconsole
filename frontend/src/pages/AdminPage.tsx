@@ -98,7 +98,7 @@ import {
 const ADMIN_TABS: Array<{
   label: string;
   value: string;
-  icon: React.ComponentType<{ size?: number; className?: string }>;
+  icon: React.ComponentType<{ size?: number | string; className?: string }>;
 }> = [
   { label: 'Users', value: 'users', icon: UsersIcon },
   { label: 'Groups', value: 'groups', icon: Layers },
@@ -120,6 +120,21 @@ const TAB_I18N_KEY: Record<string, string> = {
   ldap: 'ldap', 'azure-ad': 'azure', session: 'session',
   clusters: 'clusters', customization: 'customization',
   audit: 'audit', sessions: 'sessions', recordings: 'recordings',
+};
+
+// Classic role-permission form defaults; also what the form resets to after
+// an add, so every resource row (and its edit toggle) survives the reset.
+const DEFAULT_PERMISSION_MATRIX = {
+  pods: { list: true, get: true, logs: false, exec: false, edit: false },
+  deployments: { list: true, get: true, restart: false, scale: false, edit: false },
+  daemonsets: { list: true, get: true, edit: false },
+  statefulsets: { list: true, get: true, scale: false, edit: false },
+  hpas: { list: true, get: true, edit: false },
+  services: { list: true, get: true, edit: false },
+  configmaps: { list: true, get: true, edit: false },
+  ingresses: { list: true, get: true, edit: false },
+  cronjobs: { list: true, get: true, edit: false },
+  jobs: { list: true, get: true, edit: false },
 };
 
 // ─── Section card ─────────────────────────────────────────────────────────────
@@ -213,18 +228,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
   // 0 means "all clusters" (wildcard).
   const [newPermissionClusterId, setNewPermissionClusterId] = useState<number>(0);
   const [permissionFormError, setPermissionFormError] = useState<string | null>(null);
-  const [permissionMatrix, setPermissionMatrix] = useState({
-    pods: { list: true, get: true, logs: false, exec: false, edit: false },
-    deployments: { list: true, get: true, restart: false, scale: false, edit: false },
-    daemonsets: { list: true, get: true, edit: false },
-    statefulsets: { list: true, get: true, scale: false, edit: false },
-    hpas: { list: true, get: true, edit: false },
-    services: { list: true, get: true, edit: false },
-    configmaps: { list: true, get: true, edit: false },
-    ingresses: { list: true, get: true, edit: false },
-    cronjobs: { list: true, get: true, edit: false },
-    jobs: { list: true, get: true, edit: false },
-  });
+  const [permissionMatrix, setPermissionMatrix] = useState(DEFAULT_PERMISSION_MATRIX);
   const [ldapConfig, setLdapConfig] = useState({
     enabled: false,
     url: '',
@@ -718,15 +722,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     }
     await loadRolePermissions(selectedRoleId);
     setNewPermissionNamespaces([]);
-    setPermissionMatrix({
-      pods: { list: true, get: true, logs: false, exec: false },
-      deployments: { list: true, get: true, restart: false, scale: false },
-      services: { list: true, get: true },
-      configmaps: { list: true, get: true },
-      ingresses: { list: true, get: true },
-      cronjobs: { list: true, get: true },
-      jobs: { list: true, get: true },
-    });
+    setPermissionMatrix(DEFAULT_PERMISSION_MATRIX);
   };
 
   const handleFileUpload = (
@@ -1015,7 +1011,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
             })()}
           </h1>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            Manage users, roles, LDAP, sessions and cluster connections entirely from the UI.
+            {tr('admin.cards.subtitle')}
           </p>
         </div>
       </div>
@@ -1466,7 +1462,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                 )}
               </SectionCard>
 
-              <SectionCard title="Import LDAP Users">
+              <SectionCard title={tr('admin.cards.importLdapUsers')}>
                 <div className="flex flex-wrap gap-3">
                   <Input
                     label={tr("common.searchQuery")}
@@ -1619,8 +1615,8 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
           {tab === 'clusters' && (
             <div className="flex flex-col gap-5">
               <SectionCard
-                title="Configured Clusters"
-                description="Add multiple Kubernetes clusters and switch between them. The active cluster drives Dashboard reads and all write actions."
+                title={tr('admin.cards.configuredClusters')}
+                description={tr('admin.cards.configuredClustersDesc')}
               >
                 {clustersStatus && (
                   <Alert severity={clustersStatus.status} className="mb-4">
@@ -1660,7 +1656,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                               {c.isActive && <Badge variant="success">{tr("common.active")}</Badge>}
                             </div>
                             <div className="truncate text-xs text-slate-500 dark:text-slate-400">
-                              {c.description || c.server || `method: ${c.method}`}
+                              {c.description || c.server || tr('common.methodLabel', { method: c.method })}
                             </div>
                           </div>
                         </div>
@@ -1738,7 +1734,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                             }
                           >
                             <Pencil size={13} />
-                            Edit
+                            {tr('actions.edit')}
                           </Button>
                           <Button
                             variant="danger"
@@ -1767,7 +1763,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                             }}
                           >
                             <Trash2 size={13} />
-                            Delete
+                            {tr('actions.delete')}
                           </Button>
                         </div>
                       </div>
@@ -1777,15 +1773,15 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
               </SectionCard>
 
               <SectionCard
-                title="Add Cluster"
-                description="Credentials are validated against the API server before being saved."
+                title={tr('admin.cards.addCluster')}
+                description={tr('admin.cards.addClusterDesc')}
               >
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <Input
                     label={tr("common.name")}
                     value={newClusterName}
                     onChange={(e) => setNewClusterName(e.target.value)}
-                    placeholder="e.g. prod-west, staging"
+                    placeholder={tr('common.clusterNamePlaceholder')}
                   />
                   <Input
                     label={tr("common.description")}
@@ -1804,10 +1800,10 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   {newClusterMethod === 'kubeconfig' && (
                     <div className="flex flex-col gap-1">
                       <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                        Kubeconfig file
+                        {tr('common.kubeconfigFile')}
                       </span>
                       <label className="inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">
-                        Upload kubeconfig
+                        {tr('common.uploadKubeconfig')}
                         <input
                           type="file"
                           className="hidden"
@@ -1830,7 +1826,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                         />
                       </label>
                       <span className="text-xs text-slate-400">
-                        {newClusterKubeconfigName || 'No file selected'}
+                        {newClusterKubeconfigName || tr('common.noFileSelected')}
                       </span>
                     </div>
                   )}
@@ -1890,7 +1886,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                     }
                   }}
                 >
-                  Save Cluster
+                  {tr('common.saveCluster')}
                 </Button>
               </SectionCard>
             </div>
@@ -1977,7 +1973,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                           New Kubeconfig
                         </span>
                         <label className="inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">
-                          Upload kubeconfig
+                          {tr('common.uploadKubeconfig')}
                           <input
                             type="file"
                             className="hidden"
@@ -1998,7 +1994,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                           />
                         </label>
                         <span className="text-xs text-slate-400">
-                          {editCluster.kubeconfigName || 'No file selected'}
+                          {editCluster.kubeconfigName || tr('common.noFileSelected')}
                         </span>
                       </div>
                     )}
@@ -2031,7 +2027,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
 
           {/* ─────────────────────────── CUSTOMIZATION ──────────────── */}
           {tab === 'customization' && (
-            <SectionCard title="Login Logo">
+            <SectionCard title={tr('admin.cards.loginLogo')}>
               <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">
                 Upload a logo to display on the login screen. Recommended PNG/SVG with transparent
                 background.
@@ -2186,7 +2182,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
           {tab === 'sessions' && (
             <SectionCard
               title={tr('admin.sections.sessions')}
-              description="Every token issued by this backend. Revoke a single row to sign one browser out; revoke-all for a user kills every tab they have open."
+              description={tr('admin.cards.sessionsDesc')}
             >
               <SessionsSection currentUserId={user.id} />
             </SectionCard>
@@ -2382,7 +2378,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
           <Modal
             open={showCreateGroup}
             onClose={() => setShowCreateGroup(false)}
-            title="New group"
+            title={tr('admin.newGroup')}
             size="sm"
             footer={
               <>
@@ -2407,7 +2403,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
               }}
             >
               <Input
-                label="Group name"
+                label={tr('common.groupName')}
                 value={newGroup}
                 onChange={(e) => setNewGroup(e.target.value)}
                 autoFocus
@@ -2466,7 +2462,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                 autoFocus
               />
               <MultiSelect
-                label="Roles"
+                label={tr('admin.tabs.roles')}
                 options={roles.map((r) => ({ id: r.id, label: r.name }))}
                 value={editingGroup.roleIds.map((id) => {
                   const r = roles.find((rr) => rr.id === id);
@@ -2506,7 +2502,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
           <Modal
             open={showCreateRole}
             onClose={() => setShowCreateRole(false)}
-            title="New role"
+            title={tr('admin.newRole')}
             size="sm"
             footer={
               <>

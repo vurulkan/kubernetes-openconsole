@@ -149,16 +149,16 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
 
     socket.onerror = () => {
       setStatus('error');
-      setNote('Connection error.');
+      setNote(t('podExec.connectionError'));
     };
 
     socket.onclose = (event) => {
       setStatus('closed');
       if (event.code !== 1000) {
-        setNote(`Session closed (${event.code}).`);
+        setNote(t('podExec.sessionClosed', { code: event.code }));
       }
     };
-  }, [namespace, pod, container, shell, theme]);
+  }, [namespace, pod, container, shell, theme, t]);
 
   const sendResize = useCallback(() => {
     const socket = socketRef.current;
@@ -271,13 +271,13 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
         return (
           <span className="inline-flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-300">
             <span className="h-1.5 w-1.5 animate-live rounded-full bg-emerald-500" />
-            Connected
+            {t('podExec.connected')}
           </span>
         );
       case 'connecting':
         return (
           <span className="inline-flex items-center gap-1.5 text-xs text-brand-600 dark:text-brand-300">
-            <Spinner size="sm" /> Connecting…
+            <Spinner size="sm" /> {t('podExec.connecting')}
           </span>
         );
       case 'error':
@@ -304,7 +304,7 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50/60 px-5 py-3 dark:border-slate-800 dark:bg-slate-900/60">
           <div className="flex min-w-0 items-center gap-2">
             <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-              Shell · {pod}
+              {t('podExec.title', { pod })}
             </span>
             <span className="truncate font-mono text-[11px] text-slate-500 dark:text-slate-400">
               {namespace}
@@ -332,7 +332,7 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
             >
               {SHELLS.map((s) => (
                 <option key={s.value} value={s.value}>
-                  {s.label}
+                  {s.value === 'auto' ? t('podExec.shellAuto') : s.label}
                 </option>
               ))}
             </NativeSelect>
@@ -344,12 +344,12 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
               disabled={status === 'connecting'}
             >
               <RefreshCw size={13} />
-              Reconnect
+              {t('podExec.reconnect')}
             </Button>
             <button
               onClick={onClose}
               className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-100"
-              aria-label="Close"
+              aria-label={t('actions.close')}
             >
               <X size={18} />
             </button>

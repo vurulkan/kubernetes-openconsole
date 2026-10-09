@@ -30,6 +30,10 @@ var defaultShells = []string{"/bin/bash", "/bin/sh", "/bin/ash"}
 // Max idle time with no stdin before we close an exec session.
 const execIdleTimeout = 5 * time.Minute
 
+// execWriteTimeout bounds a single WebSocket write so a stalled browser can't
+// hold the write lock (and with it the idle watchdog) forever.
+const execWriteTimeout = 15 * time.Second
+
 // Client → Server control messages are JSON text frames of this shape;
 // stdin lives in binary frames to keep it opaque to transit.
 type execControl struct {
@@ -139,7 +143,7 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.EOF) {
 		outcome = "failed"
 		detail = err.Error()
-		writeExecError(conn, "exec ended: "+err.Error())
+		bridge.writeError("exec ended: " + err.Error())
 	}
 	duration := time.Since(start)
 	s.recordExecAudit(claims.Username, namespace, pod, outcome,
@@ -350,8 +354,7 @@ func (b *execBridge) idleWatchdog() {
 			idle := time.Since(b.lastInput)
 			b.lastMu.Unlock()
 			if idle > execIdleTimeout {
-				_ = b.conn.WriteMessage(websocket.TextMessage,
-					[]byte(`{"type":"error","message":"session idle timeout"}`))
+				b.writeError("session idle timeout")
 				b.cancel()
 				return
 			}
@@ -420,12 +423,26 @@ func (b *execBridge) Read(p []byte) (int, error) {
 func (b *execBridge) Write(p []byte) (int, error) {
 	// Record what the pod emitted even if the browser has gone away.
 	b.rec.Write(p)
-	b.writeMu.Lock()
-	defer b.writeMu.Unlock()
-	if err := b.conn.WriteMessage(websocket.BinaryMessage, p); err != nil {
+	if err := b.writeFrame(websocket.BinaryMessage, p); err != nil {
 		return 0, err
 	}
 	return len(p), nil
+}
+
+// writeError sends a {"type":"error"} control frame to the client.
+func (b *execBridge) writeError(msg string) {
+	_ = b.writeFrame(websocket.TextMessage, []byte(`{"type":"error","message":`+jsonString(msg)+`}`))
+}
+
+// writeFrame is the only way the bridge writes to the WebSocket. gorilla
+// allows a single concurrent writer and panics on overlap — in a goroutine
+// that panic takes the whole server down — so stdout, the idle watchdog and
+// the end-of-session error all serialize on writeMu.
+func (b *execBridge) writeFrame(msgType int, data []byte) error {
+	b.writeMu.Lock()
+	defer b.writeMu.Unlock()
+	_ = b.conn.SetWriteDeadline(time.Now().Add(execWriteTimeout))
+	return b.conn.WriteMessage(msgType, data)
 }
 
 // Next implements remotecommand.TerminalSizeQueue.

@@ -81,7 +81,7 @@ const resourceOrder = [
 
 const RESOURCE_META: Record<
   string,
-  { label: string; icon: React.ComponentType<{ size?: number; className?: string }> }
+  { label: string; icon: React.ComponentType<{ size?: number | string; className?: string }> }
 > = {
   pods: { label: 'Pods', icon: Boxes },
   deployments: { label: 'Deployments', icon: LayoutGrid },

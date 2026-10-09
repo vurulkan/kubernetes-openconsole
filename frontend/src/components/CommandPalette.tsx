@@ -13,7 +13,7 @@ type Command = {
   hint?: string;
   kind: CommandKind;
   onRun: () => void;
-  icon?: React.ComponentType<{ size?: number; className?: string }>;
+  icon?: React.ComponentType<{ size?: number | string; className?: string }>;
 };
 
 type Props = {

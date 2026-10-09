@@ -63,10 +63,18 @@ docker build -t kubernetes-openconsole:local .
 ### Option B — prebuilt image (GHCR)
 
 ```yaml
-image: ghcr.io/vurulkan/kubernetes-openconsole:latest   # or :2.9.0 to pin
+image: ghcr.io/vurulkan/kubernetes-openconsole:2.11.1   # pin a release
 ```
 
-Published tags: `latest`, `2.0.0`, `2.1.0` → `2.9.0`. Always pin a specific version in production.
+CI is the only publisher of image tags (linux/amd64):
+
+| Tag | Built from | Moves? |
+|---|---|---|
+| `X.Y.Z` (e.g. `2.11.1`) | the `vX.Y.Z` git tag | no — use this in production |
+| `latest` | every push to `main` | yes |
+| `<full commit sha>` | every push to `main` | no |
+
+Releasing = push the `vX.Y.Z` tag; CI builds and pushes `:X.Y.Z`.
 
 ## Run (local Docker, no cluster)
 

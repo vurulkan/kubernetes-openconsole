@@ -21,7 +21,7 @@ type Props = {
 type RailItem = {
   key: string;
   label: string;
-  icon: React.ComponentType<{ size?: number; className?: string }>;
+  icon: React.ComponentType<{ size?: number | string; className?: string }>;
   path: string;
   adminOnly?: boolean;
 };
@@ -116,9 +116,9 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, children }) => {
           </button>
           <span
             className="hidden items-center gap-1 rounded-md border border-slate-200 bg-white/60 px-2 py-1 text-[10px] font-medium text-slate-500 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-400 md:inline-flex"
-            title="Open command palette"
+            title={t('common.openCommandPalette')}
           >
-            Press
+            {t('common.press')}
             <kbd className="rounded border border-slate-200 bg-white px-1 font-mono text-[10px] dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
               ⌘K
             </kbd>
