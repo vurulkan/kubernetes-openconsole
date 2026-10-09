@@ -225,7 +225,7 @@ const ResetPasswordModal: React.FC<{ user: User | null; onClose: () => void }> =
             <Button variant="outline" size="sm" onClick={close}>
               {t('actions.cancel')}
             </Button>
-            <Button variant="danger" size="sm" onClick={() => submit()} disabled={saving}>
+            <Button variant="danger" size="sm" type="submit" form="reset-password-form" disabled={saving}>
               {t('admin.users.resetSubmit')}
             </Button>
           </>
@@ -235,7 +235,7 @@ const ResetPasswordModal: React.FC<{ user: User | null; onClose: () => void }> =
       {done ? (
         <Alert severity="success">{t('admin.users.resetDone', { name: user?.username ?? '' })}</Alert>
       ) : (
-        <form onSubmit={submit} className="flex flex-col gap-3">
+        <form id="reset-password-form" onSubmit={submit} className="flex flex-col gap-3">
           <p className="text-xs text-slate-500 dark:text-slate-400">{t('admin.users.resetHelp')}</p>
           <Input
             type="password"
@@ -254,8 +254,6 @@ const ResetPasswordModal: React.FC<{ user: User | null; onClose: () => void }> =
           />
           <Checkbox checked={mustChange} onChange={setMustChange} label={t('admin.users.resetMustChange')} />
           {error && <Alert severity="error">{error}</Alert>}
-          {/* Enter submits */}
-          <button type="submit" className="hidden" />
         </form>
       )}
     </Modal>

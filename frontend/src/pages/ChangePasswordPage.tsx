@@ -63,7 +63,7 @@ const ChangePasswordPage: React.FC<Props> = ({ onChanged }) => {
         )}
         {success && (
           <Alert severity="success" className="mb-4">
-            {t('changePassword.saved', { defaultValue: 'Password updated.' })}
+            {t('changePassword.saved')}
           </Alert>
         )}
 

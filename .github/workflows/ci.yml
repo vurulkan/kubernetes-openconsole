@@ -29,6 +29,8 @@ jobs:
       - run: npm ci
       # vite build does not type-check; this does.
       - run: npx tsc --noEmit -p .
+      # Unit + component tests, i18n parity, axe accessibility checks.
+      - run: npm test
       - run: npm run build
 
   backend:

@@ -142,7 +142,7 @@ export function DataTable<T>({
     if (cursor !== null && cursor >= sliceLen) setCursor(sliceLen > 0 ? sliceLen - 1 : null);
   }, [cursor, sliceLen]);
   useEffect(() => {
-    if (cursor !== null) rowRefs.current[cursor]?.scrollIntoView({ block: 'nearest' });
+    if (cursor !== null) rowRefs.current[cursor]?.scrollIntoView?.({ block: 'nearest' });
   }, [cursor]);
 
   const clickInRow = (selector: string) => {
@@ -253,7 +253,10 @@ export function DataTable<T>({
                     className={`px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 ${alignClass(c.align)}`}
                     style={c.width ? { width: c.width } : undefined}
                   >
-                    {sortable ? (
+                    {c.header === '' ? (
+                      // Unlabelled (actions) column: give screen readers a name.
+                      <span className="sr-only">{t('common.actionsColumn')}</span>
+                    ) : sortable ? (
                       <button
                         type="button"
                         onClick={() => toggleSort(c.key)}

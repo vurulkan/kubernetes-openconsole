@@ -67,6 +67,7 @@ const en = {
     stats: { namespaces: 'Namespaces', workloads: 'Workloads', audit: 'Audit', scoped: 'Scoped', live: 'Live', always: 'Always-on' },
   },
   changePassword: {
+    saved: 'Password updated.',
     title: 'Change password',
     subtitle: 'Pick a new password before continuing.',
     current: 'Current password',
@@ -610,6 +611,7 @@ const en = {
     },
   },
   common: {
+    actionsColumn: 'Actions',
     kubeconfigFile: 'Kubeconfig file',
     uploadKubeconfig: 'Upload kubeconfig',
     noFileSelected: 'No file selected',
@@ -723,6 +725,7 @@ const tr = {
     stats: { namespaces: 'Namespace\'ler', workloads: 'İş yükleri', audit: 'Denetim', scoped: 'Kapsamlı', live: 'Canlı', always: 'Her zaman açık' },
   },
   changePassword: {
+    saved: 'Şifre güncellendi.',
     title: 'Şifre değiştir',
     subtitle: 'Devam etmek için yeni bir şifre seç.',
     current: 'Mevcut şifre',
@@ -1266,6 +1269,7 @@ const tr = {
     },
   },
   common: {
+    actionsColumn: 'Aksiyonlar',
     kubeconfigFile: 'Kubeconfig dosyası',
     uploadKubeconfig: 'Kubeconfig yükle',
     noFileSelected: 'Dosya seçilmedi',
