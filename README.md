@@ -374,9 +374,11 @@ The shell itself is never blocked by recording: a disabled, full or broken recor
 | `pod.exec.session.record_skipped` | Disk policy `stop` refused to record |
 | `pod.exec.session.record_failed` | Recorder error (e.g. directory not writable) |
 | `recording.view` / `recording.download` | An admin played or downloaded a recording |
-| `recording.delete.{success,denied,failed}` | Delete from the UI / API |
+| `recording.delete.{success,denied,failed}` | Delete from the UI / API — records the recording's owner, start time, size, cluster and container, since the row and file are gone afterwards |
 | `recording.settings.update.{success,denied,failed}` | Settings change |
 | `recording.evicted` / `recording.purge` | Disk-policy eviction / retention purge (user `system`) |
+
+Recording actions (view / download / delete) also emit their own `recording.action` console log line with `event`, `user`, `session_id`, `details` and `request_id`, independent of `LOG_INCLUDE_AUDIT`.
 
 **API (admin only)**
 - `GET /api/admin/recordings?user=&namespace=&pod=&cluster=&from=&to=&limit=&offset=` → `{items, total}`

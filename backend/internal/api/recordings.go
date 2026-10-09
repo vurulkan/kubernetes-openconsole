@@ -108,18 +108,20 @@ func (s *Server) handleDeleteRecording(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "recording not found")
 		return
 	case errors.Is(err, recording.ErrActive):
-		s.recordRecordingAudit(r, user.Username, "recording.delete.failed", rec, "in_progress")
+		s.recordRecordingAudit(r, user.Username, "recording.delete.failed", rec, "in_progress;"+recordingSummary(rec))
 		writeError(w, http.StatusConflict, "recording is still in progress")
 		return
 	case err != nil:
 		if rec == nil {
 			rec = stub
 		}
-		s.recordRecordingAudit(r, user.Username, "recording.delete.failed", rec, err.Error())
+		s.recordRecordingAudit(r, user.Username, "recording.delete.failed", rec, err.Error()+";"+recordingSummary(rec))
 		writeError(w, http.StatusInternalServerError, "failed to delete recording")
 		return
 	}
-	s.recordRecordingAudit(r, user.Username, "recording.delete.success", rec, "")
+	// The row and file are gone after this, so the audit entry is the only
+	// remaining trace of whose session it was.
+	s.recordRecordingAudit(r, user.Username, "recording.delete.success", rec, recordingSummary(rec))
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -201,6 +203,35 @@ func (s *Server) recordRecordingAudit(r *http.Request, user, action string, rec 
 		ResourceType: "recording",
 		ResourceName: name,
 	})
+	// Own console line, independent of LOG_INCLUDE_AUDIT, like the
+	// deployment / settings actions.
+	slog.Info("recording.action",
+		slog.String("event", action),
+		slog.String("user", user),
+		slog.String("namespace", rec.Namespace),
+		slog.String("pod", rec.Pod),
+		slog.String("session_id", rec.SessionID),
+		slog.String("details", detail),
+		slog.String("request_id", logpkg.RequestIDFrom(r.Context())),
+	)
+}
+
+// recordingSummary describes a recording for audit details: whose session it
+// was, when, where and how big.
+func recordingSummary(rec *models.SessionRecording) string {
+	if rec == nil || rec.SessionID == "" {
+		return ""
+	}
+	out := "owner=" + rec.User +
+		";started=" + rec.StartedAt.UTC().Format(time.RFC3339) +
+		";size=" + strconv.FormatInt(rec.SizeBytes, 10)
+	if rec.Cluster != "" {
+		out += ";cluster=" + rec.Cluster
+	}
+	if rec.Container != "" {
+		out += ";container=" + rec.Container
+	}
+	return out
 }
 
 func (s *Server) recordSettingsAudit(user, outcome, detail, requestID string) {
