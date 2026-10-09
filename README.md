@@ -132,7 +132,7 @@ To upgrade, change the image tag in `deployment.yaml` (or the `images:` override
 - `MAX_REPLICAS` (default `100`) — Hard upper bound the Scale endpoint accepts for Deployment / StatefulSet scaling.
 
 ### Session recording
-These **seed** the recording settings on first boot only; afterwards Admin → Recordings owns them (except `SESSION_RECORDING_DIR`, read on every start). See [Session Recording](#session-recording).
+You normally set none of these. Recording is configured in **Admin → Recordings → Recording settings** and stored in the DB. The env vars below only **seed** those settings on the very first start, which is useful for scripted installs; after that, changing them has no effect. The exception is `SESSION_RECORDING_DIR`, which is read on every start and is the only one `deploy/deployment.yaml` mentions. See [Session Recording](#session-recording).
 
 - `SESSION_RECORDING_ENABLED` (default `true`) — record new pod shell sessions.
 - `SESSION_RECORDING_DIR` (default `<dir of DATA_PATH>/recordings`, i.e. `/data/recordings`) — where `.cast` files are written.
