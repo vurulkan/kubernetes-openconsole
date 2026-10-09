@@ -31,7 +31,10 @@ const ChangePasswordPage: React.FC<Props> = ({ onChanged }) => {
       await onChanged();
       navigate('/');
     } catch (err) {
-      setError(t('changePassword.failed'));
+      // Policy errors from the server (length, same as current) are worth
+      // showing as-is; anything else (wrong current password) stays generic.
+      const message = err instanceof Error ? err.message : '';
+      setError(/password/i.test(message) ? message : t('changePassword.failed'));
     } finally {
       setLoading(false);
     }

@@ -57,6 +57,7 @@ func (s *Server) clusterMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		ci := s.resolveCluster(r.Context(), user)
+		metricsRecordClusterRequest(ci.Name)
 		ctx := context.WithValue(r.Context(), clusterCtxKey{}, ci)
 		ctx = context.WithValue(ctx, logpkg.ClusterKey, ci.Name)
 		if ci.ID > 0 {
@@ -172,4 +173,18 @@ func (s *Server) DefaultClusterID() int {
 // requestIDMiddleware).
 func requestIDOf(r *http.Request) string {
 	return logpkg.RequestIDFrom(r.Context())
+}
+
+// clusterStatus maps every configured cluster's name to whether a live
+// connection exists (for /metrics).
+func (s *Server) clusterStatus() map[string]bool {
+	out := map[string]bool{}
+	clusters, err := s.store.ListClusters(context.Background())
+	if err != nil {
+		return out
+	}
+	for _, c := range clusters {
+		out[c.Name] = s.clusters.Ready(c.ID)
+	}
+	return out
 }

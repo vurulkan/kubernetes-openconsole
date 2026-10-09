@@ -60,6 +60,8 @@ type Server struct {
 	sessionToucher *store.SessionToucher
 	// recorder captures pod exec sessions as asciicast files.
 	recorder *recording.Manager
+	// execSessions enforces MAX_EXEC_SESSIONS_PER_USER.
+	execSessions execSessionTracker
 }
 
 // sessionValidator is the AuthMiddleware adapter around *store.Store. Returning
@@ -116,6 +118,7 @@ func NewServer(st *store.Store, auditLogger *audit.Logger, clusters *kube.Regist
 		sessionToucher: toucher,
 		recorder:       recorder,
 	}
+	clusterStatusFn = s.clusterStatus
 	// Seed the default cluster id from whatever row is currently is_active.
 	if cluster, err := st.GetActiveCluster(context.Background()); err == nil && cluster != nil {
 		s.defaultClusterID.Store(int64(cluster.ID))
@@ -852,6 +855,14 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
+	if err := auth.CheckPasswordPolicy(request.NewPassword); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if request.NewPassword == request.CurrentPassword {
+		writeError(w, http.StatusBadRequest, "the new password must differ from the current one")
+		return
+	}
 	hash, err := auth.HashPassword(request.NewPassword)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -1392,6 +1403,15 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+	request.Username = strings.TrimSpace(request.Username)
+	if request.Username == "" {
+		writeError(w, http.StatusBadRequest, "username is required")
+		return
+	}
+	if err := auth.CheckPasswordPolicy(request.Password); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	hash, err := auth.HashPassword(request.Password)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -1399,7 +1419,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := s.store.CreateUser(r.Context(), request.Username, hash)
 	if err != nil {
-		w.WriteHeader(http.StatusConflict)
+		writeError(w, http.StatusConflict, "a user with this name already exists")
 		return
 	}
 	user, err := s.store.GetUserByID(r.Context(), id)

@@ -5,17 +5,12 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
-	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 
 	"k8s-dashboard/backend/internal/auth"
 	"k8s-dashboard/backend/internal/models"
 )
-
-// minResetPasswordLength is the floor for passwords an admin sets on
-// someone else's account.
-const minResetPasswordLength = 8
 
 // handleResetUserPassword lets an admin set a new password for a LOCAL user
 // (POST /api/admin/users/{id}/reset-password {"password", "mustChange"}).
@@ -57,8 +52,8 @@ func (s *Server) handleResetUserPassword(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if utf8.RuneCountInString(body.Password) < minResetPasswordLength {
-		writeError(w, http.StatusBadRequest, "password must be at least "+strconv.Itoa(minResetPasswordLength)+" characters")
+	if err := auth.CheckPasswordPolicy(body.Password); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	mustChange := body.MustChange == nil || *body.MustChange

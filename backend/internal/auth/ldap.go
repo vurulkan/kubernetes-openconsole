@@ -292,4 +292,3 @@ func loginFilter(cfg LDAPConfig, username string) string {
 	}
 	return filter
 }
-
