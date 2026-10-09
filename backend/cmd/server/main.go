@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -27,6 +28,9 @@ func main() {
 	auth.MinPasswordLength = cfg.PasswordMinLength
 	api.SetExecLimits(cfg.ExecIdleTimeout, cfg.MaxExecSessionsPerUser)
 	api.SetDisabledFeatures(config.DisabledFeatures(api.AllFeatures))
+	if v := os.Getenv("AZURE_AD_AUTHORITY"); v != "" {
+		auth.AzureAuthority = strings.TrimRight(v, "/")
+	}
 
 	logger := logpkg.New(logpkg.Config{
 		Level:        cfg.LogLevel,

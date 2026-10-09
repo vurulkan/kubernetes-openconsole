@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/oauth2"
@@ -18,12 +19,17 @@ type AzureADConfig struct {
 	RedirectURL  string
 }
 
+// AzureAuthority is the Entra ID sign-in host. Override it (AZURE_AD_AUTHORITY)
+// for sovereign clouds, e.g. https://login.microsoftonline.us (Azure
+// Government) or https://login.partner.microsoftonline.cn (Azure China).
+var AzureAuthority = "https://login.microsoftonline.com"
+
 func azureIssuer(tenantID string) string {
-	return fmt.Sprintf("https://login.microsoftonline.com/%s/v2.0", tenantID)
+	return fmt.Sprintf("%s/%s/v2.0", AzureAuthority, tenantID)
 }
 
 func azureEndpoint(tenantID string) oauth2.Endpoint {
-	base := fmt.Sprintf("https://login.microsoftonline.com/%s/oauth2/v2.0", tenantID)
+	base := fmt.Sprintf("%s/%s/oauth2/v2.0", AzureAuthority, tenantID)
 	return oauth2.Endpoint{
 		AuthURL:  base + "/authorize",
 		TokenURL: base + "/token",
@@ -67,6 +73,12 @@ func AzureExchangeCode(ctx context.Context, cfg AzureADConfig, code string) (str
 	issuer, _ := claims["iss"].(string)
 	if issuer != azureIssuer(cfg.TenantID) {
 		return "", fmt.Errorf("invalid issuer")
+	}
+	// The token comes straight from the token endpoint over TLS (OIDC Core
+	// 3.1.3.7 lets that stand in for the signature check), but it still
+	// must not be expired.
+	if exp, err := claims.GetExpirationTime(); err != nil || exp == nil || time.Now().After(exp.Time) {
+		return "", fmt.Errorf("id_token expired or without exp")
 	}
 	audience := claims["aud"]
 	switch aud := audience.(type) {
@@ -116,7 +128,7 @@ func AzureExchangeCode(ctx context.Context, cfg AzureADConfig, code string) (str
 }
 
 func TestAzureConnection(ctx context.Context, cfg AzureADConfig) error {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("https://login.microsoftonline.com/%s/v2.0/.well-known/openid-configuration", cfg.TenantID), nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/%s/v2.0/.well-known/openid-configuration", AzureAuthority, cfg.TenantID), nil)
 	if err != nil {
 		return err
 	}
