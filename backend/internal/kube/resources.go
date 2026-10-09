@@ -462,3 +462,28 @@ func (c *ResourceClient) ScaleDeployment(ctx context.Context, namespace, name st
 	}
 	return previous, nil
 }
+
+// Secrets deliberately bypass the informer cache: caching would keep every
+// secret value in the cluster resident in memory and need list/watch on
+// secrets cluster-wide. Reads go straight to the API server instead.
+
+func (c *ResourceClient) ListSecrets(ctx context.Context, namespace string) ([]corev1.Secret, error) {
+	client, ok := c.manager.Client()
+	if !ok || !c.manager.Ready() {
+		return nil, fmt.Errorf("kubernetes client not ready")
+	}
+	result, err := client.CoreV1().Secrets(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(result.Items, func(i, j int) bool { return result.Items[i].Name < result.Items[j].Name })
+	return result.Items, nil
+}
+
+func (c *ResourceClient) GetSecret(ctx context.Context, namespace, name string) (*corev1.Secret, error) {
+	client, ok := c.manager.Client()
+	if !ok || !c.manager.Ready() {
+		return nil, fmt.Errorf("kubernetes client not ready")
+	}
+	return client.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
+}

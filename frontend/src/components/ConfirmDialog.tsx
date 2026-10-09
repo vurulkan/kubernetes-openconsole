@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Button, Modal } from './ui';
 
 export type ConfirmOptions = {
@@ -26,6 +27,7 @@ export const confirm = (opts: ConfirmOptions): Promise<boolean> => {
  * exposes the imperative confirm() helper via a module-level register.
  */
 export const ConfirmProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { t } = useTranslation();
   const [pending, setPending] = useState<Pending | null>(null);
 
   useEffect(() => {
@@ -57,14 +59,14 @@ export const ConfirmProvider: React.FC<{ children: React.ReactNode }> = ({ child
           footer={
             <>
               <Button variant="outline" size="sm" onClick={() => close(false)}>
-                {pending.cancelText ?? 'Cancel'}
+                {pending.cancelText ?? t('actions.cancel')}
               </Button>
               <Button
                 variant={pending.variant === 'danger' ? 'danger' : 'primary'}
                 size="sm"
                 onClick={() => close(true)}
               >
-                {pending.confirmText ?? 'Confirm'}
+                {pending.confirmText ?? t('actions.confirm')}
               </Button>
             </>
           }

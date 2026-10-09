@@ -14,7 +14,7 @@ import (
 
 type Manager struct {
 	mu         sync.RWMutex
-	client     *kubernetes.Clientset
+	client     kubernetes.Interface
 	restConfig *rest.Config
 	ready      bool
 	lastError  string
@@ -24,6 +24,13 @@ type Manager struct {
 
 func NewManager() *Manager {
 	return &Manager{bus: NewEventBus()}
+}
+
+// NewManagerWithClient returns a ready Manager around an existing client and
+// no informer cache, so every read goes straight to the client. Used by tests
+// with client-go's fake clientset.
+func NewManagerWithClient(client kubernetes.Interface) *Manager {
+	return &Manager{bus: NewEventBus(), client: client, ready: true}
 }
 
 // EventBus exposes the shared bus so API handlers can subscribe clients to
@@ -113,7 +120,7 @@ func (m *Manager) StartAsync() {
 	}()
 }
 
-func (m *Manager) Client() (*kubernetes.Clientset, bool) {
+func (m *Manager) Client() (kubernetes.Interface, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.client == nil {

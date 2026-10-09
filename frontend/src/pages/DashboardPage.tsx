@@ -9,6 +9,7 @@ import {
   Globe,
   Database,
   HardDrive,
+  KeyRound,
   LayoutGrid,
   List as ListIcon,
   ListChecks,
@@ -23,6 +24,7 @@ import {
 import Layout from '../components/Layout';
 import LiveEventsPanel from '../components/LiveEventsPanel';
 import PodExecModal from '../components/PodExecModal';
+import SecretModal from '../components/SecretModal';
 import { PodNotReadyBadge } from '../components/PodNotReadyBadge';
 import YamlEditModal, { YamlEditTarget } from '../components/YamlEditModal';
 import { useTheme } from '../components/ThemeProvider';
@@ -42,6 +44,8 @@ import {
   listDeployments,
   listServices,
   listConfigMaps,
+  listSecrets,
+  getSecretYaml,
   listIngresses,
   listCronJobs,
   listDaemonSets,
@@ -74,6 +78,7 @@ const resourceOrder = [
   'hpas',
   'services',
   'configmaps',
+  'secrets',
   'ingresses',
   'cronjobs',
   'jobs',
@@ -90,6 +95,7 @@ const RESOURCE_META: Record<
   hpas: { label: 'HPAs', icon: Gauge },
   services: { label: 'Services', icon: Globe },
   configmaps: { label: 'ConfigMaps', icon: FileText },
+  secrets: { label: 'Secrets', icon: KeyRound },
   ingresses: { label: 'Ingresses', icon: Globe },
   cronjobs: { label: 'CronJobs', icon: Calendar },
   jobs: { label: 'Jobs', icon: ListChecks },
@@ -142,6 +148,10 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   const canScaleDeployments = (allowedResources.deployments ?? []).includes('scale');
   const canScaleStatefulSets = (allowedResources.statefulsets ?? []).includes('scale');
   const canExecPods = (allowedResources.pods ?? []).includes('exec');
+  const canRevealSecrets = (allowedResources.secrets ?? []).includes('reveal');
+  const canEditSecrets = (allowedResources.secrets ?? []).includes('edit');
+  // Secret whose keys modal is open (null = closed).
+  const [secretTarget, setSecretTarget] = useState<string | null>(null);
   const [execTarget, setExecTarget] = useState<{ name: string; containers: string[] } | null>(null);
   const [viewMode, setViewMode] = useState<'card' | 'list'>(() => {
     try {
@@ -426,6 +436,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
       else if (activeTab === 'hpas') result = await listHPAs(selectedNamespace);
       else if (activeTab === 'services') result = await listServices(selectedNamespace);
       else if (activeTab === 'configmaps') result = await listConfigMaps(selectedNamespace);
+      else if (activeTab === 'secrets') result = await listSecrets(selectedNamespace);
       else if (activeTab === 'ingresses') result = await listIngresses(selectedNamespace);
       else if (activeTab === 'cronjobs') result = await listCronJobs(selectedNamespace);
       else if (activeTab === 'jobs') result = await listJobs(selectedNamespace);
@@ -601,6 +612,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
       hpas: getHPAYaml,
       services: getServiceYaml,
       configmaps: getConfigMapYaml,
+      secrets: getSecretYaml,
       ingresses: getIngressYaml,
       cronjobs: getCronJobYaml,
       jobs: getJobYaml,
@@ -612,6 +624,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
       hpas: 'HPA',
       services: 'Service',
       configmaps: 'ConfigMap',
+      secrets: 'Secret',
       ingresses: 'Ingress',
       cronjobs: 'CronJob',
       jobs: 'Job',
@@ -977,6 +990,8 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
             openEventsModal={openEventsModal}
             openLogModal={openLogModal}
             openConfigMapDataModal={openConfigMapDataModal}
+            openSecretModal={(name) => setSecretTarget(name)}
+            canEditSecrets={canEditSecrets}
             openDeploymentLogs={openDeploymentLogs}
             openJobLogs={openJobLogs}
             onExec={(name, containers) => setExecTarget({ name, containers })}
@@ -1231,6 +1246,14 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                       </div>
                     </>
                   )}
+                  {activeTab === 'secrets' && (
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="truncate rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                        {String(item.type ?? '')}
+                      </span>
+                      <span>{t('secrets.keyCount', { count: ((item.keys as unknown[]) ?? []).length })}</span>
+                    </div>
+                  )}
                   {activeTab === 'cronjobs' && (
                     <>
                       <div>
@@ -1456,6 +1479,25 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                       </Button>
                     </>
                   )}
+                  {activeTab === 'secrets' && (
+                    <>
+                      <Button variant="outline" size="sm" onClick={() => setSecretTarget(name)}>
+                        <KeyRound size={13} />
+                        {t('secrets.keys')}
+                      </Button>
+                      {/* The YAML carries every value, so it is gated on edit, not get. */}
+                      {canEditSecrets && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => openYamlModal('secrets', selectedNamespace ?? '', name)}
+                        >
+                          <FileCode2 size={13} />
+                          {t('dashboard.actions.yaml')}
+                        </Button>
+                      )}
+                    </>
+                  )}
                   {activeTab === 'cronjobs' && (
                     <Button
                       variant="outline"
@@ -1638,6 +1680,15 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
           </p>
         </Modal>
       )}
+
+      {/* ── Secret keys modal ─────────────────────────────────────── */}
+      <SecretModal
+        open={secretTarget !== null}
+        onClose={() => setSecretTarget(null)}
+        namespace={selectedNamespace ?? ''}
+        name={secretTarget ?? ''}
+        canReveal={canRevealSecrets}
+      />
 
       {/* ── Pod exec (shell) modal ─────────────────────────────────── */}
       <PodExecModal

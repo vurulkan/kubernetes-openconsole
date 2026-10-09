@@ -1,0 +1,79 @@
+# Read-only alternative to rbac.yaml. Use ONE of the two files per cluster.
+#
+# With this ClusterRole OpenConsole can only look: every Dashboard tab, Live
+# Events and pod logs work; restart, scale, YAML apply (secrets included)
+# and pod shell are refused by Kubernetes (403) even if an OpenConsole role
+# grants them. Secrets are left out entirely (see the commented rule below);
+# even with it enabled, secrets:edit stays refused (no update verb).
+#
+# Same object names as rbac.yaml, so switching is just applying the other
+# file (kubectl apply replaces the rule list):
+#   kubectl apply -f deploy/rbac-readonly.yaml
+# With kustomize, swap rbac.yaml for rbac-readonly.yaml in kustomization.yaml.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openconsole-reader
+  namespace: kubernetes-openconsole
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: openconsole-reader-token
+  namespace: kubernetes-openconsole
+  annotations:
+    kubernetes.io/service-account.name: openconsole-reader
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: openconsole-readonly
+rules:
+  - apiGroups: [""]
+    resources: [namespaces, pods, services, configmaps, events]
+    verbs: [get, list, watch]
+
+  # Pod / deployment / job logs. Logs can contain sensitive data too —
+  # drop this rule if read-only should mean "no logs" as well.
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+
+  # Secrets: deliberately omitted. Note that `get` on secrets lets the
+  # ServiceAccount read values, so enabling it is not "metadata only" at the
+  # Kubernetes level — OpenConsole's secrets:reveal permission is then the
+  # only thing keeping values hidden from users.
+  # - apiGroups: [""]
+  #   resources: [secrets]
+  #   verbs: [get, list]
+
+  - apiGroups: [apps]
+    resources: [deployments, daemonsets, statefulsets]
+    verbs: [get, list, watch]
+
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list, watch]
+
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    verbs: [get, list, watch]
+
+  - apiGroups: [batch]
+    resources: [cronjobs, jobs]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: openconsole-readonly-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: openconsole-readonly
+subjects:
+  - kind: ServiceAccount
+    name: openconsole-reader
+    namespace: kubernetes-openconsole

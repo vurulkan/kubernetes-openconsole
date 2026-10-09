@@ -1,0 +1,106 @@
+# OpenConsole's cluster identity. Apply this to every cluster OpenConsole
+# should manage (the one it runs in and any remote ones), then add each
+# cluster under Admin → Clusters with the token below — see README
+# "Connecting clusters".
+#
+# Not needed if you connect with the Kubeconfig method using an identity
+# you already manage (its RBAC must cover what you want OpenConsole to do).
+# The pod itself does not run as this ServiceAccount (see deployment.yaml).
+#
+# OpenConsole enforces per-user access itself (Users → Groups → Roles). This
+# ServiceAccount is the ceiling: a user can never do more than it allows.
+# Remove a rule if you will never grant the matching application permission.
+# For a view-only console use rbac-readonly.yaml instead.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openconsole-reader
+  namespace: kubernetes-openconsole
+---
+# Long-lived token for the "Token" method in Admin → Clusters. Kubernetes
+# fills in data.token and data.ca.crt. Rotate by deleting and re-applying
+# this Secret, then updating the cluster in the UI.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: openconsole-reader-token
+  namespace: kubernetes-openconsole
+  annotations:
+    kubernetes.io/service-account.name: openconsole-reader
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  # Name kept from earlier releases so existing bindings keep working.
+  name: openconsole-readonly
+rules:
+  # Reads for every Dashboard tab + events for the Live Events panel.
+  - apiGroups: [""]
+    resources: [namespaces, pods, services, configmaps, events]
+    verbs: [get, list, watch]
+
+  # Secrets tab: get / list for secrets:list / get / reveal, update for
+  # secrets:edit (YAML editor). No watch: secrets are read on demand, never
+  # cached. Drop `update` if you won't grant secrets:edit, or the whole rule
+  # if you won't grant any secrets permission.
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list, update]
+
+  # Pod logs (pods:logs).
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+
+  # Pod shell (pods:exec).
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [create]
+
+  # YAML apply ({resource}:edit) on core resources.
+  - apiGroups: [""]
+    resources: [pods, services, configmaps]
+    verbs: [update]
+
+  # apps/v1 workloads.
+  - apiGroups: [apps]
+    resources: [deployments, daemonsets, statefulsets]
+    verbs: [get, list, watch, update]
+
+  # Deployment restart (deployments:restart) patches the pod template.
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [patch]
+
+  # Scale (deployments:scale, statefulsets:scale).
+  - apiGroups: [apps]
+    resources: [deployments/scale, statefulsets/scale]
+    verbs: [get, update]
+
+  # HorizontalPodAutoscaler (v2).
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list, watch, update]
+
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    verbs: [get, list, watch, update]
+
+  - apiGroups: [batch]
+    resources: [cronjobs, jobs]
+    verbs: [get, list, watch, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: openconsole-readonly-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: openconsole-readonly
+subjects:
+  - kind: ServiceAccount
+    name: openconsole-reader
+    namespace: kubernetes-openconsole

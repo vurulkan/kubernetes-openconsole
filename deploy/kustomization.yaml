@@ -1,0 +1,18 @@
+# kubectl apply -k deploy/
+# Installs OpenConsole into the kubernetes-openconsole namespace together
+# with its ServiceAccount + ClusterRole (rbac.yaml). Pin the image tag in
+# deployment.yaml (or override it here) to the release you want.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  # ServiceAccount + token for the "ServiceAccount Token" method. Use
+  # rbac-readonly.yaml for a view-only console, or drop the line if you
+  # connect with your own kubeconfig identity instead.
+  - rbac.yaml
+  - pvc.yaml
+  - service.yaml
+  - deployment.yaml
+# images:
+#   - name: ghcr.io/vurulkan/kubernetes-openconsole
+#     newTag: "2.12.0"

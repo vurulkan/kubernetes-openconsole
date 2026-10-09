@@ -10,7 +10,7 @@ Modern, production-ready Kubernetes visibility and operations console with stric
 - **Prometheus `/metrics`**, dedicated `/livez` (process) and `/readyz` (DB + kube client) endpoints.
 
 ### Workloads shown in the Dashboard
-Pods, Deployments, **DaemonSets**, **StatefulSets**, **HorizontalPodAutoscalers (v2)**, Services, ConfigMaps, Ingresses, CronJobs, Jobs — card view, list view, label filters, saved views.
+Pods, Deployments, **DaemonSets**, **StatefulSets**, **HorizontalPodAutoscalers (v2)**, Services, ConfigMaps, **Secrets**, Ingresses, CronJobs, Jobs — card view, list view, label filters, saved views.
 
 ### Write operations (opt-in per role, per namespace)
 - **Deployment restart** (`deployments:restart`)
@@ -18,6 +18,7 @@ Pods, Deployments, **DaemonSets**, **StatefulSets**, **HorizontalPodAutoscalers 
 - **YAML view + edit + server dry-run + apply** for every workload above (`{resource}:edit`), powered by Monaco. Diff view, dry-run returns the server-canonicalized object, optimistic concurrency via `resourceVersion`.
 - **Pod shell** (`pods:exec`) over WebSocket with xterm.js.
 - **Pod shell session recording** — every shell is saved as an asciicast v2 file and can be replayed by admins (Admin → Recordings) with an in-browser player. See [Session Recording](#session-recording).
+- **Secrets** (`secrets:list`, `secrets:get`, `secrets:reveal`, `secrets:edit`) — names, types and key names by default; values are revealed one key at a time, and secrets can be edited in the YAML editor (diff + dry-run). Every reveal and every YAML open is audited. See [Secrets](#secrets).
 - **Pod / Deployment logs** (`pods:logs`) with rate limiting.
 
 Every write action records `{resource}.{action}.{success|denied|failed|rate_limited}` audit entries and the HTTP response carries `X-Request-Id` for correlation with the audit mirror in stdout.
@@ -63,53 +64,69 @@ docker build -t kubernetes-openconsole:local .
 ### Option B — prebuilt image (GHCR)
 
 ```yaml
-image: ghcr.io/vurulkan/kubernetes-openconsole:2.11.1   # pin a release
+image: ghcr.io/vurulkan/kubernetes-openconsole:2.12.0   # pin a release
 ```
 
 CI is the only publisher of image tags (linux/amd64):
 
 | Tag | Built from | Moves? |
 |---|---|---|
-| `X.Y.Z` (e.g. `2.11.1`) | the `vX.Y.Z` git tag | no — use this in production |
+| `X.Y.Z` (e.g. `2.12.0`) | the `vX.Y.Z` git tag | no — use this in production |
 | `latest` | every push to `main` | yes |
 | `<full commit sha>` | every push to `main` | no |
 
 Releasing = push the `vX.Y.Z` tag; CI builds and pushes `:X.Y.Z`.
 
+### Tests
+
+CI runs these on every push. Run them locally before you open a PR:
+
+```bash
+cd backend && go vet ./... && go test -race ./...    # recorder, exec bridge, RBAC engine, API authorization
+cd frontend && npx tsc --noEmit -p . && npm run build
+```
+
+The API tests run the real router and SQLite store against client-go's fake clientset. They check that every admin endpoint, namespace / resource / cluster-scoped grant, write action (403 + `denied` audit) and secret reveal is enforced.
+
 ## Run (local Docker, no cluster)
 
 ```bash
 docker run --rm -p 8080:8080 \
-  -e DATA_PATH=/data/app.db \
-  -e STATIC_DIR=/app/public \
   -e TIMEZONE=Europe/Istanbul \
-  -e LOG_FORMAT=json \
-  -e LOG_LEVEL=info \
-  -e LOG_INCLUDE_AUDIT=true \
-  -e MAX_REPLICAS=100 \
   -v kubernetes-openconsole-data:/data \
-  ghcr.io/vurulkan/kubernetes-openconsole:latest
+  ghcr.io/vurulkan/kubernetes-openconsole:2.12.0
 ```
 
-> Ephemeral storage: drop the volume and set `DATA_PATH=/tmp/app.db`.
+The image defaults to `DATA_PATH=/data/app.db` and `STATIC_DIR=/app/public`; the SQLite DB and session recordings live under `/data`. Drop the `-v` for a throwaway instance. Then open http://localhost:8080 and add a cluster ([Connecting clusters](#connecting-clusters)).
 
 ## Kubernetes deploy
 
 ```bash
-kubectl apply -f deploy/namespace.yaml
-kubectl apply -f deploy/pvc.yaml
-kubectl apply -f deploy/deployment.yaml
-kubectl apply -f deploy/service.yaml
-# then the ServiceAccount + ClusterRole + binding (see "Kubernetes API Access" below)
+kubectl apply -k deploy/
 ```
 
-The shipped `deploy/deployment.yaml` carries the recommended env, resource requests / limits, `/livez` liveness, `/readyz` readiness, and runs as non-root with `seccompProfile: RuntimeDefault`.
+This installs, in namespace `kubernetes-openconsole`:
+
+| File | What |
+|---|---|
+| `namespace.yaml` | the namespace |
+| `rbac.yaml` | ServiceAccount `openconsole-reader`, its long-lived token Secret, ClusterRole `openconsole-readonly` + binding. It produces the token you paste into the UI; see [Connecting clusters](#connecting-clusters). `rbac-readonly.yaml` is the [read-only](#read-only-mode) alternative. Not needed if you connect with your own kubeconfig identity |
+| `pvc.yaml` | 5 Gi PVC for `/data` (SQLite + session recordings); a commented second PVC for recordings |
+| `service.yaml` | ClusterIP Service on port 80 → container 8080 (put your Ingress / Gateway in front) |
+| `deployment.yaml` | 1 replica (SQLite on a RWO volume — do not scale out), pinned image, every env var documented inline, requests / limits, `/livez` + `/readyz` probes, non-root, `seccompProfile: RuntimeDefault`, and **no ServiceAccount token mounted** (`automountServiceAccountToken: false`). The app never uses the pod's own identity |
+
+Then:
+
+1. Open the UI and log in as `admin` / `admin` ([First login](#first-login)).
+2. Add the cluster in **Admin → Clusters** ([Connecting clusters](#connecting-clusters)). The backend never picks up a cluster on its own.
+
+To upgrade, change the image tag in `deployment.yaml` (or the `images:` override in `kustomization.yaml`) and re-apply.
 
 ## Environment variables
 
 ### Core
-- `DATA_PATH` (default `/data/app.db`) — SQLite DB location.
-- `STATIC_DIR` (default `/app/public`) — Served React build output.
+- `DATA_PATH` (default `/data/app.db` in the image) — SQLite DB location. Must be on a persistent volume.
+- `STATIC_DIR` (default `/app/public` in the image) — Served React build output.
 - `TIMEZONE` (default `UTC`) — Used for audit log timestamps.
 - `LOG_RETENTION_DAYS` (default `30`) — Audit log retention (purged automatically).
 - `MAX_REPLICAS` (default `100`) — Hard upper bound the Scale endpoint accepts for Deployment / StatefulSet scaling.
@@ -155,171 +172,152 @@ Configured through **Admin → LDAP** at runtime — no env vars.
 
 ---
 
-# Kubernetes API Access (ServiceAccount setup)
+# Connecting clusters
 
-OpenConsole runs with a single cluster identity and enforces authorization strictly at the application layer. It does **not** act as a Kubernetes security boundary — it only reflects the permissions granted to its ServiceAccount.
+OpenConsole talks to each cluster as one ServiceAccount and enforces per-user access itself (Users → Groups → Roles). The ServiceAccount's ClusterRole is the ceiling: no user can do more than it allows, whatever their role says.
 
-> ⚠️ **Quick Start (In-Cluster)**
->
-> When OpenConsole runs inside the same cluster it monitors, it uses the mounted ServiceAccount token automatically. You can skip the kubeconfig steps below and go straight to **[First Login](#first-login)**.
->
-> Not recommended for production: create a **dedicated** ServiceAccount with a minimally-scoped ClusterRole below rather than reusing `default`.
+Clusters are added **only in the UI** (Admin → Clusters). Two methods: **ServiceAccount Token** (API server URL + token + CA) or **Kubeconfig** (upload a file). Credentials are validated against the API server before they are saved, and stored encrypted in SQLite. The active cluster is reconnected automatically after a restart.
 
-## 1. Create the ServiceAccount
+## 1. Create the ServiceAccount on the cluster
 
-```bash
-kubectl create serviceaccount openconsole-reader -n kubernetes-openconsole
-```
+This step is for the **ServiceAccount Token** method, and for a kubeconfig built from that token (3b). If you connect with a kubeconfig whose identity you already manage, skip it. That identity's RBAC then has to cover what OpenConsole should do; the table below shows what each rule enables.
 
-## 2. Create the ClusterRole
+The OpenConsole pod does **not** run as this ServiceAccount. `deployment.yaml` sets no `serviceAccountName` and turns off token automount, because the app only ever uses the credentials stored in Admin → Clusters. The ServiceAccount exists to mint the token you paste into the UI.
 
-Covers everything the Dashboard needs today, including the YAML edit flow (`update`), scale (`.../scale: update`), restart (`deployments: patch`), pod exec, pod logs, and the informer `watch`.
+Do this on every cluster you will connect with a token, including the one OpenConsole runs in. `deploy/rbac.yaml` creates:
 
-Create `openconsole-clusterrole.yaml`:
+- ServiceAccount `openconsole-reader` (namespace `kubernetes-openconsole`)
+- Secret `openconsole-reader-token`: a long-lived token; Kubernetes fills in `token` and `ca.crt`
+- ClusterRole `openconsole-readonly` and a binding to the ServiceAccount
 
-```yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: openconsole-readonly
-rules:
-  # Core API group — reads (list for everything the Dashboard tabs show,
-  # plus events for the Live Events panel).
-  - apiGroups: [""]
-    resources:
-      - namespaces
-      - pods
-      - services
-      - configmaps
-      - events
-    verbs: ["get", "list", "watch"]
-
-  # Pod logs (pods:logs application permission).
-  - apiGroups: [""]
-    resources:
-      - pods/log
-    verbs: ["get"]
-
-  # Pod shell (pods:exec application permission). Omit if you'll never
-  # grant pods:exec.
-  - apiGroups: [""]
-    resources:
-      - pods/exec
-    verbs: ["create"]
-
-  # Writes on core resources, for the YAML apply flow ({resource}:edit).
-  # Omit `update` on any resource whose edit permission you'll never grant.
-  - apiGroups: [""]
-    resources:
-      - pods
-      - services
-      - configmaps
-    verbs: ["update"]
-
-  # apps/v1 workloads.
-  - apiGroups: ["apps"]
-    resources:
-      - deployments
-      - daemonsets
-      - statefulsets
-    verbs: ["get", "list", "watch"]
-
-  # deployments writes: patch for restart, update for YAML apply.
-  - apiGroups: ["apps"]
-    resources:
-      - deployments
-    verbs: ["patch", "update"]
-
-  # daemonsets / statefulsets YAML apply.
-  - apiGroups: ["apps"]
-    resources:
-      - daemonsets
-      - statefulsets
-    verbs: ["update"]
-
-  # Scale subresource (deployments:scale + statefulsets:scale).
-  - apiGroups: ["apps"]
-    resources:
-      - deployments/scale
-      - statefulsets/scale
-    verbs: ["get", "update"]
-
-  # HorizontalPodAutoscaler v2 — the Dashboard renders metrics from v2.
-  - apiGroups: ["autoscaling"]
-    resources:
-      - horizontalpodautoscalers
-    verbs: ["get", "list", "watch", "update"]
-
-  # Ingress.
-  - apiGroups: ["networking.k8s.io"]
-    resources:
-      - ingresses
-    verbs: ["get", "list", "watch", "update"]
-
-  # Batch.
-  - apiGroups: ["batch"]
-    resources:
-      - cronjobs
-      - jobs
-    verbs: ["get", "list", "watch", "update"]
-```
-
-Apply:
+For the cluster OpenConsole runs in, `kubectl apply -k deploy/` already did this. For a remote cluster:
 
 ```bash
-kubectl apply -f openconsole-clusterrole.yaml
+kubectl --context <remote> create namespace kubernetes-openconsole
+kubectl --context <remote> apply -f deploy/rbac.yaml
 ```
 
-## 3. Bind ClusterRole → ServiceAccount
+What the ClusterRole allows, and which application permission needs it. Delete the rules for permissions you will never grant:
+
+| ClusterRole rule | Needed for |
+|---|---|
+| `namespaces, pods, services, configmaps, events`: get / list / watch | every Dashboard tab, Live Events |
+| `secrets`: get / list | `secrets:list`, `secrets:get`, `secrets:reveal` |
+| `secrets`: update | `secrets:edit` |
+| `pods/log`: get | `pods:logs`, deployment / job logs |
+| `pods/exec`: create | `pods:exec` (shell) |
+| `pods, services, configmaps`: update | `{resource}:edit` (YAML apply) |
+| `deployments, daemonsets, statefulsets`: get / list / watch / update | tabs + `edit` |
+| `deployments`: patch | `deployments:restart` |
+| `deployments/scale, statefulsets/scale`: get / update | `deployments:scale`, `statefulsets:scale` |
+| `horizontalpodautoscalers, ingresses, cronjobs, jobs`: get / list / watch / update | tabs + `edit` |
+
+### Read-only mode
+
+To run OpenConsole purely as a viewer, use `deploy/rbac-readonly.yaml` instead of `deploy/rbac.yaml`. It defines the same ServiceAccount, token and binding names, with a ClusterRole that has only `get` / `list` / `watch`.
 
 ```bash
-kubectl create clusterrolebinding openconsole-readonly-binding \
-  --clusterrole=openconsole-readonly \
-  --serviceaccount=kubernetes-openconsole:openconsole-reader
+kubectl apply -f deploy/rbac-readonly.yaml          # instead of rbac.yaml
+# with kustomize: replace rbac.yaml with rbac-readonly.yaml in deploy/kustomization.yaml
 ```
 
-## 4. Reference the ServiceAccount in the Deployment
+| | Works | Refused by Kubernetes (403) |
+|---|---|---|
+| `rbac-readonly.yaml` | every Dashboard tab, Live Events, pod / deployment / job logs | restart, scale, YAML apply, pod shell. Secrets are not included at all |
 
-Already set in `deploy/deployment.yaml`:
+- The Kubernetes RBAC is the hard limit. Even if an OpenConsole role grants `edit` or `exec`, the API server refuses the call. Still, leave write actions out of your OpenConsole roles too, so users don't see buttons that only fail.
+- Logs are included. Drop the `pods/log` rule if read-only should also mean "no logs".
+- Secrets are excluded on purpose. At the Kubernetes level `get` on secrets means reading values, so enabling the commented rule makes OpenConsole's `secrets:reveal` permission the only protection. If you only need secret metadata, uncomment it and grant `secrets:list` / `secrets:get` only.
+- With the **Kubeconfig** method the same rule applies: OpenConsole can do exactly what the kubeconfig's identity can. A kubeconfig built from this ServiceAccount's token (step 3b) gives you a read-only console. So does a kubeconfig for any identity of your own that only has get / list / watch, without applying either rbac file.
+- To go back to full access, apply `deploy/rbac.yaml`. `kubectl apply` replaces the rule list in place; nothing needs to change in the UI.
 
-```yaml
-spec:
-  template:
-    spec:
-      serviceAccountName: openconsole-reader
-```
+## 2. Read the token and CA
 
-## 5. (Only for out-of-cluster use) Generate a token + minimal kubeconfig
-
-If OpenConsole runs outside the cluster it monitors, create a long-lived token and feed a kubeconfig into **Admin → Clusters** at the UI.
+Run this against the cluster you are adding:
 
 ```bash
-kubectl create token openconsole-reader \
-  -n kubernetes-openconsole \
-  --duration=8760h    # 1 year; adjust as needed
+NS=kubernetes-openconsole
+TOKEN=$(kubectl -n $NS get secret openconsole-reader-token -o jsonpath='{.data.token}' | base64 -d)
+CA=$(kubectl -n $NS get secret openconsole-reader-token -o jsonpath='{.data.ca\.crt}')   # already base64 — use as-is
+SERVER=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
 ```
 
-Minimal kubeconfig:
+`SERVER` must be reachable **from the OpenConsole pod**. For the cluster OpenConsole runs in, use `https://kubernetes.default.svc`.
 
-```yaml
+## 3a. Add it with the ServiceAccount Token method
+
+**Admin → Clusters → Add Cluster**:
+
+| Field | Value |
+|---|---|
+| Name | anything, e.g. `prod-west` |
+| Method | `ServiceAccount Token` |
+| API Server | `$SERVER` (or `https://kubernetes.default.svc` for the local cluster) |
+| Token | `$TOKEN` |
+| CA Cert (base64) | `$CA`. Leave it empty only if the API server certificate is signed by a public CA. |
+
+**Save Cluster** validates the connection. Then click **Activate** on the cluster card. Users now see the namespaces their roles allow.
+
+## 3b. Or with the Kubeconfig method
+
+Upload a kubeconfig under **Method: Kubeconfig → Upload kubeconfig**. It can be any kubeconfig whose identity uses a static token or client certificate, with the RBAC you want (in that case step 1 is not needed). Or build one from the ServiceAccount token above:
+
+```bash
+cat > openconsole-prod-west.kubeconfig <<EOF
 apiVersion: v1
 kind: Config
 clusters:
-- name: target-cluster
+- name: target
   cluster:
-    server: https://YOUR_API_SERVER
-    certificate-authority-data: YOUR_CA_DATA
+    server: ${SERVER}
+    certificate-authority-data: ${CA}
 users:
 - name: openconsole-reader
   user:
-    token: YOUR_GENERATED_TOKEN
+    token: ${TOKEN}
 contexts:
-- name: openconsole-context
+- name: openconsole
   context:
-    cluster: target-cluster
+    cluster: target
     user: openconsole-reader
-current-context: openconsole-context
+current-context: openconsole
+EOF
 ```
+
+> Don't upload your personal kubeconfig. Kubeconfigs that authenticate through an exec plugin (`kubelogin`, `aws eks get-token`, `gke-gcloud-auth-plugin`) don't work: the container has none of those binaries. They would also make OpenConsole act as you instead of as the ServiceAccount.
+
+## Token rotation
+
+```bash
+kubectl -n kubernetes-openconsole delete secret openconsole-reader-token
+kubectl apply -f deploy/rbac.yaml   # Kubernetes issues a new token
+```
+
+Then edit the cluster in Admin → Clusters, tick **Replace credentials** and paste the new token (or upload the new kubeconfig). The old token stops working as soon as its Secret is deleted.
+
+If you would rather use an expiring token: `kubectl -n kubernetes-openconsole create token openconsole-reader --duration=8760h`. You must replace it in the UI before it expires.
+
+## Troubleshooting
+
+- **Validation fails on Save**: the API server is not reachable from the pod (network policy, private endpoint), or the CA does not match.
+- **Secrets tab: "ServiceAccount is not allowed to read secrets"**: the ClusterRole lacks the `secrets` rule. Re-apply `deploy/rbac.yaml`.
+- **A tab is empty or 403 for a user**: check that user's role permissions first, then the ClusterRole rule in the table above.
+
+---
+
+# Application permissions
+
+Granted per role, per namespace, per cluster (or all clusters) under **Admin → Roles**. Admins implicitly have everything.
+
+| Resource | Actions |
+|---|---|
+| pods | `list`, `get`, `logs`, `exec`, `edit` |
+| deployments | `list`, `get`, `restart`, `scale`, `edit` |
+| daemonsets, hpas, services, configmaps, ingresses, cronjobs, jobs | `list`, `get`, `edit` |
+| statefulsets | `list`, `get`, `scale`, `edit` |
+| secrets | `list`, `get`, `reveal`, `edit` |
+
+Templates in the Add Permissions modal: Viewer (read only, including secret *metadata*), Developer (+ restart / scale), SRE (+ edit on common workloads, pod exec), Admin (everything, including `secrets:reveal` and `secrets:edit`). Any of these can also be granted one by one to any role, so regular users can be given secret access per namespace without being admins.
 
 ---
 
@@ -338,6 +336,25 @@ Interactive shell into a running container, gated by application permission `pod
 - Exec is the highest-risk action in OpenConsole; grant it narrowly.
 - Non-root pod admission policies in your cluster still apply.
 
+# Secrets
+
+The Secrets tab (after ConfigMaps) uses four permissions. Seeing that a secret exists, reading a value and changing it are separate grants. Admins have all four; give them to other users per namespace through their roles (Admin → Roles).
+
+| Permission | Returns |
+|---|---|
+| `secrets:list` | name, type, key count, age |
+| `secrets:get` | the **Keys** modal: type, immutable flag, labels, annotations, key names and sizes |
+| `secrets:reveal` | **Show** on a key: that one key's value, plus copy / hide buttons |
+| `secrets:edit` | the **YAML** button: the same editor as other resources (read-only view → Edit → Dry-run → diff → Apply) |
+
+- Values never leave the server on `list` / `get`. The `kubectl.kubernetes.io/last-applied-configuration` annotation, which embeds the data, is dropped too.
+- `reveal` is a POST for a single key, sent with `Cache-Control: no-store`. Binary values come back base64-encoded and labelled as such. Revealed values are discarded when the modal closes.
+- Every reveal is audited as `secret.reveal.{success,denied,failed}` with the namespace, secret and key name (never the value). It also emits a `secret.action` console line.
+- **Editing (`secrets:edit`)**: the YAML shows text values as plain-text `stringData`, so you edit readable values instead of base64. Binary values stay base64 in `data`. On apply Kubernetes merges `stringData` into `data`. Removing a key from the YAML deletes it. The dry-run result comes back in the same shape, so the before / after diff compares like with like.
+- The YAML holds every value, so opening it requires `secrets:edit`; `get` or `reveal` is not enough. Each open is audited as `secret.yaml.view.{success,denied,failed}`, and changes as `secrets.apply.{success,denied,rate_limited,failed}`, the same as other resources. Optimistic concurrency applies too: a stale `resourceVersion` gives a 409.
+- Secrets are not held in the informer cache. Each request reads from the API server, so no secret values sit in OpenConsole's memory.
+- Needs the `secrets` rule in the ClusterRole: get / list, plus `update` for `secrets:edit`.
+
 # Session Recording
 
 Every pod shell session is recorded as an [asciicast v2](https://docs.asciinema.org/manual/asciicast/v2/) file and can be replayed by admins. Recording lives entirely inside OpenConsole — no extra ClusterRole permissions.
@@ -353,7 +370,7 @@ Every pod shell session is recorded as an [asciicast v2](https://docs.asciinema.
 **Playback (Admin → Recordings)**
 - Filter by user, namespace, pod and date range. The table shows duration, size, and *in progress* / *truncated* badges.
 - ▶ opens an in-browser player: play / pause, timeline seek, 1x / 2x / 4x, and "skip idle time" (squeezes pauses longer than 2 s).
-- ⬇ downloads the `.cast` file. It plays in the `asciinema` CLI too: `asciinema play file.cast`.
+- ⬇ downloads the `.cast` file, after a confirmation that warns the file may contain secrets and must not be shared in tickets / chat / email. It plays in the `asciinema` CLI too: `asciinema play file.cast`.
 - 🗑 deletes the file and its row. A recording whose session is still running can't be deleted.
 
 **Settings (Admin → Recordings → Recording settings).** On/off, retention, per-session cap, total quota, free-space floor and disk policy. Changes apply to new sessions immediately, with no restart; a running session keeps the limits it started with. Lowering the retention triggers a purge right away.
@@ -445,7 +462,8 @@ Open the full cheat sheet with `?`. The core set:
 # Security notes
 
 - Grant each verb (`patch`, `update`, `pods/exec`, `pods/log`) only if the matching application permission will actually be handed to at least one role.
-- OpenConsole's ServiceAccount should never be granted more than the actions the UI will expose — `secrets` access and port-forward are intentionally not used by the app.
+- OpenConsole's ServiceAccount should never be granted more than the actions the UI will expose. Port-forward is not used. `secrets` get / list is only needed for the Secrets tab; drop that rule if you won't grant any `secrets:*` permission.
+- `secrets:reveal`, `secrets:edit` and `pods:exec` are the permissions that expose credentials. Grant them narrowly and review the `secret.reveal.*`, `secret.yaml.view.*`, `secrets.apply.*` and `pod.exec.*` audit entries.
 - Token rotation is recommended (every 6–12 months).
 - Do not store generated tokens in Git.
 - Prefer one ServiceAccount per cluster.
@@ -453,8 +471,7 @@ Open the full cheat sheet with `?`. The core set:
 
 ## Recommended production pattern
 
-- One ServiceAccount per cluster.
-- One kubeconfig per cluster (only needed when running outside the cluster you monitor).
+- One ServiceAccount per cluster (`deploy/rbac.yaml`), added with its own token — never personal credentials.
 - Store tokens securely.
 - Rotate periodically.
 - Avoid using personal user credentials.
@@ -473,11 +490,12 @@ You will be forced to change the password on first login.
 ## Usage
 
 1. Log in as admin.
-2. **Admin → Clusters**: add one or more clusters (kubeconfig or token), validate, activate one.
+2. **Admin → Clusters**: add one or more clusters ([Connecting clusters](#connecting-clusters)) and activate one.
 3. **Admin → LDAP / Azure AD**: configure optional identity providers.
 4. **Admin → Users / Groups / Roles**: define access. Use the new Role Permissions screen for bulk grants, templates (Viewer / Developer / SRE / Admin), and copy-from-role.
 5. **Admin → Sessions**: monitor and revoke tokens.
 6. **Admin → Audit Logs**: filter, search, export CSV.
+7. **Admin → Recordings**: replay pod shell sessions, set retention and disk limits.
 
 ## Example LDAP (Active Directory) config
 
@@ -510,7 +528,7 @@ Azure AD runs in parallel with local / LDAP authentication.
 
 ## Tips & gotchas
 
-- **Cluster connection is UI-only**. No env vars or mounted kubeconfigs are consumed by the backend.
+- **Cluster connection is UI-only**. No env vars, mounted kubeconfigs or in-cluster ServiceAccount auto-detection are used by the backend: add even the local cluster in Admin → Clusters.
 - **Namespace visibility is permission-based**; if a user sees nothing, check role permissions.
 - If LDAP bind password is already configured, toggle **Update Bind Password** only when actually changing it.
 - Audit log filters combine user / action / namespace / date range.

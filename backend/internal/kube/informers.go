@@ -124,7 +124,7 @@ type InformerCache struct {
 	namespaceLister   corelisters.NamespaceLister
 }
 
-func newInformerCache(client *kubernetes.Clientset, bus *EventBus) *InformerCache {
+func newInformerCache(client kubernetes.Interface, bus *EventBus) *InformerCache {
 	// 10m resync keeps listers lively without flooding the API server; events
 	// still arrive via the watch stream in near real-time.
 	factory := informers.NewSharedInformerFactory(client, 10*time.Minute)

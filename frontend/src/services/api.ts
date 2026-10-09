@@ -255,6 +255,39 @@ export const getCronJobYaml = (namespace: string, name: string) =>
 export const getConfigMapData = (namespace: string, name: string) =>
   apiRequest<{ data: Record<string, string> }>(`/api/namespaces/${namespace}/configmaps/${name}/data`);
 
+// Secrets: list / get return metadata + key names and sizes only; a value is
+// fetched one key at a time through reveal (needs secrets:reveal, audited).
+export type SecretSummary = {
+  metadata: {
+    name: string;
+    namespace: string;
+    uid: string;
+    creationTimestamp: string;
+    labels?: Record<string, string>;
+    annotations?: Record<string, string>;
+  };
+  type: string;
+  immutable: boolean;
+  keys: Array<{ name: string; size: number }>;
+};
+
+export const listSecrets = (namespace: string) =>
+  apiRequest<{ items: SecretSummary[] }>(`/api/namespaces/${namespace}/secrets`);
+
+export const getSecret = (namespace: string, name: string) =>
+  apiRequest<SecretSummary>(`/api/namespaces/${namespace}/secrets/${encodeURIComponent(name)}`);
+
+// Editable YAML (needs secrets:edit, audited): text values are shown as
+// plain-text stringData, binary ones stay base64 in data.
+export const getSecretYaml = (namespace: string, name: string) =>
+  apiRequest<{ yaml: string }>(`/api/namespaces/${namespace}/secrets/${encodeURIComponent(name)}/yaml`);
+
+export const revealSecretKey = (namespace: string, name: string, key: string) =>
+  apiRequest<{ key: string; value: string; encoding: 'text' | 'base64' }>(
+    `/api/namespaces/${namespace}/secrets/${encodeURIComponent(name)}/reveal`,
+    { method: 'POST', body: JSON.stringify({ key }) },
+  );
+
 export const getPodEvents = (namespace: string, name: string) =>
   apiRequest<{ items: Array<Record<string, unknown>> }>(`/api/namespaces/${namespace}/pods/${name}/events`);
 

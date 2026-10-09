@@ -213,6 +213,10 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/namespaces/{namespace}/configmaps/{name}", s.handleConfigMap)
 		r.Get("/api/namespaces/{namespace}/configmaps/{name}/yaml", s.handleConfigMapYAML)
 		r.Get("/api/namespaces/{namespace}/configmaps/{name}/data", s.handleConfigMapData)
+		r.Get("/api/namespaces/{namespace}/secrets", s.handleSecrets)
+		r.Get("/api/namespaces/{namespace}/secrets/{name}", s.handleSecret)
+		r.Post("/api/namespaces/{namespace}/secrets/{name}/reveal", s.handleSecretReveal)
+		r.Get("/api/namespaces/{namespace}/secrets/{name}/yaml", s.handleSecretYAML)
 		r.Get("/api/namespaces/{namespace}/ingresses", s.handleIngresses)
 		r.Get("/api/namespaces/{namespace}/ingresses/{name}/yaml", s.handleIngressYAML)
 		r.Get("/api/namespaces/{namespace}/cronjobs", s.handleCronJobs)
@@ -915,6 +919,7 @@ func (s *Server) handleNamespacePermissions(w http.ResponseWriter, r *http.Reque
 				"hpas":         {"list", "get", "edit"},
 				"services":     {"list", "get", "edit"},
 				"configmaps":   {"list", "get", "edit"},
+				"secrets":      {"list", "get", "reveal", "edit"},
 				"ingresses":    {"list", "get", "edit"},
 				"cronjobs":     {"list", "get", "edit"},
 				"jobs":         {"list", "get", "edit"},

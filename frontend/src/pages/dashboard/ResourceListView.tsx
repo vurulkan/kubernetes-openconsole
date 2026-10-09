@@ -3,6 +3,7 @@ import {
   Activity,
   FileCode2,
   FileText,
+  KeyRound,
   RotateCcw,
   Scaling,
   Terminal,
@@ -29,6 +30,8 @@ type Props = {
   openEventsModal: (type: 'pods' | 'deployments', ns: string, name: string) => void | Promise<void>;
   openLogModal: (ns: string, name: string) => void;
   openConfigMapDataModal: (ns: string, name: string) => void | Promise<void>;
+  openSecretModal: (name: string) => void;
+  canEditSecrets: boolean;
   openDeploymentLogs: (ns: string, name: string) => void;
   openJobLogs: (ns: string, name: string) => void;
   onExec: (name: string, containers: string[]) => void;
@@ -54,6 +57,8 @@ export const ResourceListView: React.FC<Props> = ({
   openEventsModal,
   openLogModal,
   openConfigMapDataModal,
+  openSecretModal,
+  canEditSecrets,
   openDeploymentLogs,
   openJobLogs,
   onExec,
@@ -367,6 +372,51 @@ export const ResourceListView: React.FC<Props> = ({
               >
                 <FileCode2 size={13} />
               </IconButton>
+            </div>
+          ),
+        },
+      ];
+    }
+
+    if (activeTab === 'secrets') {
+      return [
+        nameCol,
+        {
+          key: 'type',
+          header: t('secrets.type'),
+          sortValue: (it) => String(it.type ?? ''),
+          cell: (it) => (
+            <span className="font-mono text-xs text-slate-500 dark:text-slate-400">{String(it.type ?? '')}</span>
+          ),
+        },
+        {
+          key: 'keys',
+          header: t('secrets.keys'),
+          align: 'center',
+          width: '80px',
+          sortValue: (it) => ((it.keys as unknown[]) ?? []).length,
+          cell: (it) => (
+            <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
+              {((it.keys as unknown[]) ?? []).length}
+            </span>
+          ),
+        },
+        ageCol,
+        {
+          key: 'actions',
+          header: '',
+          align: 'right',
+          width: '90px',
+          cell: (it) => (
+            <div className="flex justify-end gap-1">
+              <IconButton label={t('secrets.keys')} onClick={() => openSecretModal(nameOf(it))}>
+                <KeyRound size={13} />
+              </IconButton>
+              {canEditSecrets && (
+                <IconButton label="YAML" onClick={() => openYamlModal('secrets', selectedNamespace, nameOf(it))}>
+                  <FileCode2 size={13} />
+                </IconButton>
+              )}
             </div>
           ),
         },
@@ -734,6 +784,8 @@ export const ResourceListView: React.FC<Props> = ({
     canRestartDeployments,
     canScaleDeployments,
     canScaleStatefulSets,
+    canEditSecrets,
+    t,
   ]);
 
   return (

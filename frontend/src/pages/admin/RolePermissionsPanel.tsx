@@ -73,6 +73,15 @@ const RESOURCE_CATALOG: Array<{ resource: string; actions: ActionDef[] }> = [
     { key: 'get', family: 'read' },
     { key: 'edit', family: 'destructive' },
   ]},
+  // list/get expose names, types and key names only; reveal returns values
+  // and edit opens the full YAML (values included) — both audited, both in
+  // the destructive (red) family, so only the Admin template has them.
+  { resource: 'secrets', actions: [
+    { key: 'list', family: 'read' },
+    { key: 'get', family: 'read' },
+    { key: 'reveal', family: 'destructive' },
+    { key: 'edit', family: 'destructive' },
+  ]},
   { resource: 'ingresses', actions: [
     { key: 'list', family: 'read' },
     { key: 'get', family: 'read' },

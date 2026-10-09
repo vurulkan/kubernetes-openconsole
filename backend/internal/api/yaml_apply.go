@@ -29,6 +29,7 @@ var resourceGVR = map[string]resourceTarget{
 	"pods":         {schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}, "Pod"},
 	"services":     {schema.GroupVersionResource{Group: "", Version: "v1", Resource: "services"}, "Service"},
 	"configmaps":   {schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}, "ConfigMap"},
+	"secrets":      {schema.GroupVersionResource{Group: "", Version: "v1", Resource: "secrets"}, "Secret"},
 	"deployments":  {schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}, "Deployment"},
 	"daemonsets":   {schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "daemonsets"}, "DaemonSet"},
 	"statefulsets": {schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "statefulsets"}, "StatefulSet"},

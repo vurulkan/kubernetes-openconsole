@@ -13,7 +13,15 @@ spec:
       labels:
         app: kubernetes-openconsole
     spec:
-      serviceAccountName: openconsole-reader
+      # OpenConsole never uses the pod's own ServiceAccount: cluster access
+      # comes only from the credentials added in Admin → Clusters (stored
+      # encrypted in SQLite). So the pod runs without a ServiceAccount token
+      # mounted — a compromised container finds no cluster token on disk.
+      # The openconsole-reader ServiceAccount in rbac.yaml exists only to
+      # mint the token you paste into the UI; it does not need to be the
+      # pod's ServiceAccount.
+      # serviceAccountName: openconsole-reader
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -23,8 +31,10 @@ spec:
           type: RuntimeDefault
       containers:
         - name: dashboard
-          image: ghcr.io/vurulkan/kubernetes-openconsole:latest
-          imagePullPolicy: Always
+          # Pin a release. :latest follows every push to main (CI) and moves
+          # under you; a pinned X.Y.Z tag never changes.
+          image: ghcr.io/vurulkan/kubernetes-openconsole:2.12.0
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
               name: http
@@ -161,7 +171,7 @@ spec:
             # Handy if you deploy multiple parallel versions (canary, blue /
             # green). Uncomment to use.
             # - name: APP_VERSION
-            #   value: "2.9.0"
+            #   value: "2.12.0"
           resources:
             # Requests cover a quiet steady-state (small cluster, lister cache
             # in the low-MB range). Limits give headroom for informer cache

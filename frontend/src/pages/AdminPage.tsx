@@ -132,6 +132,8 @@ const DEFAULT_PERMISSION_MATRIX = {
   hpas: { list: true, get: true, edit: false },
   services: { list: true, get: true, edit: false },
   configmaps: { list: true, get: true, edit: false },
+  // Off by default: the classic form should never grant secrets implicitly.
+  secrets: { list: false, get: false, reveal: false, edit: false },
   ingresses: { list: true, get: true, edit: false },
   cronjobs: { list: true, get: true, edit: false },
   jobs: { list: true, get: true, edit: false },

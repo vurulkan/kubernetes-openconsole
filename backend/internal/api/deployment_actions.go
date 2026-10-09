@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"golang.org/x/time/rate"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
 	"k8s-dashboard/backend/internal/logging"
 	"k8s-dashboard/backend/internal/models"
@@ -75,7 +77,7 @@ func (s *Server) handleDeploymentRestart(w http.ResponseWriter, r *http.Request)
 			slog.String("request_id", requestID),
 		)
 		s.recordDeployAudit(user.Username, namespace, name, "deployment.restart", "failed", err.Error(), requestID)
-		writeError(w, http.StatusBadGateway, "restart failed")
+		writeActionError(w, err, "restart failed")
 		return
 	}
 
@@ -140,7 +142,7 @@ func (s *Server) handleDeploymentScale(w http.ResponseWriter, r *http.Request) {
 		)
 		s.recordDeployAudit(user.Username, namespace, name, "deployment.scale", "failed",
 			fmt.Sprintf("from=%d to=%d err=%s", previous, body.Replicas, err.Error()), requestID)
-		writeError(w, http.StatusBadGateway, "scale failed")
+		writeActionError(w, err, "scale failed")
 		return
 	}
 
@@ -174,4 +176,17 @@ func (s *Server) recordDeployAudit(user, namespace, name, action, outcome, detai
 		slog.String("details", details),
 		slog.String("request_id", requestID),
 	)
+}
+
+// writeActionError reports a failed write action. Kubernetes API errors keep
+// their real status — notably 403 when the ServiceAccount's ClusterRole does
+// not allow the verb (e.g. the read-only RBAC) — with the server's message;
+// anything else (cluster unreachable) stays a 502.
+func writeActionError(w http.ResponseWriter, err error, fallback string) {
+	var status apierrors.APIStatus
+	if errors.As(err, &status) {
+		writeError(w, httpStatusFor(err), fallback+": "+err.Error())
+		return
+	}
+	writeError(w, http.StatusBadGateway, fallback)
 }

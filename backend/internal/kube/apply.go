@@ -123,6 +123,14 @@ func (c *ResourceClient) Apply(
 	// like status timestamps, generation, etc.). This is what the user is
 	// about to see on the right side of the diff, so send it back.
 	updated.SetManagedFields(nil)
+	if gvr.Resource == "secrets" {
+		// Same readable shape the editor was opened with (see secretyaml.go).
+		yamlOut, err := editableSecretFromMap(updated.Object)
+		if err != nil {
+			return nil, err
+		}
+		return &ApplyResult{AppliedYAML: string(yamlOut), DryRun: dryRun}, nil
+	}
 	jsonOut, err := updated.MarshalJSON()
 	if err != nil {
 		return nil, fmt.Errorf("marshal result: %w", err)

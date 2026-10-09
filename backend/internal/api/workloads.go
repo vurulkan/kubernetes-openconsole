@@ -174,7 +174,7 @@ func (s *Server) handleStatefulSetScale(w http.ResponseWriter, r *http.Request) 
 		)
 		s.recordWorkloadAudit(user.Username, namespace, name, "statefulset", "statefulset.scale", "failed",
 			fmt.Sprintf("from=%d to=%d err=%s", previous, body.Replicas, err.Error()), requestID)
-		writeError(w, http.StatusBadGateway, "scale failed")
+		writeActionError(w, err, "scale failed")
 		return
 	}
 

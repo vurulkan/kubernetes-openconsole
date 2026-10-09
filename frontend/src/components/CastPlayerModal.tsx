@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Download } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Alert, Badge, Button, Modal, Spinner, Toggle } from './ui';
+import { confirm } from './ConfirmDialog';
 import { downloadRecordingCast, getRecordingCast, SessionRecording } from '../services/api';
 import { formatBytes, formatDuration } from '../utils/format';
 
@@ -23,6 +24,29 @@ const loadPlayer = () => {
   }
   return playerModule;
 };
+
+/**
+ * Downloads a recording after the admin acknowledges that the file can hold
+ * secrets. Shared by the recordings table and the player. Returns false when
+ * the admin cancels.
+ */
+export async function downloadRecordingWithWarning(
+  recording: SessionRecording,
+  t: (key: string, opts?: Record<string, unknown>) => string,
+): Promise<boolean> {
+  const ok = await confirm({
+    title: t('recordings.downloadWarnTitle'),
+    message: t('recordings.downloadWarnBody', {
+      user: recording.user,
+      target: `${recording.namespace}/${recording.pod}`,
+    }),
+    confirmText: t('recordings.downloadWarnConfirm'),
+    variant: 'danger',
+  });
+  if (!ok) return false;
+  await downloadRecordingCast(recording.id);
+  return true;
+}
 
 const SPEEDS = [1, 2, 4] as const;
 // Pauses longer than this are squeezed when "skip idle" is on, so a session
@@ -143,7 +167,7 @@ export const CastPlayerModal: React.FC<Props> = ({ recording, onClose }) => {
   const handleDownload = async () => {
     if (!recording) return;
     try {
-      await downloadRecordingCast(recording.id);
+      await downloadRecordingWithWarning(recording, t);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }

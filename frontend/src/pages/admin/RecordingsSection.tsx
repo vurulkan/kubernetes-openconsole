@@ -4,10 +4,9 @@ import { useTranslation } from 'react-i18next';
 import { Alert, Badge, Button, Input, NativeSelect, Toggle } from '../../components/ui';
 import { Column, DataTable, IconButton } from '../../components/DataTable';
 import { confirm } from '../../components/ConfirmDialog';
-import CastPlayerModal from '../../components/CastPlayerModal';
+import CastPlayerModal, { downloadRecordingWithWarning } from '../../components/CastPlayerModal';
 import {
   deleteRecording,
-  downloadRecordingCast,
   getRecordingSettings,
   listRecordings,
   RecordingDiskPolicy,
@@ -243,7 +242,7 @@ export const RecordingsSection: React.FC = () => {
 
   const handleDownload = async (row: SessionRecording) => {
     try {
-      await downloadRecordingCast(row.id);
+      await downloadRecordingWithWarning(row, t);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
