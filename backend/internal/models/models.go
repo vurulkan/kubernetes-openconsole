@@ -168,3 +168,21 @@ type RecordingSettings struct {
 	MinFreeMB     int    `json:"minFreeMb"`
 	DiskPolicy    string `json:"diskPolicy"`
 }
+
+// SavedView is a named Dashboard filter (namespace + tab + search + view
+// mode) owned by a user; Shared makes it visible to everyone.
+type SavedView struct {
+	ID          int       `json:"id"`
+	UserID      int       `json:"-"`
+	Owner       string    `json:"owner"`
+	Name        string    `json:"name"`
+	ClusterID   int       `json:"clusterId"`
+	ClusterName string    `json:"clusterName"`
+	Namespace   string    `json:"namespace"`
+	Tab         string    `json:"tab"`
+	Search      string    `json:"search"`
+	ViewMode    string    `json:"viewMode"`
+	Shared      bool      `json:"shared"`
+	CreatedAt   time.Time `json:"createdAt"`
+}
+

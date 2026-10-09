@@ -772,3 +772,30 @@ export const resetUserPassword = (userId: number, password: string, mustChange: 
     method: 'POST',
     body: JSON.stringify({ password, mustChange }),
   });
+
+// ─── Saved views (2.14.0): stored per user on the server, shareable ─────────
+
+export type ServerView = {
+  id: number;
+  name: string;
+  owner: string;
+  mine: boolean;
+  clusterId: number;
+  clusterName: string;
+  namespace: string;
+  tab: string;
+  search: string;
+  viewMode: 'card' | 'list';
+  shared: boolean;
+};
+
+export const listViews = () => apiRequest<{ items: ServerView[] }>('/api/views');
+
+export const saveView = (view: { name: string; namespace: string; tab: string; search: string; viewMode: string; shared?: boolean }) =>
+  apiRequest<{ id: number }>('/api/views', { method: 'POST', body: JSON.stringify(view) });
+
+export const shareView = (id: number, shared: boolean) =>
+  apiRequest<{ status: string }>(`/api/views/${id}`, { method: 'PUT', body: JSON.stringify({ shared }) });
+
+export const deleteView = (id: number) => apiRequest<{ status: string }>(`/api/views/${id}`, { method: 'DELETE' });
+

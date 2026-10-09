@@ -174,6 +174,22 @@ func migrate(ctx context.Context, conn *sql.DB) error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_session_recordings_started ON session_recordings (started_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_session_recordings_user ON session_recordings (user)`,
+		// Dashboard saved views (namespace + tab + search + view mode) per
+		// user; shared = visible to everyone. cluster_id = cluster the view
+		// was saved on (NULL = none).
+		`CREATE TABLE IF NOT EXISTS saved_views (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL,
+			name TEXT NOT NULL,
+			cluster_id INTEGER NULL,
+			namespace TEXT NOT NULL DEFAULT '',
+			tab TEXT NOT NULL DEFAULT '',
+			search TEXT NOT NULL DEFAULT '',
+			view_mode TEXT NOT NULL DEFAULT 'card',
+			shared INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME NOT NULL,
+			UNIQUE (user_id, name)
+		);`,
 		// Seeded from SESSION_RECORDING_* env on first boot by the recording
 		// manager; the admin UI owns it afterwards.
 		`CREATE TABLE IF NOT EXISTS recording_settings (
