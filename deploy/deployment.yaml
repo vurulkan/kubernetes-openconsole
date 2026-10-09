@@ -108,6 +108,27 @@ spec:
             - name: MAX_REPLICAS
               value: "100"
 
+            # The ones below are commented out and show their defaults.
+            # PASSWORD_MIN_LENGTH: minimum length of local passwords. Default 8.
+            # - name: PASSWORD_MIN_LENGTH
+            #   value: "12"
+            # EXEC_IDLE_TIMEOUT: close a pod shell after this long without
+            # input (Go duration, minimum 30s). Default 5m.
+            # - name: EXEC_IDLE_TIMEOUT
+            #   value: 5m
+            # MAX_EXEC_SESSIONS_PER_USER: concurrent pod shells per user; one
+            # more gets 429. 0 = unlimited. Default 3.
+            # - name: MAX_EXEC_SESSIONS_PER_USER
+            #   value: "3"
+
+            # ── Feature flags (2.14.0+) ─────────────────────────────────────────
+            # Switch a capability off for EVERYONE, admins included, whatever
+            # the roles say: FEATURE_POD_EXEC, FEATURE_YAML_EDIT,
+            # FEATURE_WORKLOAD_ACTIONS, FEATURE_SECRETS, FEATURE_SECRET_REVEAL,
+            # FEATURE_SECRET_EDIT. Everything is on by default.
+            # - name: FEATURE_POD_EXEC
+            #   value: "false"
+
             # ── Pod shell session recording (2.11.0+) ───────────────────────────
             # Every pod exec session is saved as an asciicast v2 file and can be
             # replayed under Admin → Recordings. Recordings hold everything the
@@ -138,7 +159,21 @@ spec:
             # Handy if you deploy multiple parallel versions (canary, blue /
             # green). Uncomment to use.
             # - name: APP_VERSION
-            #   value: "2.12.0"
+            #   value: "2.14.0"
+
+            # ── Tracing (OpenTelemetry, 2.14.0+) ────────────────────────────────
+            # Off unless an OTLP/HTTP endpoint is set. Standard OTEL_* variables
+            # apply (OTEL_SERVICE_NAME, OTEL_EXPORTER_OTLP_HEADERS,
+            # OTEL_TRACES_SAMPLER, ...). APP_VERSION / APP_ENV above become
+            # service.version / deployment.environment.
+            # - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            #   value: http://otel-collector.observability:4318
+
+            # ── Azure AD national clouds ────────────────────────────────────────
+            # AZURE_AD_AUTHORITY: only for US Government / China clouds.
+            # Default https://login.microsoftonline.com.
+            # - name: AZURE_AD_AUTHORITY
+            #   value: https://login.microsoftonline.us
           resources:
             # Requests cover a quiet steady-state (small cluster, lister cache
             # in the low-MB range). Limits give headroom for informer cache
