@@ -111,6 +111,7 @@ export const RolesSection: React.FC<Props> = ({
         </Button>
       </div>
       <DataTable
+        keyboardNav
         rows={rows}
         columns={columns}
         rowKey={(r) => r.id}

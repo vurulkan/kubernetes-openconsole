@@ -210,6 +210,7 @@ const en = {
     dismiss: 'Dismiss',
   },
   admin: {
+    exportCsv: 'Export CSV',
     cards: {
       subtitle: 'Manage users, roles, LDAP, sessions and cluster connections entirely from the UI.',
       configuredClusters: 'Configured Clusters',
@@ -570,6 +571,7 @@ const en = {
       scale: 'Scale modal',
       palette: 'Command palette',
       cluster: 'Cluster switcher',
+      tables: 'Admin tables',
     },
     rows: {
       openPalette: 'Open command palette',
@@ -587,7 +589,7 @@ const en = {
       focusNamespace: 'Focus the namespace filter',
       toggleEvents: 'Toggle Live Events panel',
       closeEvents: 'Close Live Events panel (when open)',
-      openCluster: 'Open cluster switcher (admin only)',
+      openCluster: 'Open cluster switcher (your own cluster)',
       openViews: 'Open Saved Views dropdown',
       prevSub: 'Previous sub-section',
       nextSub: 'Next sub-section',
@@ -601,6 +603,10 @@ const en = {
       moveFocus: 'Move focus',
       activate: 'Activate focused item',
       closeNoSwitch: 'Close without switching',
+      rowDownUp: 'Move the row cursor down / up',
+      rowOpen: 'Open the selected row',
+      rowDelete: 'Delete the selected row (asks first)',
+      pageNextPrev: 'Next / previous page',
     },
   },
   common: {
@@ -860,6 +866,7 @@ const tr = {
     dismiss: 'Kapat',
   },
   admin: {
+    exportCsv: 'CSV olarak dışa aktar',
     cards: {
       subtitle: 'Kullanıcıları, rolleri, LDAP\'ı, oturumları ve cluster bağlantılarını tamamen arayüzden yönetin.',
       configuredClusters: 'Tanımlı Cluster\'lar',
@@ -1220,6 +1227,7 @@ const tr = {
       scale: 'Ölçekleme modal\'ı',
       palette: 'Komut paleti',
       cluster: 'Cluster seçici',
+      tables: 'Admin tabloları',
     },
     rows: {
       openPalette: 'Komut paletini aç',
@@ -1237,7 +1245,7 @@ const tr = {
       focusNamespace: 'Namespace filtresine odaklan',
       toggleEvents: 'Canlı Olaylar panelini aç/kapat',
       closeEvents: 'Canlı Olaylar panelini kapat (açıkken)',
-      openCluster: 'Cluster seçiciyi aç (sadece admin)',
+      openCluster: 'Cluster seçiciyi aç (kendi cluster\'ınız)',
       openViews: 'Kayıtlı Görünümler menüsünü aç',
       prevSub: 'Önceki alt-bölüm',
       nextSub: 'Sonraki alt-bölüm',
@@ -1251,6 +1259,10 @@ const tr = {
       moveFocus: 'Odağı oynat',
       activate: 'Odaklı öğeyi aktive et',
       closeNoSwitch: 'Değiştirmeden kapat',
+      rowDownUp: 'Satır imlecini aşağı / yukarı taşı',
+      rowOpen: 'Seçili satırı aç',
+      rowDelete: 'Seçili satırı sil (önce sorar)',
+      pageNextPrev: 'Sonraki / önceki sayfa',
     },
   },
   common: {

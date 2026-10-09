@@ -243,6 +243,8 @@ func (s *Server) Router() http.Handler {
 		r.Use(s.clusterMiddleware)
 		r.Use(s.requireAdmin)
 		r.Get("/api/admin/users", s.handleListUsers)
+		r.Get("/api/admin/users/export", s.handleExportUsers)
+		r.Get("/api/admin/groups/export", s.handleExportGroups)
 		r.Post("/api/admin/users", s.handleCreateUser)
 		r.Put("/api/admin/users/{id}", s.handleUpdateUser)
 		r.Delete("/api/admin/users/{id}", s.handleDeleteUser)

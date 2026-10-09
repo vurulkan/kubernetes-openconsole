@@ -1,5 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ChevronsUpDown } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { useScopedShortcuts } from '../hooks/useScopedShortcuts';
 
 export type Column<T> = {
   key: string;
@@ -18,6 +20,14 @@ type Props<T> = {
   rowKey: (row: T) => string | number;
   onRowClick?: (row: T) => void;
   pageSize?: number;
+  /**
+   * Keyboard navigation (admin tables): j / k move the row cursor, Enter
+   * opens the row (onRowClick, else its first non-danger action), d clicks
+   * the row's danger action (delete — which asks for confirmation), n / p
+   * change page. Off while typing or while a modal is open. Enable it on at
+   * most one table per screen.
+   */
+  keyboardNav?: boolean;
   emptyMessage?: string;
   /**
    * localStorage key for persisting the sort state between visits. If omitted,
@@ -48,8 +58,13 @@ export function DataTable<T>({
   pageSize = 25,
   emptyMessage = 'No data.',
   sortStorageKey,
+  keyboardNav = false,
 }: Props<T>) {
+  const { t } = useTranslation();
   const [page, setPage] = useState(0);
+  // Row cursor for keyboard navigation (index into the current page).
+  const [cursor, setCursor] = useState<number | null>(null);
+  const rowRefs = useRef<Array<HTMLTableRowElement | null>>([]);
 
   // Sort state persisted per-table via sortStorageKey so a user who likes
   // "Age desc" on the Pods list keeps it on refresh.
@@ -121,6 +136,94 @@ export function DataTable<T>({
     setTimeout(() => setPage(Math.max(0, pageCount - 1)), 0);
   }
 
+  const sliceLen = slice.length;
+  // Keep the cursor inside the page when rows change.
+  useEffect(() => {
+    if (cursor !== null && cursor >= sliceLen) setCursor(sliceLen > 0 ? sliceLen - 1 : null);
+  }, [cursor, sliceLen]);
+  useEffect(() => {
+    if (cursor !== null) rowRefs.current[cursor]?.scrollIntoView({ block: 'nearest' });
+  }, [cursor]);
+
+  const clickInRow = (selector: string) => {
+    if (cursor === null) return;
+    const btn = rowRefs.current[cursor]?.querySelector<HTMLButtonElement>(selector);
+    btn?.click();
+  };
+
+  useScopedShortcuts(
+    [
+      {
+        key: 'j',
+        handler: () => {
+          if (sliceLen === 0) return;
+          if (cursor === null) setCursor(0);
+          else if (cursor < sliceLen - 1) setCursor(cursor + 1);
+          else if (page < pageCount - 1) {
+            setPage(page + 1);
+            setCursor(0);
+          }
+        },
+      },
+      {
+        key: 'k',
+        handler: () => {
+          if (sliceLen === 0) return;
+          if (cursor === null) setCursor(0);
+          else if (cursor > 0) setCursor(cursor - 1);
+          else if (page > 0) {
+            setPage(page - 1);
+            setCursor(pageSize - 1);
+          }
+        },
+      },
+      // Enter / d / Esc only bind while a row is selected: the hook calls
+      // preventDefault, and an always-on Enter would swallow keyboard
+      // activation of every focused button on the page.
+      ...(cursor === null
+        ? []
+        : [
+            {
+              key: 'Enter',
+              handler: () => {
+                const row = slice[cursor];
+                if (onRowClick && row) onRowClick(row);
+                else clickInRow('button:not([data-variant="danger"])');
+              },
+            },
+            { key: 'd', handler: () => clickInRow('button[data-variant="danger"]') },
+            { key: 'Escape', handler: () => setCursor(null) },
+          ]),
+      {
+        key: 'n',
+        handler: () => {
+          if (page < pageCount - 1) {
+            setPage(page + 1);
+            setCursor(0);
+          }
+        },
+      },
+      {
+        key: 'p',
+        handler: () => {
+          if (page > 0) {
+            setPage(page - 1);
+            setCursor(0);
+          }
+        },
+      },
+    ],
+    keyboardNav,
+  );
+
+  // Using the mouse leaves keyboard mode.
+  useEffect(() => {
+    if (!keyboardNav || cursor === null) return;
+    const clear = () => setCursor(null);
+    document.addEventListener('mousedown', clear);
+    return () => document.removeEventListener('mousedown', clear);
+  }, [keyboardNav, cursor]);
+
   return (
     <div className="flex flex-col gap-3">
       <div className="overflow-auto rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/60">
@@ -184,17 +287,22 @@ export function DataTable<T>({
                 </td>
               </tr>
             )}
-            {slice.map((row) => {
+            {slice.map((row, idx) => {
               const key = rowKey(row);
+              const selected = keyboardNav && cursor === idx;
               return (
                 <tr
                   key={key}
+                  ref={(el) => {
+                    rowRefs.current[idx] = el;
+                  }}
+                  aria-selected={keyboardNav ? selected : undefined}
                   onClick={onRowClick ? () => onRowClick(row) : undefined}
                   className={`transition-colors ${
                     onRowClick
                       ? 'cursor-pointer hover:bg-brand-50/40 dark:hover:bg-brand-500/10'
                       : ''
-                  }`}
+                  } ${selected ? 'bg-brand-50/60 outline outline-2 -outline-offset-2 outline-brand-400/70 dark:bg-brand-500/10' : ''}`}
                 >
                   {columns.map((c) => (
                     <td
@@ -213,9 +321,7 @@ export function DataTable<T>({
 
       {total > pageSize && (
         <div className="flex items-center justify-between gap-3 text-xs text-slate-500 dark:text-slate-400">
-          <span>
-            {start + 1}–{end} of {total}
-          </span>
+          <span>{t('admin.audit.pageOf', { from: start + 1, to: end, total })}</span>
           <div className="flex items-center gap-1">
             <button
               type="button"
@@ -258,6 +364,7 @@ export const IconButton: React.FC<{
       e.stopPropagation();
       onClick();
     }}
+    data-variant={variant}
     title={label}
     aria-label={label}
     className={`inline-flex h-7 w-7 items-center justify-center rounded-md border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 ${

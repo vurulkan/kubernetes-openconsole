@@ -606,16 +606,45 @@ export const listAuditLogs = (
     `/api/admin/audit-logs?limit=${limit}&offset=${offset}&user=${encodeURIComponent(user)}&action=${encodeURIComponent(action)}&namespace=${encodeURIComponent(namespace)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`
   );
 
-export const exportAuditLogs = (
-  user = '',
-  action = '',
-  namespace = '',
-  start = '',
-  end = ''
-) =>
-  fetch(
-    `/api/admin/audit-logs/export?user=${encodeURIComponent(user)}&action=${encodeURIComponent(action)}&namespace=${encodeURIComponent(namespace)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`
+// Downloads a file from an authenticated endpoint. The bearer token can't
+// ride on a plain link, so the file is fetched and handed to the browser as
+// a blob. Throws the server's error message on failure.
+export const downloadWithAuth = async (path: string, fallbackName: string) => {
+  const response = await fetch(path, {
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {},
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    let message = text || response.statusText;
+    try {
+      message = (JSON.parse(text) as { error?: string }).error || message;
+    } catch {
+      /* not JSON */
+    }
+    throw new Error(message);
+  }
+  const disposition = response.headers.get('content-disposition') || '';
+  const filename = /filename="?([^";]+)"?/.exec(disposition)?.[1] ?? fallbackName;
+  const url = URL.createObjectURL(await response.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
+export const exportAuditLogs = (user = '', action = '', namespace = '', start = '', end = '') =>
+  downloadWithAuth(
+    `/api/admin/audit-logs/export?user=${encodeURIComponent(user)}&action=${encodeURIComponent(action)}&namespace=${encodeURIComponent(namespace)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
+    'audit-logs.csv',
   );
+
+export const exportUsersCsv = () => downloadWithAuth('/api/admin/users/export', 'users.csv');
+export const exportGroupsCsv = () => downloadWithAuth('/api/admin/groups/export', 'groups.csv');
 
 export type SessionRow = {
   id: number;

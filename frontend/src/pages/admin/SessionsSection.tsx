@@ -192,6 +192,7 @@ export const SessionsSection: React.FC<Props> = ({ currentUserId }) => {
       {notice && <Alert severity="success">{notice}</Alert>}
 
       <DataTable
+        keyboardNav
         rows={rows}
         columns={columns}
         rowKey={(r) => r.id}

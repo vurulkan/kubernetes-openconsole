@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { KeyRound, Pencil, Plus, Search as SearchIcon, Trash2 } from 'lucide-react';
+import { Download, KeyRound, Pencil, Plus, Search as SearchIcon, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { confirm } from '../../components/ConfirmDialog';
 import { Alert, Badge, Button, Checkbox, Input, Modal } from '../../components/ui';
 import { Column, DataTable, IconButton } from '../../components/DataTable';
-import { resetUserPassword, User } from '../../services/api';
+import { exportUsersCsv, resetUserPassword, User } from '../../services/api';
 
 const MIN_PASSWORD_LENGTH = 8;
 
@@ -144,12 +145,19 @@ export const UsersSection: React.FC<Props> = ({
             className="h-9 pl-8"
           />
         </div>
-        <Button variant="primary" size="sm" onClick={onNew}>
-          <Plus size={14} />
-          {t('admin.users.new')}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => void exportUsersCsv().catch((err) => alertExport(err))}>
+            <Download size={14} />
+            {t('admin.exportCsv')}
+          </Button>
+          <Button variant="primary" size="sm" onClick={onNew}>
+            <Plus size={14} />
+            {t('admin.users.new')}
+          </Button>
+        </div>
       </div>
       <DataTable
+        keyboardNav
         rows={rows}
         columns={columns}
         rowKey={(u) => u.id}
@@ -255,3 +263,13 @@ const ResetPasswordModal: React.FC<{ user: User | null; onClose: () => void }> =
 };
 
 export default UsersSection;
+
+// Export failures are rare (session expired); show them in the app dialog.
+function alertExport(err: unknown) {
+  void confirm({
+    title: 'CSV',
+    message: err instanceof Error ? err.message : String(err),
+    confirmText: 'OK',
+  });
+}
+

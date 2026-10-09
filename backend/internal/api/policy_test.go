@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 
 	"k8s-dashboard/backend/internal/auth"
@@ -51,4 +52,23 @@ func TestExecConcurrentSessionLimit(t *testing.T) {
 		t.Fatal("a released slot should be usable again")
 	}
 	e.server.execSessions.release(bobID)
+}
+
+func TestUserAndGroupCSVExport(t *testing.T) {
+	e := newTestEnv(t)
+	_, admin := e.user("root", true)
+	bobID, bob := e.user("bob", false)
+	e.grant(bobID, [4]any{0, "team-a", "pods", "list"})
+
+	out := e.expect("GET", "/api/admin/users/export", admin, nil, http.StatusOK)
+	if !strings.HasPrefix(out, "username,source,admin,active,must_change_password,groups,created_at\n") ||
+		!strings.Contains(out, "bob,local,false,true,false,group-") {
+		t.Fatalf("users.csv = %s", out)
+	}
+	out = e.expect("GET", "/api/admin/groups/export", admin, nil, http.StatusOK)
+	if !strings.HasPrefix(out, "group,members,roles\n") || !strings.Contains(out, ",bob,role-") {
+		t.Fatalf("groups.csv = %s", out)
+	}
+	e.waitAudit("admin.export", "")
+	e.expect("GET", "/api/admin/users/export", bob, nil, http.StatusForbidden)
 }

@@ -46,6 +46,12 @@ const GROUPS: Group[] = [
     { keys: ['[', 'ğ'], join: 'or', descKey: 'prevSub' },
     { keys: [']', 'ü'], join: 'or', descKey: 'nextSub' },
   ]},
+  { titleKey: 'tables', rows: [
+    { keys: ['j', 'k'], join: 'or', descKey: 'rowDownUp' },
+    { keys: ['↵'], descKey: 'rowOpen' },
+    { keys: ['d'], descKey: 'rowDelete' },
+    { keys: ['n', 'p'], join: 'or', descKey: 'pageNextPrev' },
+  ]},
   { titleKey: 'logs', rows: [
     { keys: ['p'], descKey: 'togglePause' },
     { keys: ['w'], descKey: 'toggleWrap' },

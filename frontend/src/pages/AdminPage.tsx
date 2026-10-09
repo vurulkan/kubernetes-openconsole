@@ -823,22 +823,11 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
   };
 
   const handleAuditExport = async () => {
-    const response = await exportAuditLogs(
-      auditUserFilter,
-      auditActionFilter,
-      auditNamespaceFilter,
-      auditStartDate,
-      auditEndDate
-    );
-    const blob = await response.blob();
-    const url = window.URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'audit-logs.csv';
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.URL.revokeObjectURL(url);
+    try {
+      await exportAuditLogs(auditUserFilter, auditActionFilter, auditNamespaceFilter, auditStartDate, auditEndDate);
+    } catch (err) {
+      setError((err as Error).message);
+    }
   };
 
   const handleSaveSession = async () => {
