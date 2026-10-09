@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -51,7 +52,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { database.Conn.Close() })
+	t.Cleanup(func() { closeAfterPendingWrites(database.Conn) })
 	st, err := store.New(database.Conn)
 	if err != nil {
 		t.Fatal(err)
@@ -497,3 +498,18 @@ func TestKubernetesForbiddenOnWriteIsReported(t *testing.T) {
 	}
 	e.waitAudit("deployment.restart.failed", "api")
 }
+
+// closeAfterPendingWrites closes the DB only after any in-flight write has
+// finished. Audit entries are written from goroutines, and sql.DB.Close does
+// not wait for a running statement: that write could create a SQLite journal
+// file while t.TempDir is being removed ("directory not empty"). The pool has
+// one connection, so acquiring it waits for the in-flight write; closing the
+// DB while holding it stops any later one.
+func closeAfterPendingWrites(db *sql.DB) {
+	conn, err := db.Conn(context.Background())
+	_ = db.Close()
+	if err == nil {
+		_ = conn.Close()
+	}
+}
+

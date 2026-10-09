@@ -3,6 +3,7 @@ package recording
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"os"
@@ -23,7 +24,7 @@ func newTestManager(t *testing.T, settings models.RecordingSettings) *Manager {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { database.Conn.Close() })
+	t.Cleanup(func() { closeAfterPendingWrites(database.Conn) })
 	st, err := store.New(database.Conn)
 	if err != nil {
 		t.Fatal(err)
@@ -194,3 +195,14 @@ func TestDisabledAndValidation(t *testing.T) {
 	nilSession.Write([]byte("x")) // must not panic
 	nilSession.Close()
 }
+
+// closeAfterPendingWrites: see the copy in internal/api — eviction audits are
+// written from goroutines and must finish before the temp dir is removed.
+func closeAfterPendingWrites(db *sql.DB) {
+	conn, err := db.Conn(context.Background())
+	_ = db.Close()
+	if err == nil {
+		_ = conn.Close()
+	}
+}
+
