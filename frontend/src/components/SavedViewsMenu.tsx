@@ -120,6 +120,7 @@ const SavedViewsMenu: React.FC<Props> = ({ current, onRestore }) => {
               if (view.namespace) localStorage.setItem('dashboardNamespace', view.namespace);
               if (view.tab) localStorage.setItem('dashboardResourceTab', view.tab);
               localStorage.setItem('dashboardViewMode', view.viewMode);
+              if (view.search) localStorage.setItem('dashboardPendingSearch', view.search);
             } catch {
               /* ignore */
             }

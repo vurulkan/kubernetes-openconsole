@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   Boxes,
@@ -121,6 +121,21 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   });
   const [items, setItems] = useState<Array<Record<string, unknown>>>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  // Search text a restored saved view brings along. Changing tab/namespace
+  // clears the search (effect below), so a restore that also changes them
+  // parks its search here for that effect to apply instead. A view restored
+  // across clusters reloads the page and stages it in localStorage.
+  const pendingSearch = useRef<string | null>(
+    (() => {
+      try {
+        const v = localStorage.getItem('dashboardPendingSearch');
+        localStorage.removeItem('dashboardPendingSearch');
+        return v;
+      } catch {
+        return null;
+      }
+    })(),
+  );
   const [namespaceSearch, setNamespaceSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -464,7 +479,8 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   }, [loadResources]);
 
   useEffect(() => {
-    setSearchQuery('');
+    setSearchQuery(pendingSearch.current ?? '');
+    pendingSearch.current = null;
   }, [activeTab, selectedNamespace]);
 
   // Log modal shortcuts: p toggles pause, w toggles word-wrap. Must run even
@@ -763,7 +779,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
         type="text"
         value={namespaceSearch}
         onChange={(e) => setNamespaceSearch(e.target.value)}
-        placeholder="Search namespaces…"
+        placeholder={t('dashboard.namespacesSearch')}
         data-shortcut="namespace-search"
         className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 dark:placeholder:text-slate-500 dark:text-slate-100 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/15"
       />
@@ -771,8 +787,8 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
         {filteredNamespaces.length === 0 && (
           <p className="rounded-md px-3 py-2 text-xs text-slate-500 dark:text-slate-400">
             {namespaces.length === 0
-              ? 'No namespaces available.'
-              : 'No namespaces match your search.'}
+              ? t('dashboard.namespacesEmpty')
+              : t('dashboard.namespacesNoMatch')}
           </p>
         )}
         {filteredNamespaces.map((ns) => {
@@ -821,7 +837,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
         <div className="flex items-center gap-2">
           <Badge variant="info" className="gap-1.5">
             <span className="h-1.5 w-1.5 rounded-full bg-brand-500" />
-            {namespaces.length} namespaces
+            {t('dashboard.overviewBadge.namespaces', { count: namespaces.length })}
           </Badge>
           {selectedNamespace && (
             <Badge variant="default" className="gap-1.5">
@@ -866,12 +882,12 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                 className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400"
               />
               <Input
-                placeholder={activeTab ? `Search ${activeTab} · try label:app=foo…` : 'Search…'}
+                placeholder={activeTab ? t('dashboard.search', { resource: activeTab }) : t('dashboard.searchGeneric')}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="h-9 w-64 pl-8"
                 data-shortcut="dashboard-search"
-                title="Supports plain name search AND label:key=value / label:key tokens, space-separated"
+                title={t('dashboard.searchHint')}
               />
             </div>
           </div>
@@ -890,6 +906,9 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                 viewMode,
               }}
               onRestore={(v) => {
+                if ((v.namespace && v.namespace !== selectedNamespace) || (v.tab && v.tab !== activeTab)) {
+                  pendingSearch.current = v.search;
+                }
                 if (v.namespace) setSelectedNamespace(v.namespace);
                 if (v.tab) setActiveTab(v.tab);
                 setSearchQuery(v.search);
@@ -945,8 +964,8 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                   type="button"
                   onClick={() => setViewMode('card')}
                   aria-pressed={viewMode === 'card'}
-                  aria-label="Card view"
-                  title="Card view"
+                  aria-label={t('dashboard.cardView')}
+                  title={t('dashboard.cardView')}
                   className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
                     viewMode === 'card'
                       ? 'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-200'
@@ -959,8 +978,8 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                   type="button"
                   onClick={() => setViewMode('list')}
                   aria-pressed={viewMode === 'list'}
-                  aria-label="List view"
-                  title="List view"
+                  aria-label={t('dashboard.listView')}
+                  title={t('dashboard.listView')}
                   className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
                     viewMode === 'list'
                       ? 'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-200'
