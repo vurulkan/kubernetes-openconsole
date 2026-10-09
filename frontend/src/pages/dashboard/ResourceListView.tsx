@@ -237,7 +237,7 @@ export const ResourceListView: React.FC<Props> = ({
                 <span className="font-mono text-xs text-slate-700 dark:text-slate-200 whitespace-nowrap">
                   {ready}/{desired}
                 </span>
-                <span className="font-mono text-[10px] text-slate-400 dark:text-slate-500 whitespace-nowrap">
+                <span className="font-mono text-[10px] text-slate-500 dark:text-slate-400 whitespace-nowrap">
                   {avail} avail
                 </span>
               </div>

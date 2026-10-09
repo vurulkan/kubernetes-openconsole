@@ -93,7 +93,7 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
               </div>
               <div className="flex flex-col leading-tight">
                 <span className="text-sm font-semibold tracking-tight">Kubernetes OpenConsole</span>
-                <span className="text-[10px] font-medium uppercase tracking-[0.18em] text-slate-400 dark:text-slate-500">
+                <span className="text-[10px] font-medium uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
                   {t('login.tagline')}
                 </span>
               </div>
@@ -116,7 +116,7 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
                 key={stat.label}
                 className="rounded-xl border border-white/10 bg-white dark:bg-slate-900/5 px-3 py-2.5 backdrop-blur-sm"
               >
-                <div className="text-[10px] uppercase tracking-[0.14em] text-slate-400 dark:text-slate-500">
+                <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
                   {stat.label}
                 </div>
                 <div className="mt-1 text-sm font-semibold text-white">{stat.value}</div>
@@ -170,7 +170,7 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
               <>
                 <div className="relative my-1 flex items-center">
                   <div className="h-px flex-1 bg-slate-200" />
-                  <span className="px-3 text-[11px] font-medium uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                  <span className="px-3 text-[11px] font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">
                     {t('login.or')}
                   </span>
                   <div className="h-px flex-1 bg-slate-200" />
@@ -188,7 +188,7 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
             )}
           </form>
 
-          <div className="mt-6 flex items-center gap-2 text-[11px] text-slate-400 dark:text-slate-500">
+          <div className="mt-6 flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
             <ShieldCheck size={14} className="text-emerald-500" />
             {t('login.footer')}
           </div>

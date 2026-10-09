@@ -470,7 +470,7 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
         className="flex min-h-[40px] w-full cursor-pointer flex-wrap items-center gap-1.5 rounded-lg border px-3 py-2 text-left text-sm shadow-sm transition-colors border-slate-300 bg-white text-slate-900 hover:border-slate-400 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/15 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-slate-600"
       >
         {value.length === 0 ? (
-          <span className="flex-1 text-slate-400 dark:text-slate-500">{placeholder}</span>
+          <span className="flex-1 text-slate-500 dark:text-slate-400">{placeholder}</span>
         ) : (
           value.map((v) => (
             <span
@@ -491,7 +491,7 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
             </span>
           ))
         )}
-        <ChevronDown size={14} className="ml-auto shrink-0 text-slate-400 dark:text-slate-500" />
+        <ChevronDown size={14} className="ml-auto shrink-0 text-slate-500 dark:text-slate-400" />
       </button>
 
       {open && menuPos && createPortal(
@@ -502,7 +502,7 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
         >
           <div className="border-b border-slate-100 p-2 dark:border-slate-800">
             <div className="relative">
-              <Search size={14} className="absolute left-2.5 top-2 text-slate-400 dark:text-slate-500" />
+              <Search size={14} className="absolute left-2.5 top-2 text-slate-500 dark:text-slate-400" />
               <input
                 autoFocus
                 value={search}
@@ -514,7 +514,7 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
           </div>
           <div className="max-h-48 overflow-auto">
             {filtered.length === 0 ? (
-              <p className="px-3 py-2 text-sm text-slate-400 dark:text-slate-500">{noOptionsText}</p>
+              <p className="px-3 py-2 text-sm text-slate-500 dark:text-slate-400">{noOptionsText}</p>
             ) : (
               filtered.map((opt) => (
                 <button
@@ -647,7 +647,11 @@ export const Modal: React.FC<ModalProps> = ({
             <X size={18} />
           </button>
         </div>
-        <div className={bodyClass}>{children}</div>
+        {/* The scrolling body is focusable so keyboard users can scroll it
+            (content such as the shortcuts list has no focusable items). */}
+        <div className={bodyClass} tabIndex={size === 'full' ? undefined : 0}>
+          {children}
+        </div>
         {footer && (
           <div className="flex justify-end gap-2 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 px-5 py-3">
             {footer}

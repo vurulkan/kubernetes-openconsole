@@ -68,7 +68,7 @@ export const GroupsSection: React.FC<Props> = ({
       cell: (g) => {
         const list = groupRoles[g.id] ?? [];
         if (list.length === 0)
-          return <span className="text-xs text-slate-400 dark:text-slate-500">—</span>;
+          return <span className="text-xs text-slate-500 dark:text-slate-400">—</span>;
         return (
           <div className="flex flex-wrap gap-1">
             {list.slice(0, 3).map((r) => (

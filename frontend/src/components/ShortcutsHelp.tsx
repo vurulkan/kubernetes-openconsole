@@ -118,7 +118,7 @@ export const ShortcutsHelp: React.FC = () => {
                     {row.keys.map((k, i) => (
                       <React.Fragment key={i}>
                         {i > 0 && (
-                          <span className="text-[10px] text-slate-400 dark:text-slate-500">
+                          <span className="text-[10px] text-slate-500 dark:text-slate-400">
                             {row.join === 'or' ? orLabel : thenLabel}
                           </span>
                         )}

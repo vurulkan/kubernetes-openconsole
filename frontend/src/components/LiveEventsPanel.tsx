@@ -191,7 +191,7 @@ const LiveEventsPanel: React.FC<Props> = ({ namespace, open, onToggle, onClose }
 
       <ol className="scrollbar-thin flex-1 overflow-y-auto px-2 py-2">
         {visible.length === 0 && (
-          <li className="px-3 py-10 text-center text-xs text-slate-400 dark:text-slate-500">
+          <li className="px-3 py-10 text-center text-xs text-slate-500 dark:text-slate-400">
             {connected ? t('dashboard.events.waiting') : t('dashboard.events.connecting')}
           </li>
         )}
@@ -207,7 +207,7 @@ const LiveEventsPanel: React.FC<Props> = ({ namespace, open, onToggle, onClose }
                   {e.verb === 'event' ? e.reason || e.kind : e.kind}
                 </span>
               </div>
-              <time className="shrink-0 text-[10px] tabular-nums text-slate-400 dark:text-slate-500">
+              <time className="shrink-0 text-[10px] tabular-nums text-slate-500 dark:text-slate-400">
                 {formatTime(e.at)}
               </time>
             </div>

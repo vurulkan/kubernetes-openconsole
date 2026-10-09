@@ -257,7 +257,7 @@ const SavedViewsMenu: React.FC<Props> = ({ current, onRestore }) => {
           </div>
           <ul className="max-h-72 overflow-auto">
             {views.length === 0 && (
-              <li className="px-3 py-3 text-xs text-slate-400 dark:text-slate-500">
+              <li className="px-3 py-3 text-xs text-slate-500 dark:text-slate-400">
                 {t('dashboard.views.empty')}
               </li>
             )}

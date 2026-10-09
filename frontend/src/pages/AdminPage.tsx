@@ -979,7 +979,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
               >
                 <Icon
                   size={15}
-                  className={active ? 'text-brand-600 dark:text-brand-300' : 'text-slate-400 dark:text-slate-500'}
+                  className={active ? 'text-brand-600 dark:text-brand-300' : 'text-slate-500 dark:text-slate-400'}
                 />
                 {label}
               </button>
@@ -1252,10 +1252,10 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
 
                 <div className="mt-4">
                   {!selectedRoleId && (
-                    <p className="text-sm text-slate-400 dark:text-slate-500">Select a role to view its permissions.</p>
+                    <p className="text-sm text-slate-500 dark:text-slate-400">Select a role to view its permissions.</p>
                   )}
                   {selectedRoleId && groupedPermissions.length === 0 && (
-                    <p className="text-sm text-slate-400 dark:text-slate-500">No permissions assigned yet.</p>
+                    <p className="text-sm text-slate-500 dark:text-slate-400">No permissions assigned yet.</p>
                   )}
                   {selectedRoleId && groupedPermissions.length > 0 && (
                     <div className="overflow-auto rounded-lg border border-slate-200 dark:border-slate-800">
@@ -1615,7 +1615,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   </Alert>
                 )}
                 {clustersList.length === 0 ? (
-                  <p className="text-sm text-slate-400">
+                  <p className="text-sm text-slate-500 dark:text-slate-400">
                     No clusters saved yet. Add one below.
                   </p>
                 ) : (
@@ -1816,7 +1816,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                           }}
                         />
                       </label>
-                      <span className="text-xs text-slate-400">
+                      <span className="text-xs text-slate-500 dark:text-slate-400">
                         {newClusterKubeconfigName || tr('common.noFileSelected')}
                       </span>
                     </div>
@@ -1984,7 +1984,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                             }}
                           />
                         </label>
-                        <span className="text-xs text-slate-400">
+                        <span className="text-xs text-slate-500 dark:text-slate-400">
                           {editCluster.kubeconfigName || tr('common.noFileSelected')}
                         </span>
                       </div>
@@ -2045,7 +2045,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                     onChange={(e) => setLogoFile(e.target.files?.[0] ?? null)}
                   />
                 </label>
-                <span className="text-sm text-slate-400 dark:text-slate-500">
+                <span className="text-sm text-slate-500 dark:text-slate-400">
                   {logoFile ? logoFile.name : 'No file selected'}
                 </span>
                 <Button variant="primary" size="sm" onClick={handleUploadLogo} disabled={!logoFile}>
@@ -2114,7 +2114,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   }}
                 />
                 <div className="flex items-end gap-3">
-                  <span className="text-xs text-slate-400 dark:text-slate-500">
+                  <span className="text-xs text-slate-500 dark:text-slate-400">
                     {tr('admin.audit.pageOf', { from: auditOffset + 1, to: Math.min(auditOffset + 50, auditTotal), total: auditTotal })}
                   </span>
                   <Button variant="outline" size="sm" onClick={handleAuditExport}>
@@ -2135,7 +2135,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                         {(entry.action as string) ?? ''}
                       </span>
                     </p>
-                    <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">
+                    <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
                       {(entry.timestampFormatted as string) ??
                         (entry.timestamp as string) ??
                         ''}

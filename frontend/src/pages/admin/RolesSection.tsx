@@ -59,7 +59,7 @@ export const RolesSection: React.FC<Props> = ({
         r.description ? (
           <span className="text-sm text-slate-600 dark:text-slate-300">{r.description}</span>
         ) : (
-          <span className="text-xs text-slate-400 dark:text-slate-500">—</span>
+          <span className="text-xs text-slate-500 dark:text-slate-400">—</span>
         ),
     },
     {

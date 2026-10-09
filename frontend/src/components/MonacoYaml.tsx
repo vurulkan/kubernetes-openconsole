@@ -26,7 +26,7 @@ const commonEditorOptions = {
 };
 
 const Fallback = (
-  <div className="flex h-full items-center justify-center text-xs text-slate-400 dark:text-slate-500">
+  <div className="flex h-full items-center justify-center text-xs text-slate-500 dark:text-slate-400">
     Loading editor…
   </div>
 );

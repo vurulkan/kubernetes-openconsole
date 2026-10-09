@@ -203,7 +203,7 @@ export const SessionsSection: React.FC<Props> = ({ currentUserId }) => {
 };
 
 const TimeCell: React.FC<{ iso: string }> = ({ iso }) => {
-  if (!iso) return <span className="text-xs text-slate-400 dark:text-slate-500">—</span>;
+  if (!iso) return <span className="text-xs text-slate-500 dark:text-slate-400">—</span>;
   return (
     <span className="font-mono text-[11px] text-slate-600 dark:text-slate-300" title={iso}>
       {ageShort(iso)}
