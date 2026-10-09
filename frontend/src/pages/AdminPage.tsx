@@ -1655,7 +1655,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                               <span className="truncate font-mono text-sm font-semibold text-slate-900 dark:text-slate-100">
                                 {c.name}
                               </span>
-                              {c.isActive && <Badge variant="success">{tr("common.active")}</Badge>}
+                              {c.isActive && <Badge variant="success">{tr("common.defaultCluster")}</Badge>}
                             </div>
                             <div className="truncate text-xs text-slate-500 dark:text-slate-400">
                               {c.description || c.server || tr('common.methodLabel', { method: c.method })}
@@ -2126,7 +2126,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                 />
                 <div className="flex items-end gap-3">
                   <span className="text-xs text-slate-400 dark:text-slate-500">
-                    {auditOffset + 1}–{Math.min(auditOffset + 50, auditTotal)} of {auditTotal}
+                    {tr('admin.audit.pageOf', { from: auditOffset + 1, to: Math.min(auditOffset + 50, auditTotal), total: auditTotal })}
                   </span>
                   <Button variant="outline" size="sm" onClick={handleAuditExport}>
                     {tr('admin.audit.exportCsv')}
@@ -2152,6 +2152,14 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                         ''}
                     </p>
                     <p className="text-xs text-slate-500 dark:text-slate-400">
+                      {typeof entry.cluster === 'string' && entry.cluster !== '' && entry.cluster !== '-' && (
+                        <span
+                          className="mr-1.5 rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+                          title={tr('admin.audit.cluster')}
+                        >
+                          {entry.cluster}
+                        </span>
+                      )}
                       {(entry.namespace as string) ?? '-'} /{' '}
                       {(entry.resourceType as string) ?? ''} /{' '}
                       {(entry.resourceName as string) ?? ''}

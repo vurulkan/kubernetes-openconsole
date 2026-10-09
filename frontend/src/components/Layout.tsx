@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Home, Keyboard, LogOut, Menu, Settings, ShieldCheck, X } from 'lucide-react';
+import { Home, KeyRound, Keyboard, LogOut, Menu, Settings, ShieldCheck, X } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button } from './ui';
@@ -135,10 +135,22 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, children }) => {
               </span>
               {user.isAdmin && (
                 <span className="text-[10px] font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">
-                  Administrator
+                  {t('nav.administrator')}
                 </span>
               )}
             </div>
+            {/* LDAP / Azure AD users change their password in the directory. */}
+            {(user.authSource ?? 'local') === 'local' && (
+              <button
+                type="button"
+                onClick={() => navigate('/change-password')}
+                title={t('nav.changePassword')}
+                aria-label={t('nav.changePassword')}
+                className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+              >
+                <KeyRound size={14} />
+              </button>
+            )}
           </div>
           <Button variant="primary" size="sm" onClick={handleLogout}>
             <LogOut size={14} className="shrink-0" />

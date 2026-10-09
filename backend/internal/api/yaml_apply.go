@@ -72,7 +72,7 @@ func (s *Server) handleYAMLApply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !s.can(r.Context(), user.ID, namespace, resource, "edit") {
-		s.recordApplyAudit(user.Username, namespace, name, resource, "denied", "", requestID)
+		s.recordApplyAudit(user.Username, namespace, name, resource, "denied", "", r)
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -92,7 +92,7 @@ func (s *Server) handleYAMLApply(w http.ResponseWriter, r *http.Request) {
 	if !body.DryRun {
 		if !allowDeployAction(user.ID) {
 			w.Header().Set("Retry-After", "6")
-			s.recordApplyAudit(user.Username, namespace, name, resource, "rate_limited", "", requestID)
+			s.recordApplyAudit(user.Username, namespace, name, resource, "rate_limited", "", r)
 			writeError(w, http.StatusTooManyRequests, "rate limited")
 			return
 		}
@@ -112,7 +112,7 @@ func (s *Server) handleYAMLApply(w http.ResponseWriter, r *http.Request) {
 			)
 		}
 		s.recordApplyAudit(user.Username, namespace, name, resource, "failed",
-			fmt.Sprintf("dry=%v from=%s err=%s", body.DryRun, beforeHash, err.Error()), requestID)
+			fmt.Sprintf("dry=%v from=%s err=%s", body.DryRun, beforeHash, err.Error()), r)
 
 		// Map k8s API errors to the right HTTP status so a reverse proxy
 		// (Cloudflare, ingress-nginx) doesn't intercept a 5xx and show its
@@ -125,7 +125,7 @@ func (s *Server) handleYAMLApply(w http.ResponseWriter, r *http.Request) {
 	afterHash := shortHash(result.AppliedYAML)
 	outcome := "success"
 	details := fmt.Sprintf("dry=%v from=%s to=%s", body.DryRun, beforeHash, afterHash)
-	s.recordApplyAudit(user.Username, namespace, name, resource, outcome, details, requestID)
+	s.recordApplyAudit(user.Username, namespace, name, resource, outcome, details, r)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"applied": result.AppliedYAML,
@@ -174,12 +174,13 @@ func shortHash(s string) string {
 	return hex.EncodeToString(sum[:4])
 }
 
-func (s *Server) recordApplyAudit(user, namespace, name, resource, outcome, details, requestID string) {
+func (s *Server) recordApplyAudit(user, namespace, name, resource, outcome, details string, r *http.Request) {
+	requestID := requestIDOf(r)
 	resourceName := name
 	if details != "" {
 		resourceName = fmt.Sprintf("%s (%s)", name, details)
 	}
-	go s.audit.Record(s.auditCtxFromID(requestID), models.AuditLog{
+	go s.audit.Record(s.auditCtx(r), models.AuditLog{
 		User:         user,
 		Action:       resource + ".apply." + outcome,
 		Namespace:    namespace,

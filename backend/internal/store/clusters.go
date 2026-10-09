@@ -194,3 +194,17 @@ func (s *Store) ActivateCluster(ctx context.Context, id int) error {
 	}
 	return tx.Commit()
 }
+
+// GetClusterName returns a cluster's name without decrypting credentials.
+func (s *Store) GetClusterName(ctx context.Context, id int) (string, error) {
+	var name string
+	err := s.conn.QueryRowContext(ctx, `SELECT name FROM clusters WHERE id = ?`, id).Scan(&name)
+	return name, err
+}
+
+// ClearClusterSelections resets users who had picked a (deleted) cluster back
+// to the default.
+func (s *Store) ClearClusterSelections(ctx context.Context, clusterID int) error {
+	_, err := s.conn.ExecContext(ctx, `UPDATE users SET active_cluster_id = NULL WHERE active_cluster_id = ?`, clusterID)
+	return err
+}

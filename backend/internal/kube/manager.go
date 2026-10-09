@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"k8s-dashboard/backend/internal/models"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -142,12 +143,42 @@ func (m *Manager) LastError() string {
 }
 
 func (m *Manager) ValidateCredentials(creds models.KubeCredentials) error {
+	return ValidateCredentials(creds)
+}
+
+// ValidateCredentials builds a client from creds and makes one real call
+// (list namespaces, limit 1): that proves the API server is reachable, the
+// CA matches and the identity can at least list namespaces — which every
+// OpenConsole tab needs. Building a client alone checks none of that.
+func ValidateCredentials(creds models.KubeCredentials) error {
 	config, err := buildConfig(creds)
 	if err != nil {
 		return err
 	}
-	_, err = kubernetes.NewForConfig(config)
-	return err
+	client, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := client.CoreV1().Namespaces().List(ctx, metav1.ListOptions{Limit: 1}); err != nil {
+		return fmt.Errorf("cannot list namespaces with these credentials: %w", err)
+	}
+	return nil
+}
+
+// Stop drops the client and stops the informer cache (cluster deleted or
+// its credentials replaced).
+func (m *Manager) Stop() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.informers != nil {
+		m.informers.stopAll()
+		m.informers = nil
+	}
+	m.client = nil
+	m.restConfig = nil
+	m.ready = false
 }
 
 func buildConfig(creds models.KubeCredentials) (*rest.Config, error) {

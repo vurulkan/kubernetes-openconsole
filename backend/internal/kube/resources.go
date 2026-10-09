@@ -22,19 +22,32 @@ import (
 // matches the alphabetical ordering the API server returns, which is what
 // users had before the informer rewrite.
 
-type ResourceClient struct {
-	manager *Manager
+// ResourceClient reads and writes resources on the cluster of the current
+// request: the Manager attached to ctx (kube.WithManager) — every API request
+// carries the caller's selected cluster. The zero value works and simply
+// reports "client not ready" when ctx has no Manager.
+type ResourceClient struct{}
+
+func NewResourceClient() *ResourceClient {
+	return &ResourceClient{}
 }
 
-func NewResourceClient(manager *Manager) *ResourceClient {
-	return &ResourceClient{manager: manager}
+// noCluster stands in when the request has no cluster: no client, not ready,
+// so every method returns "kubernetes client not ready".
+var noCluster = NewManager()
+
+func (c *ResourceClient) mgr(ctx context.Context) *Manager {
+	if m := ManagerFrom(ctx); m != nil {
+		return m
+	}
+	return noCluster
 }
 
 // cache returns the InformerCache if it exists and the initial sync has
 // completed. During the warmup window (or when no cluster is active) the
 // callers fall back to a direct API call so the UI doesn't see an empty list.
-func (c *ResourceClient) cache() *InformerCache {
-	ic := c.manager.Informers()
+func (c *ResourceClient) cache(ctx context.Context) *InformerCache {
+	ic := c.mgr(ctx).Informers()
 	if ic == nil || !ic.Synced() {
 		return nil
 	}
@@ -42,11 +55,11 @@ func (c *ResourceClient) cache() *InformerCache {
 }
 
 func (c *ResourceClient) ListNamespaces(ctx context.Context) ([]corev1.Namespace, error) {
-	client, ok := c.manager.Client()
-	if !ok || !c.manager.Ready() {
+	client, ok := c.mgr(ctx).Client()
+	if !ok || !c.mgr(ctx).Ready() {
 		return nil, fmt.Errorf("kubernetes client not ready")
 	}
-	if ic := c.cache(); ic != nil {
+	if ic := c.cache(ctx); ic != nil {
 		objs, err := ic.namespaceLister.List(labels.Everything())
 		if err == nil {
 			sort.Slice(objs, func(i, j int) bool { return objs[i].Name < objs[j].Name })
@@ -65,11 +78,11 @@ func (c *ResourceClient) ListNamespaces(ctx context.Context) ([]corev1.Namespace
 }
 
 func (c *ResourceClient) ListPods(ctx context.Context, namespace string) ([]corev1.Pod, error) {
-	client, ok := c.manager.Client()
-	if !ok || !c.manager.Ready() {
+	client, ok := c.mgr(ctx).Client()
+	if !ok || !c.mgr(ctx).Ready() {
 		return nil, fmt.Errorf("kubernetes client not ready")
 	}
-	if ic := c.cache(); ic != nil {
+	if ic := c.cache(ctx); ic != nil {
 		objs, err := ic.podLister.Pods(namespace).List(labels.Everything())
 		if err == nil {
 			sort.Slice(objs, func(i, j int) bool { return objs[i].Name < objs[j].Name })
@@ -88,19 +101,19 @@ func (c *ResourceClient) ListPods(ctx context.Context, namespace string) ([]core
 }
 
 func (c *ResourceClient) GetPod(ctx context.Context, namespace, name string) (*corev1.Pod, error) {
-	client, ok := c.manager.Client()
-	if !ok || !c.manager.Ready() {
+	client, ok := c.mgr(ctx).Client()
+	if !ok || !c.mgr(ctx).Ready() {
 		return nil, fmt.Errorf("kubernetes client not ready")
 	}
 	return client.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
 }
 
 func (c *ResourceClient) ListDeployments(ctx context.Context, namespace string) ([]appsv1.Deployment, error) {
-	client, ok := c.manager.Client()
-	if !ok || !c.manager.Ready() {
+	client, ok := c.mgr(ctx).Client()
+	if !ok || !c.mgr(ctx).Ready() {
 		return nil, fmt.Errorf("kubernetes client not ready")
 	}
-	if ic := c.cache(); ic != nil {
+	if ic := c.cache(ctx); ic != nil {
 		objs, err := ic.deploymentLister.Deployments(namespace).List(labels.Everything())
 		if err == nil {
 			sort.Slice(objs, func(i, j int) bool { return objs[i].Name < objs[j].Name })
@@ -119,19 +132,19 @@ func (c *ResourceClient) ListDeployments(ctx context.Context, namespace string) 
 }
 
 func (c *ResourceClient) GetDeployment(ctx context.Context, namespace, name string) (*appsv1.Deployment, error) {
-	client, ok := c.manager.Client()
-	if !ok || !c.manager.Ready() {
+	client, ok := c.mgr(ctx).Client()
+	if !ok || !c.mgr(ctx).Ready() {
 		return nil, fmt.Errorf("kubernetes client not ready")
 	}
 	return client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
 }
 
 func (c *ResourceClient) ListServices(ctx context.Context, namespace string) ([]corev1.Service, error) {
-	client, ok := c.manager.Client()
-	if !ok || !c.manager.Ready() {
+	client, ok := c.mgr(ctx).Client()
+	if !ok || !c.mgr(ctx).Ready() {
 		return nil, fmt.Errorf("kubernetes client not ready")
 	}
-	if ic := c.cache(); ic != nil {
+	if ic := c.cache(ctx); ic != nil {
 		objs, err := ic.serviceLister.Services(namespace).List(labels.Everything())
 		if err == nil {
 			sort.Slice(objs, func(i, j int) bool { return objs[i].Name < objs[j].Name })
@@ -150,19 +163,19 @@ func (c *ResourceClient) ListServices(ctx context.Context, namespace string) ([]
 }
 
 func (c *ResourceClient) GetService(ctx context.Context, namespace, name string) (*corev1.Service, error) {
-	client, ok := c.manager.Client()
-	if !ok || !c.manager.Ready() {
+	client, ok := c.mgr(ctx).Client()
+	if !ok || !c.mgr(ctx).Ready() {
 		return nil, fmt.Errorf("kubernetes client not ready")
 	}
 	return client.CoreV1().Services(namespace).Get(ctx, name, metav1.GetOptions{})
 }
 
 func (c *ResourceClient) ListConfigMaps(ctx context.Context, namespace string) ([]corev1.ConfigMap, error) {
-	client, ok := c.manager.Client()
-	if !ok || !c.manager.Ready() {
+	client, ok := c.mgr(ctx).Client()
+	if !ok || !c.mgr(ctx).Ready() {
 		return nil, fmt.Errorf("kubernetes client not ready")
 	}
-	if ic := c.cache(); ic != nil {
+	if ic := c.cache(ctx); ic != nil {
 		objs, err := ic.configmapLister.ConfigMaps(namespace).List(labels.Everything())
 		if err == nil {
 			sort.Slice(objs, func(i, j int) bool { return objs[i].Name < objs[j].Name })
@@ -181,19 +194,19 @@ func (c *ResourceClient) ListConfigMaps(ctx context.Context, namespace string) (
 }
 
 func (c *ResourceClient) GetConfigMap(ctx context.Context, namespace, name string) (*corev1.ConfigMap, error) {
-	client, ok := c.manager.Client()
-	if !ok || !c.manager.Ready() {
+	client, ok := c.mgr(ctx).Client()
+	if !ok || !c.mgr(ctx).Ready() {
 		return nil, fmt.Errorf("kubernetes client not ready")
 	}
 	return client.CoreV1().ConfigMaps(namespace).Get(ctx, name, metav1.GetOptions{})
 }
 
 func (c *ResourceClient) ListIngresses(ctx context.Context, namespace string) ([]networkingv1.Ingress, error) {
-	client, ok := c.manager.Client()
-	if !ok || !c.manager.Ready() {
+	client, ok := c.mgr(ctx).Client()
+	if !ok || !c.mgr(ctx).Ready() {
 		return nil, fmt.Errorf("kubernetes client not ready")
 	}
-	if ic := c.cache(); ic != nil {
+	if ic := c.cache(ctx); ic != nil {
 		objs, err := ic.ingressLister.Ingresses(namespace).List(labels.Everything())
 		if err == nil {
 			sort.Slice(objs, func(i, j int) bool { return objs[i].Name < objs[j].Name })
@@ -212,19 +225,19 @@ func (c *ResourceClient) ListIngresses(ctx context.Context, namespace string) ([
 }
 
 func (c *ResourceClient) GetIngress(ctx context.Context, namespace, name string) (*networkingv1.Ingress, error) {
-	client, ok := c.manager.Client()
-	if !ok || !c.manager.Ready() {
+	client, ok := c.mgr(ctx).Client()
+	if !ok || !c.mgr(ctx).Ready() {
 		return nil, fmt.Errorf("kubernetes client not ready")
 	}
 	return client.NetworkingV1().Ingresses(namespace).Get(ctx, name, metav1.GetOptions{})
 }
 
 func (c *ResourceClient) ListCronJobs(ctx context.Context, namespace string) ([]batchv1.CronJob, error) {
-	client, ok := c.manager.Client()
-	if !ok || !c.manager.Ready() {
+	client, ok := c.mgr(ctx).Client()
+	if !ok || !c.mgr(ctx).Ready() {
 		return nil, fmt.Errorf("kubernetes client not ready")
 	}
-	if ic := c.cache(); ic != nil {
+	if ic := c.cache(ctx); ic != nil {
 		objs, err := ic.cronjobLister.CronJobs(namespace).List(labels.Everything())
 		if err == nil {
 			sort.Slice(objs, func(i, j int) bool { return objs[i].Name < objs[j].Name })
@@ -243,8 +256,8 @@ func (c *ResourceClient) ListCronJobs(ctx context.Context, namespace string) ([]
 }
 
 func (c *ResourceClient) GetCronJob(ctx context.Context, namespace, name string) (*batchv1.CronJob, error) {
-	client, ok := c.manager.Client()
-	if !ok || !c.manager.Ready() {
+	client, ok := c.mgr(ctx).Client()
+	if !ok || !c.mgr(ctx).Ready() {
 		return nil, fmt.Errorf("kubernetes client not ready")
 	}
 	return client.BatchV1().CronJobs(namespace).Get(ctx, name, metav1.GetOptions{})
@@ -255,11 +268,11 @@ func (c *ResourceClient) GetCronJob(ctx context.Context, namespace, name string)
 // executions, image-pull helpers, migration pods) without flooding the
 // Pods list with throwaway rows.
 func (c *ResourceClient) ListJobs(ctx context.Context, namespace string) ([]batchv1.Job, error) {
-	client, ok := c.manager.Client()
-	if !ok || !c.manager.Ready() {
+	client, ok := c.mgr(ctx).Client()
+	if !ok || !c.mgr(ctx).Ready() {
 		return nil, fmt.Errorf("kubernetes client not ready")
 	}
-	if ic := c.cache(); ic != nil {
+	if ic := c.cache(ctx); ic != nil {
 		objs, err := ic.jobLister.Jobs(namespace).List(labels.Everything())
 		if err == nil {
 			sort.Slice(objs, func(i, j int) bool { return objs[i].Name < objs[j].Name })
@@ -278,8 +291,8 @@ func (c *ResourceClient) ListJobs(ctx context.Context, namespace string) ([]batc
 }
 
 func (c *ResourceClient) GetJob(ctx context.Context, namespace, name string) (*batchv1.Job, error) {
-	client, ok := c.manager.Client()
-	if !ok || !c.manager.Ready() {
+	client, ok := c.mgr(ctx).Client()
+	if !ok || !c.mgr(ctx).Ready() {
 		return nil, fmt.Errorf("kubernetes client not ready")
 	}
 	return client.BatchV1().Jobs(namespace).Get(ctx, name, metav1.GetOptions{})
@@ -289,8 +302,8 @@ func (c *ResourceClient) GetJob(ctx context.Context, namespace, name string) (*b
 // annotation (kubectl.kubernetes.io/restartedAt). Returns the restart timestamp
 // applied so callers can echo it in audit entries.
 func (c *ResourceClient) RestartDeployment(ctx context.Context, namespace, name string) (string, error) {
-	client, ok := c.manager.Client()
-	if !ok || !c.manager.Ready() {
+	client, ok := c.mgr(ctx).Client()
+	if !ok || !c.mgr(ctx).Ready() {
 		return "", fmt.Errorf("kubernetes client not ready")
 	}
 	stamp := time.Now().UTC().Format(time.RFC3339)
@@ -318,11 +331,11 @@ func (c *ResourceClient) RestartDeployment(ctx context.Context, namespace, name 
 // an operator writes a v2 object.
 
 func (c *ResourceClient) ListDaemonSets(ctx context.Context, namespace string) ([]appsv1.DaemonSet, error) {
-	client, ok := c.manager.Client()
-	if !ok || !c.manager.Ready() {
+	client, ok := c.mgr(ctx).Client()
+	if !ok || !c.mgr(ctx).Ready() {
 		return nil, fmt.Errorf("kubernetes client not ready")
 	}
-	if ic := c.cache(); ic != nil {
+	if ic := c.cache(ctx); ic != nil {
 		objs, err := ic.daemonsetLister.DaemonSets(namespace).List(labels.Everything())
 		if err == nil {
 			sort.Slice(objs, func(i, j int) bool { return objs[i].Name < objs[j].Name })
@@ -341,19 +354,19 @@ func (c *ResourceClient) ListDaemonSets(ctx context.Context, namespace string) (
 }
 
 func (c *ResourceClient) GetDaemonSet(ctx context.Context, namespace, name string) (*appsv1.DaemonSet, error) {
-	client, ok := c.manager.Client()
-	if !ok || !c.manager.Ready() {
+	client, ok := c.mgr(ctx).Client()
+	if !ok || !c.mgr(ctx).Ready() {
 		return nil, fmt.Errorf("kubernetes client not ready")
 	}
 	return client.AppsV1().DaemonSets(namespace).Get(ctx, name, metav1.GetOptions{})
 }
 
 func (c *ResourceClient) ListStatefulSets(ctx context.Context, namespace string) ([]appsv1.StatefulSet, error) {
-	client, ok := c.manager.Client()
-	if !ok || !c.manager.Ready() {
+	client, ok := c.mgr(ctx).Client()
+	if !ok || !c.mgr(ctx).Ready() {
 		return nil, fmt.Errorf("kubernetes client not ready")
 	}
-	if ic := c.cache(); ic != nil {
+	if ic := c.cache(ctx); ic != nil {
 		objs, err := ic.statefulsetLister.StatefulSets(namespace).List(labels.Everything())
 		if err == nil {
 			sort.Slice(objs, func(i, j int) bool { return objs[i].Name < objs[j].Name })
@@ -372,19 +385,19 @@ func (c *ResourceClient) ListStatefulSets(ctx context.Context, namespace string)
 }
 
 func (c *ResourceClient) GetStatefulSet(ctx context.Context, namespace, name string) (*appsv1.StatefulSet, error) {
-	client, ok := c.manager.Client()
-	if !ok || !c.manager.Ready() {
+	client, ok := c.mgr(ctx).Client()
+	if !ok || !c.mgr(ctx).Ready() {
 		return nil, fmt.Errorf("kubernetes client not ready")
 	}
 	return client.AppsV1().StatefulSets(namespace).Get(ctx, name, metav1.GetOptions{})
 }
 
 func (c *ResourceClient) ListHPAs(ctx context.Context, namespace string) ([]autoscalingv2.HorizontalPodAutoscaler, error) {
-	client, ok := c.manager.Client()
-	if !ok || !c.manager.Ready() {
+	client, ok := c.mgr(ctx).Client()
+	if !ok || !c.mgr(ctx).Ready() {
 		return nil, fmt.Errorf("kubernetes client not ready")
 	}
-	if ic := c.cache(); ic != nil {
+	if ic := c.cache(ctx); ic != nil {
 		objs, err := ic.hpaLister.HorizontalPodAutoscalers(namespace).List(labels.Everything())
 		if err == nil {
 			sort.Slice(objs, func(i, j int) bool { return objs[i].Name < objs[j].Name })
@@ -403,8 +416,8 @@ func (c *ResourceClient) ListHPAs(ctx context.Context, namespace string) ([]auto
 }
 
 func (c *ResourceClient) GetHPA(ctx context.Context, namespace, name string) (*autoscalingv2.HorizontalPodAutoscaler, error) {
-	client, ok := c.manager.Client()
-	if !ok || !c.manager.Ready() {
+	client, ok := c.mgr(ctx).Client()
+	if !ok || !c.mgr(ctx).Ready() {
 		return nil, fmt.Errorf("kubernetes client not ready")
 	}
 	return client.AutoscalingV2().HorizontalPodAutoscalers(namespace).Get(ctx, name, metav1.GetOptions{})
@@ -413,8 +426,8 @@ func (c *ResourceClient) GetHPA(ctx context.Context, namespace, name string) (*a
 // ScaleStatefulSet mirrors ScaleDeployment on the Scale subresource. The
 // previous replica count is returned so audit entries can log before+after.
 func (c *ResourceClient) ScaleStatefulSet(ctx context.Context, namespace, name string, replicas int32) (int32, error) {
-	client, ok := c.manager.Client()
-	if !ok || !c.manager.Ready() {
+	client, ok := c.mgr(ctx).Client()
+	if !ok || !c.mgr(ctx).Ready() {
 		return 0, fmt.Errorf("kubernetes client not ready")
 	}
 	current, err := client.AppsV1().StatefulSets(namespace).GetScale(ctx, name, metav1.GetOptions{})
@@ -440,8 +453,8 @@ func (c *ResourceClient) ScaleStatefulSet(ctx context.Context, namespace, name s
 // subresource. Returns the previous replica count so audit entries can log
 // both before and after values.
 func (c *ResourceClient) ScaleDeployment(ctx context.Context, namespace, name string, replicas int32) (int32, error) {
-	client, ok := c.manager.Client()
-	if !ok || !c.manager.Ready() {
+	client, ok := c.mgr(ctx).Client()
+	if !ok || !c.mgr(ctx).Ready() {
 		return 0, fmt.Errorf("kubernetes client not ready")
 	}
 	current, err := client.AppsV1().Deployments(namespace).GetScale(ctx, name, metav1.GetOptions{})
@@ -468,8 +481,8 @@ func (c *ResourceClient) ScaleDeployment(ctx context.Context, namespace, name st
 // secrets cluster-wide. Reads go straight to the API server instead.
 
 func (c *ResourceClient) ListSecrets(ctx context.Context, namespace string) ([]corev1.Secret, error) {
-	client, ok := c.manager.Client()
-	if !ok || !c.manager.Ready() {
+	client, ok := c.mgr(ctx).Client()
+	if !ok || !c.mgr(ctx).Ready() {
 		return nil, fmt.Errorf("kubernetes client not ready")
 	}
 	result, err := client.CoreV1().Secrets(namespace).List(ctx, metav1.ListOptions{})
@@ -481,8 +494,8 @@ func (c *ResourceClient) ListSecrets(ctx context.Context, namespace string) ([]c
 }
 
 func (c *ResourceClient) GetSecret(ctx context.Context, namespace, name string) (*corev1.Secret, error) {
-	client, ok := c.manager.Client()
-	if !ok || !c.manager.Ready() {
+	client, ok := c.mgr(ctx).Client()
+	if !ok || !c.mgr(ctx).Ready() {
 		return nil, fmt.Errorf("kubernetes client not ready")
 	}
 	return client.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})

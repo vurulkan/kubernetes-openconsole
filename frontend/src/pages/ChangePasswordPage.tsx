@@ -82,6 +82,11 @@ const ChangePasswordPage: React.FC<Props> = ({ onChanged }) => {
           <Button type="submit" variant="primary" disabled={loading} className="w-full">
             {loading ? t('changePassword.submitting') : t('changePassword.submit')}
           </Button>
+          {/* Opened voluntarily from the header: a way back. When the change
+              is mandatory the app routes straight back here anyway. */}
+          <Button type="button" variant="outline" className="w-full" onClick={() => navigate('/')}>
+            {t('actions.cancel')}
+          </Button>
         </form>
       </div>
     </div>

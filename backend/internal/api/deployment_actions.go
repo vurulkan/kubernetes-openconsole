@@ -55,14 +55,14 @@ func (s *Server) handleDeploymentRestart(w http.ResponseWriter, r *http.Request)
 	requestID := logging.RequestIDFrom(r.Context())
 
 	if !s.can(r.Context(), user.ID, namespace, "deployments", "restart") {
-		s.recordDeployAudit(user.Username, namespace, name, "deployment.restart", "denied", "", requestID)
+		s.recordDeployAudit(user.Username, namespace, name, "deployment.restart", "denied", "", r)
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 
 	if !allowDeployAction(user.ID) {
 		w.Header().Set("Retry-After", "6")
-		s.recordDeployAudit(user.Username, namespace, name, "deployment.restart", "rate_limited", "", requestID)
+		s.recordDeployAudit(user.Username, namespace, name, "deployment.restart", "rate_limited", "", r)
 		writeError(w, http.StatusTooManyRequests, "rate limited")
 		return
 	}
@@ -76,12 +76,12 @@ func (s *Server) handleDeploymentRestart(w http.ResponseWriter, r *http.Request)
 			slog.Any("error", err),
 			slog.String("request_id", requestID),
 		)
-		s.recordDeployAudit(user.Username, namespace, name, "deployment.restart", "failed", err.Error(), requestID)
+		s.recordDeployAudit(user.Username, namespace, name, "deployment.restart", "failed", err.Error(), r)
 		writeActionError(w, err, "restart failed")
 		return
 	}
 
-	s.recordDeployAudit(user.Username, namespace, name, "deployment.restart", "success", "restartedAt="+stamp, requestID)
+	s.recordDeployAudit(user.Username, namespace, name, "deployment.restart", "success", "restartedAt="+stamp, r)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":      "ok",
 		"restartedAt": stamp,
@@ -100,7 +100,7 @@ func (s *Server) handleDeploymentScale(w http.ResponseWriter, r *http.Request) {
 	requestID := logging.RequestIDFrom(r.Context())
 
 	if !s.can(r.Context(), user.ID, namespace, "deployments", "scale") {
-		s.recordDeployAudit(user.Username, namespace, name, "deployment.scale", "denied", "", requestID)
+		s.recordDeployAudit(user.Username, namespace, name, "deployment.scale", "denied", "", r)
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -125,7 +125,7 @@ func (s *Server) handleDeploymentScale(w http.ResponseWriter, r *http.Request) {
 
 	if !allowDeployAction(user.ID) {
 		w.Header().Set("Retry-After", "6")
-		s.recordDeployAudit(user.Username, namespace, name, "deployment.scale", "rate_limited", "", requestID)
+		s.recordDeployAudit(user.Username, namespace, name, "deployment.scale", "rate_limited", "", r)
 		writeError(w, http.StatusTooManyRequests, "rate limited")
 		return
 	}
@@ -141,13 +141,13 @@ func (s *Server) handleDeploymentScale(w http.ResponseWriter, r *http.Request) {
 			slog.String("request_id", requestID),
 		)
 		s.recordDeployAudit(user.Username, namespace, name, "deployment.scale", "failed",
-			fmt.Sprintf("from=%d to=%d err=%s", previous, body.Replicas, err.Error()), requestID)
+			fmt.Sprintf("from=%d to=%d err=%s", previous, body.Replicas, err.Error()), r)
 		writeActionError(w, err, "scale failed")
 		return
 	}
 
 	s.recordDeployAudit(user.Username, namespace, name, "deployment.scale", "success",
-		fmt.Sprintf("from=%d to=%d", previous, body.Replicas), requestID)
+		fmt.Sprintf("from=%d to=%d", previous, body.Replicas), r)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":   "ok",
 		"previous": previous,
@@ -155,12 +155,13 @@ func (s *Server) handleDeploymentScale(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) recordDeployAudit(user, namespace, name, action, outcome, details, requestID string) {
+func (s *Server) recordDeployAudit(user, namespace, name, action, outcome, details string, r *http.Request) {
+	requestID := requestIDOf(r)
 	resourceName := name
 	if details != "" {
 		resourceName = fmt.Sprintf("%s (%s)", name, details)
 	}
-	go s.audit.Record(s.auditCtxFromID(requestID), models.AuditLog{
+	go s.audit.Record(s.auditCtx(r), models.AuditLog{
 		User:         user,
 		Action:       action + "." + outcome,
 		Namespace:    namespace,

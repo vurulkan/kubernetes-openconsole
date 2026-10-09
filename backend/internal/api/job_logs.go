@@ -46,7 +46,7 @@ func (s *Server) handleJobLogsWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client, ok := s.kube.Client()
+	client, ok := kubeFor(r).Client()
 	if !ok {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return

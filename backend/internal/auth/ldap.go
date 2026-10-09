@@ -243,13 +243,7 @@ func findUserDN(conn *ldap.Conn, cfg LDAPConfig, username string) (string, error
 	if len(baseDNs) == 0 {
 		return "", fmt.Errorf("user base DN not set")
 	}
-	filter := cfg.UserFilter
-	if strings.Contains(filter, "%s") {
-		filter = fmt.Sprintf(filter, ldap.EscapeFilter(username))
-	}
-	if filter == "" {
-		filter = fmt.Sprintf("(sAMAccountName=%s)", ldap.EscapeFilter(username))
-	}
+	filter := loginFilter(cfg, username)
 	for _, baseDN := range baseDNs {
 		search := ldap.NewSearchRequest(
 			baseDN,
@@ -272,3 +266,30 @@ func findUserDN(conn *ldap.Conn, cfg LDAPConfig, username string) (string, error
 	}
 	return "", fmt.Errorf("user not found")
 }
+
+// loginFilter builds the search filter that finds the DN to bind as. The
+// configured user filter also drives the admin's search box, where a
+// wildcard such as (sAMAccountName=%s*) is handy — but at login a prefix
+// match could resolve "jo" to john's DN. When the placeholder sits next to a
+// wildcard, the filter is ANDed with an exact match on the username
+// attribute; filters without a wildcard are used unchanged.
+func loginFilter(cfg LDAPConfig, username string) string {
+	attr := cfg.UsernameAttribute
+	if attr == "" {
+		attr = "sAMAccountName"
+	}
+	exact := fmt.Sprintf("(%s=%s)", attr, ldap.EscapeFilter(username))
+	filter := cfg.UserFilter
+	if filter == "" {
+		return exact
+	}
+	wildcard := strings.Contains(filter, "%s*") || strings.Contains(filter, "*%s")
+	if strings.Contains(filter, "%s") {
+		filter = fmt.Sprintf(filter, ldap.EscapeFilter(username))
+	}
+	if wildcard {
+		return "(&" + filter + exact + ")"
+	}
+	return filter
+}
+

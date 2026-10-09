@@ -212,6 +212,10 @@ func migrate(ctx context.Context, conn *sql.DB) error {
 		`ALTER TABLE ldap_config ADD COLUMN timeout_seconds INTEGER NOT NULL DEFAULT 10`,
 		`ALTER TABLE ldap_config ADD COLUMN user_base_dns TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE ldap_config ADD COLUMN username_attribute TEXT NOT NULL DEFAULT 'sAMAccountName'`,
+		// 2.13.0: per-user cluster selection, user auth source, audit cluster.
+		`ALTER TABLE users ADD COLUMN active_cluster_id INTEGER NULL`,
+		`ALTER TABLE users ADD COLUMN auth_source TEXT NOT NULL DEFAULT 'local'`,
+		`ALTER TABLE audit_logs ADD COLUMN cluster TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, stmt := range alterStatements {
 		if _, err := conn.ExecContext(ctx, stmt); err != nil {

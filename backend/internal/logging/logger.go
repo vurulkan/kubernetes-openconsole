@@ -122,6 +122,21 @@ type ContextKey string
 
 const RequestIDKey ContextKey = "request_id"
 
+// ClusterKey carries the name of the cluster the request runs against, so
+// audit entries recorded from detached goroutines still know it.
+const ClusterKey ContextKey = "cluster"
+
+// ClusterFrom returns the cluster name from ctx or empty string.
+func ClusterFrom(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if v, ok := ctx.Value(ClusterKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
 // RequestIDFrom returns the request id from ctx or empty string.
 func RequestIDFrom(ctx context.Context) string {
 	if ctx == nil {

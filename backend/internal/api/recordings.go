@@ -140,9 +140,8 @@ func (s *Server) handleUpdateRecordingSettings(w http.ResponseWriter, r *http.Re
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-	requestID := logpkg.RequestIDFrom(r.Context())
 	if !user.IsAdmin || user.MustChangePassword {
-		s.recordSettingsAudit(user.Username, "denied", "", requestID)
+		s.recordSettingsAudit(user.Username, "denied", "", r)
 		writeError(w, http.StatusForbidden, "admin only")
 		return
 	}
@@ -155,15 +154,15 @@ func (s *Server) handleUpdateRecordingSettings(w http.ResponseWriter, r *http.Re
 	if err != nil {
 		var verr recording.ValidationError
 		if errors.As(err, &verr) {
-			s.recordSettingsAudit(user.Username, "failed", verr.Error(), requestID)
+			s.recordSettingsAudit(user.Username, "failed", verr.Error(), r)
 			writeError(w, http.StatusBadRequest, verr.Error())
 			return
 		}
-		s.recordSettingsAudit(user.Username, "failed", err.Error(), requestID)
+		s.recordSettingsAudit(user.Username, "failed", err.Error(), r)
 		writeError(w, http.StatusInternalServerError, "failed to save recording settings")
 		return
 	}
-	s.recordSettingsAudit(user.Username, "success", settingsSummary(saved), requestID)
+	s.recordSettingsAudit(user.Username, "success", settingsSummary(saved), r)
 	writeJSON(w, http.StatusOK, map[string]any{"settings": saved})
 }
 
@@ -234,12 +233,13 @@ func recordingSummary(rec *models.SessionRecording) string {
 	return out
 }
 
-func (s *Server) recordSettingsAudit(user, outcome, detail, requestID string) {
+func (s *Server) recordSettingsAudit(user, outcome, detail string, r *http.Request) {
+	requestID := requestIDOf(r)
 	name := "settings"
 	if detail != "" {
 		name += " (" + detail + ")"
 	}
-	go s.audit.Record(s.auditCtxFromID(requestID), models.AuditLog{
+	go s.audit.Record(s.auditCtx(r), models.AuditLog{
 		User:         user,
 		Action:       "recording.settings.update." + outcome,
 		Namespace:    "-",

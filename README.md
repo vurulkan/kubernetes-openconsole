@@ -7,7 +7,7 @@ Modern, production-ready Kubernetes visibility and operations console with stric
 ### Observability & live data
 - **Informer-driven lister cache** — list endpoints read from a `client-go` SharedInformerFactory, so the UI is instant and the API server isn't hammered by polling.
 - **Live Events side panel** — streams `added` / `updated` / `deleted` plus native `corev1.Event` objects over a WebSocket. Filter by All / K8s events / Warnings.
-- **Prometheus `/metrics`**, dedicated `/livez` (process) and `/readyz` (DB + kube client) endpoints.
+- **Prometheus `/metrics`**, dedicated `/livez` (process) and `/readyz` (DB) endpoints. Clusters are left out of readiness, so one unreachable cluster can't take the console down.
 
 ### Workloads shown in the Dashboard
 Pods, Deployments, **DaemonSets**, **StatefulSets**, **HorizontalPodAutoscalers (v2)**, Services, ConfigMaps, **Secrets**, Ingresses, CronJobs, Jobs — card view, list view, label filters, saved views.
@@ -26,7 +26,7 @@ Every write action records `{resource}.{action}.{success|denied|failed|rate_limi
 ### Access & identity
 - **User → Groups → Roles → per-cluster, per-namespace permissions** (application-level RBAC, no Kubernetes RBAC for end users).
 - **Namespace discovery is permission-based** (no leakage of names you can't access).
-- **Multi-cluster** — save N clusters, switch via header dropdown or the `c` keyboard shortcut.
+- **Multi-cluster, per user**: save N clusters. Every user picks their **own** cluster in the header (or with `c`), and admins set a default for everyone else. Permissions can be scoped per cluster, and audit records the cluster.
 - **Local users** (bcrypt) + **LDAP** (bind-based, searchable + importable) + **Azure AD** single-tenant login — all configurable via UI.
 - **JWT authentication** with forced password change on first login.
 - **Session management** (Admin → Sessions): list every active token, revoke individual sessions or every session for a user, change-password revokes everything.
@@ -176,7 +176,7 @@ Configured through **Admin → LDAP** at runtime — no env vars.
 
 OpenConsole talks to each cluster as one ServiceAccount and enforces per-user access itself (Users → Groups → Roles). The ServiceAccount's ClusterRole is the ceiling: no user can do more than it allows, whatever their role says.
 
-Clusters are added **only in the UI** (Admin → Clusters). Two methods: **ServiceAccount Token** (API server URL + token + CA) or **Kubeconfig** (upload a file). Credentials are validated against the API server before they are saved, and stored encrypted in SQLite. The active cluster is reconnected automatically after a restart.
+Clusters are added **only in the UI** (Admin → Clusters). Two methods: **ServiceAccount Token** (API server URL + token + CA) or **Kubeconfig** (upload a file). Credentials are validated against the API server before they are saved (a real namespace list call, so a wrong server, token or CA is rejected) and stored encrypted in SQLite. Each user works on the cluster they pick in the header; see [Choosing your cluster](#choosing-your-cluster). The default cluster is connected at startup.
 
 ## 1. Create the ServiceAccount on the cluster
 
@@ -256,7 +256,7 @@ SERVER=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}
 | Token | `$TOKEN` |
 | CA Cert (base64) | `$CA`. Leave it empty only if the API server certificate is signed by a public CA. |
 
-**Save Cluster** validates the connection. Then click **Activate** on the cluster card. Users now see the namespaces their roles allow.
+**Save Cluster** validates the connection. Then click **Set as default** on the cluster card. Users who haven't picked a cluster work on the default; everyone can switch to another cluster their permissions cover.
 
 ## 3b. Or with the Kubeconfig method
 
@@ -478,53 +478,131 @@ Open the full cheat sheet with `?`. The core set:
 
 ---
 
+# Using OpenConsole
+
+A walk-through of everything an admin sets up, followed by what users do day to day.
+
 ## First login
 
-On first startup a default admin is created:
+On the very first start a default admin is created: **`admin` / `admin`**. You must change the password at first login. Admin pages stay locked until you do.
 
-- **username**: `admin`
-- **password**: `admin`
+## Admin setup checklist
 
-You will be forced to change the password on first login.
+1. **Admin → Clusters**: add your clusters ([Connecting clusters](#connecting-clusters)) and **Set as default** on one of them.
+2. **Identity**: local users ([Users](#users)), [LDAP / Active Directory](#ldap--active-directory) and / or [Azure AD](#azure-ad-entra-id).
+3. **Access**: groups, roles and permissions ([Groups, roles and permissions](#groups-roles-and-permissions)).
+4. Optional: [Recording settings](#session-recording), [session timeout](#session-timeout), [logo](#customization).
 
-## Usage
+## Users
 
-1. Log in as admin.
-2. **Admin → Clusters**: add one or more clusters ([Connecting clusters](#connecting-clusters)) and activate one.
-3. **Admin → LDAP / Azure AD**: configure optional identity providers.
-4. **Admin → Users / Groups / Roles**: define access. Use the new Role Permissions screen for bulk grants, templates (Viewer / Developer / SRE / Admin), and copy-from-role.
-5. **Admin → Sessions**: monitor and revoke tokens.
-6. **Admin → Audit Logs**: filter, search, export CSV.
-7. **Admin → Recordings**: replay pod shell sessions, set retention and disk limits.
+**Admin → Users** lists every account with its **Source**:
 
-## Example LDAP (Active Directory) config
+| Source | How the user signs in | Password managed |
+|---|---|---|
+| Local | username + password stored in OpenConsole (bcrypt) | in OpenConsole |
+| LDAP | directory username + directory password | in the directory |
+| Azure AD | "Sign in with Microsoft" | in Azure AD / Entra ID |
 
-> Replace with your environment. The example below is anonymized.
+- **New user** creates a local account. The admin sets the first password; tick **Admin** for full access. Non-admins see nothing until they are in a group with a role ([below](#groups-roles-and-permissions)).
+- **Edit** (pencil): admin flag, active / disabled, group membership. A disabled user is signed out on the next request.
+- **Reset password** (key icon, **local users only**): sets a new password (min. 8 characters) and by default forces a change at next login. All of that user's sessions are signed out, and the reset is audited as `user.password_reset.*`. LDAP and Azure AD users have no reset here: their password lives in the directory, and a local one would let them bypass it.
+- Users change their own password from the header menu. Doing so signs out all their other sessions.
+- **Delete** removes the account and its group memberships. The last active admin can't be deleted or demoted.
 
-- **host**: `10.10.20.15`
-- **port**: `389`
-- **skip verify**: `false`
-- **bind dn**: `CN=svc-openconsole,OU=ServiceAccounts,OU=IT,DC=example,DC=corp`
-- **bind password**: `********`
-- **user base dn**: `OU=Engineering,OU=Users,DC=example,DC=corp`
-- **user filter**: `(sAMAccountName=%s*)`
+## LDAP / Active Directory
 
-## Azure AD login (single-tenant, optional)
+LDAP works alongside local accounts. Users must exist in OpenConsole before they can sign in, so you **import** them; there is no auto-provisioning on first login.
 
-Azure AD runs in parallel with local / LDAP authentication.
+**1. Configure** (Admin → LDAP):
 
-### Behavior
+| Field | Meaning |
+|---|---|
+| Enabled | turns LDAP sign-in on or off |
+| URL *or* Host + Port | `ldap://dc01.example.corp:389` or `ldaps://…:636`; or fill Host / Port / **Use SSL** instead |
+| StartTLS | upgrade a plain `ldap://` connection to TLS |
+| Skip TLS certificate verification | only for testing; leave it off in production |
+| Timeout | seconds per LDAP operation (default 10) |
+| Bind DN / Bind password | service account used to search the directory, e.g. `CN=svc-openconsole,OU=ServiceAccounts,DC=example,DC=corp`. The password is stored encrypted; tick **Update Bind Password** only when changing it. |
+| User base DN (+ additional base DNs) | where users are searched, one DN per line for several OUs |
+| User filter | LDAP filter with `%s` for the typed name. AD: `(sAMAccountName=%s)`, or `(sAMAccountName=%s*)` for prefix search in the import box. OpenLDAP: `(uid=%s)`. |
+| Username attribute | the attribute that becomes the OpenConsole username: `sAMAccountName` (AD) or `uid` (OpenLDAP) |
 
-- Configured from **Admin → Azure AD**.
-- On first successful Azure AD login, the user is auto-created in the local database.
-- RBAC still uses the local model (**Users → Groups → Roles**).
-- Logout is application-local only (does not sign the user out of Microsoft globally).
+**Save LDAP settings**, then **Test connection**. The test binds with the service account and runs a search in each base DN.
 
-### Required Azure App Registration settings
+**2. Import users**: in the search box under the settings, type part of a name. The user filter is applied with `%s` replaced by what you typed; results are capped at 100 per base DN. Tick the users you want and click **Import selected**. Imported accounts get source **LDAP** and an unusable random local password. Users who already exist are skipped.
 
-- **Tenant type**: single tenant
-- **Redirect URI**: `https://<your-domain>/api/auth/azure/callback`
-- **Scopes used by app**: `openid profile email`
+**3. Give them access**: add the imported users to groups (Admin → Users → edit, or Admin → Groups). Until then they can sign in but see no namespaces.
+
+**4. Sign-in**: users type their directory username and password on the normal login form. OpenConsole finds their DN with the user filter and binds as them. A wildcard filter (`%s*`) is safe here: at login, OpenConsole additionally requires an exact match on the username attribute, so `jo` can never resolve to `john`. Turning **Enabled** off stops all LDAP sign-ins immediately.
+
+> Example (anonymized) Active Directory setup: Host `10.10.20.15`, Port `389`, Bind DN `CN=svc-openconsole,OU=ServiceAccounts,OU=IT,DC=example,DC=corp`, User base DN `OU=Engineering,OU=Users,DC=example,DC=corp`, User filter `(sAMAccountName=%s)`, Username attribute `sAMAccountName`.
+
+## Azure AD (Entra ID)
+
+Single-tenant sign-in that works alongside local / LDAP accounts.
+
+**1. App registration** (Azure portal → Entra ID → App registrations → New):
+- Supported account types: **single tenant**.
+- Redirect URI (Web): `https://<your-openconsole-host>/api/auth/azure/callback`.
+- Certificates & secrets → new **client secret**.
+- Scopes used: `openid profile email`; no extra API permissions are needed.
+
+**2. Configure** (Admin → Azure AD): **Enabled**, **Tenant ID**, **Client ID**, **Client secret** (stored encrypted; leave it empty to keep the stored one) and **Redirect URL** (the same URI as above). Save, then **Test configuration**.
+
+**3. Sign-in**: the login page shows **Sign in with Microsoft**. On a user's first successful sign-in, the account is created automatically with source **Azure AD**. The username is the token's `preferred_username`, or `email` / `upn` if that is missing.
+
+**4. Give them access**: add the new user to groups after their first sign-in. Alternatively, pre-create a local user with exactly that username (usually the UPN, e.g. `jane@example.com`) and put it in groups; the first Microsoft sign-in then uses that account and marks it Azure AD.
+
+Signing out of OpenConsole does not sign the user out of Microsoft.
+
+## Groups, roles and permissions
+
+Access is **User → Group → Role → Permission**. Admins bypass all of it.
+
+- **Role**: a named set of permissions, e.g. `payments-developer`.
+- **Permission**: cluster (one, or **All clusters**) + namespace + resource + action. The full list is in [Application permissions](#application-permissions).
+- **Group**: a set of users; a group gets one or more roles.
+
+Typical flow:
+1. **Admin → Roles → New role**, then **Add permissions**. Pick the cluster, one or more namespaces (multi-select with filter, "Select N matching"), and a template (Viewer / Developer / SRE / Admin) or individual actions. **Copy from role** clones another role's grants. Existing grants are shown as cards per namespace and can be edited in place.
+2. **Admin → Groups → New group**, then assign the role(s).
+3. Add users to the group (from the group, or from Admin → Users).
+
+Changes apply on the user's next request; no sign-out is needed. A user only sees namespaces where they have at least one permission on their current cluster.
+
+## Choosing your cluster
+
+Every user works on **their own** cluster:
+
+- The header switcher (or the `c` key) lists the clusters your permissions cover; admins see all. Picking one switches **only you**, and the choice is remembered across sessions and devices.
+- Until you pick one, you work on the **default** cluster, marked "default" in the list. Admins set it under Admin → Clusters → **Set as default**.
+- If your cluster is deleted or you lose all permissions on it, you fall back to the default automatically.
+- Every audit entry records which cluster the action ran against. Admin → Audit Logs shows it, and the CSV export has a `cluster` column.
+
+## Day-to-day use (Dashboard)
+
+- **Namespaces** (left panel): only the ones you have access to, with a filter (`n`). The selection is remembered.
+- **Resource tabs**: only the resources you may list. `[` / `]` switch tabs. There are **card** and **list** views; list columns are sortable.
+- **Search** (`/`): name tokens plus `label:key=value` or `label:key`, combined with AND. **Saved views** (`v`) store namespace + tab + search + view mode in your browser.
+- **Live Events** (`e`): adds, updates, deletes and Kubernetes Events in real time, with filters for warnings.
+- **Pods**: logs (live stream), events, **Shell** (`pods:exec`, recorded), YAML.
+- **Deployments / StatefulSets**: restart, scale, logs across all pods, YAML edit with server dry-run and a diff before apply.
+- **ConfigMaps**: data view; **Secrets**: keys, reveal and edit ([Secrets](#secrets)).
+- `⌘K` / `Ctrl+K` opens the command palette; `?` lists every shortcut.
+
+## Admin tools
+
+- **Audit Logs**: every read and write action with user, cluster, namespace and resource. Filter by user / action / namespace / date and export to CSV. Retention: `LOG_RETENTION_DAYS`.
+- **Sessions**: every issued token; revoke one or all of a user's ([Sessions](#sessions-admin--sessions)).
+- **Recordings**: replay, download (with a warning) or delete pod shell sessions, and set retention / disk limits ([Session Recording](#session-recording)).
+
+### Session timeout
+
+**Admin → Session**: how long a login token stays valid (minutes, default 60). This applies to new logins.
+
+### Customization
+
+**Admin → Customization**: upload a PNG or SVG logo (up to 256 KB), shown in the header and on the login page. Remove it to go back to the default mark.
 
 ## Tips & gotchas
 

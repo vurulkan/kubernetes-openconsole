@@ -163,9 +163,9 @@ spec:
             timeoutSeconds: 3
             failureThreshold: 3
           readinessProbe:
-            # Readiness is the fuller check: DB reachable AND (if a cluster is
-            # configured) the kube client is ready. Returns 503 otherwise so
-            # Kubernetes rolls the pod out of the Service endpoints.
+            # Readiness = the SQLite DB is reachable. Clusters are deliberately
+            # not part of it: one unreachable cluster must not take the whole
+            # console (including the admin screens to fix it) out of service.
             httpGet:
               path: /readyz
               port: http

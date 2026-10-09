@@ -32,5 +32,4 @@ backend/data/
 # Env files
 .env
 .env.*
-milestone/
 .claude/

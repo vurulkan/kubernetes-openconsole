@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronsUpDown, Server } from 'lucide-react';
-import { activateCluster, listClustersPublic } from '../services/api';
+import { listClustersPublic, selectCluster } from '../services/api';
 import { User } from '../services/api';
 import { confirm } from './ConfirmDialog';
 import { CLUSTER_SWITCHER_EVENT_NAME } from '../hooks/useGlobalShortcuts';
@@ -11,14 +11,17 @@ type Props = {
   user: User;
 };
 
-type ClusterRow = { id: number; name: string; isActive: boolean };
+type ClusterRow = { id: number; name: string; isActive: boolean; selected: boolean };
 
 /**
- * Compact dropdown shown in the top header. Reads the public cluster list
- * (any authenticated user may see names). Admins can switch via the dropdown;
- * non-admins see the active cluster but cannot switch it.
+ * Compact dropdown shown in the top header. Lists the clusters the user may
+ * use and switches the user's OWN cluster — other users are unaffected.
+ * The default cluster (set by admins) is marked; users who never picked one
+ * work on it.
  */
-export const ClusterSwitcher: React.FC<Props> = ({ user }) => {
+// Props kept for call-site compatibility; switching no longer depends on the
+// user's role.
+export const ClusterSwitcher: React.FC<Props> = () => {
   const { t } = useTranslation();
   const [clusters, setClusters] = useState<ClusterRow[]>([]);
   const [open, setOpen] = useState(false);
@@ -78,24 +81,22 @@ export const ClusterSwitcher: React.FC<Props> = ({ user }) => {
     };
   }, [open]);
 
-  const active = clusters.find((c) => c.isActive);
-  const label = active?.name ?? t('clusterSwitcher.noCluster');
+  const current = clusters.find((c) => c.selected);
+  const label = current?.name ?? t('clusterSwitcher.noCluster');
 
-  // Global `c` shortcut opens the menu (only for admins — the switcher is
-  // read-only for non-admins so there's nothing to open).
+  // Global `c` shortcut opens the menu.
   useEffect(() => {
-    if (!user.isAdmin) return;
     const handler = () => {
-      if (clusters.length === 0) return;
+      if (clusters.length < 2) return;
       setOpen(true);
-      // Default focus to the currently-active row so Enter is a no-op and
-      // arrow keys land somewhere sensible even on first open.
-      const idx = clusters.findIndex((c) => c.isActive);
+      // Default focus to the current row so Enter is a no-op and arrow keys
+      // land somewhere sensible even on first open.
+      const idx = clusters.findIndex((c) => c.selected);
       setFocusedIdx(idx >= 0 ? idx : 0);
     };
     window.addEventListener(CLUSTER_SWITCHER_EVENT_NAME, handler as EventListener);
     return () => window.removeEventListener(CLUSTER_SWITCHER_EVENT_NAME, handler as EventListener);
-  }, [user.isAdmin, clusters]);
+  }, [clusters]);
 
   // In-menu keyboard navigation: digits pick a cluster by index (1..9),
   // arrows move, Enter commits the focused row, Esc closes. Only wired while
@@ -122,7 +123,7 @@ export const ClusterSwitcher: React.FC<Props> = ({ user }) => {
       if (e.key === 'Enter') {
         e.preventDefault();
         const target = clusters[focusedIdx];
-        if (target && !target.isActive) void activate(target.id);
+        if (target && !target.selected) void choose(target.id);
         else setOpen(false);
         return;
       }
@@ -134,7 +135,7 @@ export const ClusterSwitcher: React.FC<Props> = ({ user }) => {
           e.preventDefault();
           const target = clusters[idx];
           setFocusedIdx(idx);
-          if (!target.isActive) void activate(target.id);
+          if (!target.selected) void choose(target.id);
           else setOpen(false);
         }
       }
@@ -143,10 +144,10 @@ export const ClusterSwitcher: React.FC<Props> = ({ user }) => {
     return () => document.removeEventListener('keydown', handler);
   }, [open, clusters, focusedIdx]);
 
-  const activate = async (id: number) => {
+  const choose = async (id: number) => {
     setBusy(id);
     try {
-      await activateCluster(id);
+      await selectCluster(id);
       await refresh();
       setOpen(false);
       // Reload to re-fetch namespaces and permissions against the new cluster.
@@ -177,7 +178,8 @@ export const ClusterSwitcher: React.FC<Props> = ({ user }) => {
         ref={buttonRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
-        disabled={!user.isAdmin && clusters.length === 1}
+        disabled={clusters.length === 1}
+        title={current?.isActive ? t('clusterSwitcher.defaultHint') : undefined}
         className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 shadow-sm transition-colors hover:border-slate-300 hover:bg-slate-50 disabled:opacity-70 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700/60"
       >
         <Server size={12} className="text-brand-500" />
@@ -208,21 +210,20 @@ export const ClusterSwitcher: React.FC<Props> = ({ user }) => {
                   type="button"
                   onMouseEnter={() => setFocusedIdx(idx)}
                   onClick={() => {
-                    if (!user.isAdmin) return;
-                    if (c.isActive) {
+                    if (c.selected) {
                       setOpen(false);
                       return;
                     }
-                    void activate(c.id);
+                    void choose(c.id);
                   }}
                   disabled={busy !== null}
                   className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors ${
-                    c.isActive
+                    c.selected
                       ? 'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-200'
                       : focusedIdx === idx
                       ? 'bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100'
                       : 'text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800'
-                  } ${!user.isAdmin && !c.isActive ? 'cursor-not-allowed opacity-50' : ''}`}
+                  }`}
                 >
                   {idx < 9 && (
                     <kbd className="rounded border border-slate-200 bg-white px-1 text-[9px] font-mono text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
@@ -230,7 +231,12 @@ export const ClusterSwitcher: React.FC<Props> = ({ user }) => {
                     </kbd>
                   )}
                   <span className="flex-1 truncate font-mono">{c.name}</span>
-                  {c.isActive && <Check size={14} className="text-brand-600 dark:text-brand-300" />}
+                  {c.isActive && (
+                    <span className="rounded bg-slate-100 px-1 text-[9px] font-medium uppercase text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                      {t('clusterSwitcher.default')}
+                    </span>
+                  )}
+                  {c.selected && <Check size={14} className="text-brand-600 dark:text-brand-300" />}
                   {busy === c.id && (
                     <span className="text-[10px] text-slate-400">{t('clusterSwitcher.switching')}</span>
                   )}
@@ -238,11 +244,9 @@ export const ClusterSwitcher: React.FC<Props> = ({ user }) => {
               </li>
             ))}
           </ul>
-          {!user.isAdmin && (
-            <div className="border-t border-slate-200 px-3 py-1.5 text-[10px] text-slate-400 dark:border-slate-800">
-              {t('clusterSwitcher.adminOnly')}
-            </div>
-          )}
+          <div className="border-t border-slate-200 px-3 py-1.5 text-[10px] text-slate-400 dark:border-slate-800">
+            {t('clusterSwitcher.onlyYou')}
+          </div>
         </div>,
         document.body
       )}

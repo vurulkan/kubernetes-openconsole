@@ -15,7 +15,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
 	"k8s-dashboard/backend/internal/kube"
-	logpkg "k8s-dashboard/backend/internal/logging"
 	"k8s-dashboard/backend/internal/models"
 )
 
@@ -131,7 +130,6 @@ func (s *Server) handleSecretReveal(w http.ResponseWriter, r *http.Request) {
 	}
 	namespace := chi.URLParam(r, "namespace")
 	name := chi.URLParam(r, "name")
-	requestID := logpkg.RequestIDFrom(r.Context())
 	var body struct {
 		Key string `json:"key"`
 	}
@@ -140,23 +138,23 @@ func (s *Server) handleSecretReveal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.can(r.Context(), user.ID, namespace, "secrets", "reveal") {
-		s.recordSecretRevealAudit(user.Username, namespace, name, body.Key, "denied", "", requestID)
+		s.recordSecretRevealAudit(user.Username, namespace, name, body.Key, "denied", "", r)
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 	sec, err := s.resources.GetSecret(r.Context(), namespace, name)
 	if err != nil {
-		s.recordSecretRevealAudit(user.Username, namespace, name, body.Key, "failed", err.Error(), requestID)
+		s.recordSecretRevealAudit(user.Username, namespace, name, body.Key, "failed", err.Error(), r)
 		writeKubeError(w, err)
 		return
 	}
 	value, found := sec.Data[body.Key]
 	if !found {
-		s.recordSecretRevealAudit(user.Username, namespace, name, body.Key, "failed", "key_not_found", requestID)
+		s.recordSecretRevealAudit(user.Username, namespace, name, body.Key, "failed", "key_not_found", r)
 		writeError(w, http.StatusNotFound, "key not found")
 		return
 	}
-	s.recordSecretRevealAudit(user.Username, namespace, name, body.Key, "success", "", requestID)
+	s.recordSecretRevealAudit(user.Username, namespace, name, body.Key, "success", "", r)
 	w.Header().Set("Cache-Control", "no-store")
 	// Text values come back as-is; binary values (keystores, certs in DER)
 	// as base64 with a flag so the UI can say so instead of printing mojibake.
@@ -179,15 +177,14 @@ func (s *Server) handleSecretYAML(w http.ResponseWriter, r *http.Request) {
 	}
 	namespace := chi.URLParam(r, "namespace")
 	name := chi.URLParam(r, "name")
-	requestID := logpkg.RequestIDFrom(r.Context())
 	if !s.can(r.Context(), user.ID, namespace, "secrets", "edit") {
-		s.recordSecretAudit(user.Username, namespace, name, "secret.yaml.view.denied", "", requestID)
+		s.recordSecretAudit(user.Username, namespace, name, "secret.yaml.view.denied", "", r)
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 	sec, err := s.resources.GetSecret(r.Context(), namespace, name)
 	if err != nil {
-		s.recordSecretAudit(user.Username, namespace, name, "secret.yaml.view.failed", err.Error(), requestID)
+		s.recordSecretAudit(user.Username, namespace, name, "secret.yaml.view.failed", err.Error(), r)
 		writeKubeError(w, err)
 		return
 	}
@@ -196,17 +193,18 @@ func (s *Server) handleSecretYAML(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to render yaml")
 		return
 	}
-	s.recordSecretAudit(user.Username, namespace, name, "secret.yaml.view.success", "", requestID)
+	s.recordSecretAudit(user.Username, namespace, name, "secret.yaml.view.success", "", r)
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(out)})
 }
 
-func (s *Server) recordSecretAudit(user, namespace, name, action, detail, requestID string) {
+func (s *Server) recordSecretAudit(user, namespace, name, action, detail string, r *http.Request) {
+	requestID := requestIDOf(r)
 	resource := name
 	if detail != "" {
 		resource += " (" + detail + ")"
 	}
-	go s.audit.Record(s.auditCtxFromID(requestID), models.AuditLog{
+	go s.audit.Record(s.auditCtx(r), models.AuditLog{
 		User:         user,
 		Action:       action,
 		Namespace:    namespace,
@@ -223,13 +221,14 @@ func (s *Server) recordSecretAudit(user, namespace, name, action, detail, reques
 	)
 }
 
-func (s *Server) recordSecretRevealAudit(user, namespace, name, key, outcome, detail, requestID string) {
+func (s *Server) recordSecretRevealAudit(user, namespace, name, key, outcome, detail string, r *http.Request) {
+	requestID := requestIDOf(r)
 	resource := name + " (key=" + key
 	if detail != "" {
 		resource += ";" + detail
 	}
 	resource += ")"
-	go s.audit.Record(s.auditCtxFromID(requestID), models.AuditLog{
+	go s.audit.Record(s.auditCtx(r), models.AuditLog{
 		User:         user,
 		Action:       "secret.reveal." + outcome,
 		Namespace:    namespace,

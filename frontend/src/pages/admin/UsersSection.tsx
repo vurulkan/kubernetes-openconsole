@@ -1,9 +1,11 @@
-import React from 'react';
-import { Pencil, Plus, Search as SearchIcon, Trash2 } from 'lucide-react';
+import React, { useState } from 'react';
+import { KeyRound, Pencil, Plus, Search as SearchIcon, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { Badge, Button, Input } from '../../components/ui';
+import { Alert, Badge, Button, Checkbox, Input, Modal } from '../../components/ui';
 import { Column, DataTable, IconButton } from '../../components/DataTable';
-import { User } from '../../services/api';
+import { resetUserPassword, User } from '../../services/api';
+
+const MIN_PASSWORD_LENGTH = 8;
 
 type Props = {
   users: User[];
@@ -26,6 +28,7 @@ export const UsersSection: React.FC<Props> = ({
   onDelete,
 }) => {
   const { t } = useTranslation();
+  const [resetTarget, setResetTarget] = useState<User | null>(null);
   const q = filter.trim().toLowerCase();
   const rows = q
     ? users.filter((u) => u.username.toLowerCase().includes(q))
@@ -40,6 +43,19 @@ export const UsersSection: React.FC<Props> = ({
           {u.username}
         </span>
       ),
+    },
+    {
+      key: 'source',
+      header: t('admin.users.col.source'),
+      align: 'center',
+      cell: (u) => {
+        const source = u.authSource ?? 'local';
+        return (
+          <Badge variant={source === 'local' ? 'default' : 'info'}>
+            {t(`admin.users.source.${source}`)}
+          </Badge>
+        );
+      },
     },
     {
       key: 'admin',
@@ -93,13 +109,19 @@ export const UsersSection: React.FC<Props> = ({
       key: 'actions',
       header: '',
       align: 'right',
-      width: '110px',
+      width: '130px',
       cell: (u) => (
         <div className="flex justify-end gap-1">
-          <IconButton label="Edit user" onClick={() => onEdit(u)}>
+          <IconButton label={t('admin.users.editUser')} onClick={() => onEdit(u)}>
             <Pencil size={14} />
           </IconButton>
-          <IconButton label="Delete user" variant="danger" onClick={() => onDelete(u)}>
+          {/* Directory users (LDAP / Azure AD) change their password there. */}
+          {(u.authSource ?? 'local') === 'local' && (
+            <IconButton label={t('admin.users.resetPassword')} onClick={() => setResetTarget(u)}>
+              <KeyRound size={14} />
+            </IconButton>
+          )}
+          <IconButton label={t('admin.users.deleteUser')} variant="danger" onClick={() => onDelete(u)}>
             <Trash2 size={14} />
           </IconButton>
         </div>
@@ -133,7 +155,102 @@ export const UsersSection: React.FC<Props> = ({
         rowKey={(u) => u.id}
         emptyMessage={q ? t('admin.users.emptyFilter') : t('admin.users.emptyAll')}
       />
+      <ResetPasswordModal user={resetTarget} onClose={() => setResetTarget(null)} />
     </div>
+  );
+};
+
+const ResetPasswordModal: React.FC<{ user: User | null; onClose: () => void }> = ({ user, onClose }) => {
+  const { t } = useTranslation();
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [mustChange, setMustChange] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  const close = () => {
+    setPassword('');
+    setConfirmPassword('');
+    setMustChange(true);
+    setError(null);
+    setDone(false);
+    onClose();
+  };
+
+  const submit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!user) return;
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      setError(t('admin.users.resetTooShort', { count: MIN_PASSWORD_LENGTH }));
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError(t('admin.users.resetMismatch'));
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await resetUserPassword(user.id, password, mustChange);
+      setDone(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={user !== null}
+      onClose={close}
+      title={t('admin.users.resetTitle', { name: user?.username ?? '' })}
+      size="sm"
+      footer={
+        done ? (
+          <Button variant="primary" size="sm" onClick={close}>
+            {t('actions.close')}
+          </Button>
+        ) : (
+          <>
+            <Button variant="outline" size="sm" onClick={close}>
+              {t('actions.cancel')}
+            </Button>
+            <Button variant="danger" size="sm" onClick={() => submit()} disabled={saving}>
+              {t('admin.users.resetSubmit')}
+            </Button>
+          </>
+        )
+      }
+    >
+      {done ? (
+        <Alert severity="success">{t('admin.users.resetDone', { name: user?.username ?? '' })}</Alert>
+      ) : (
+        <form onSubmit={submit} className="flex flex-col gap-3">
+          <p className="text-xs text-slate-500 dark:text-slate-400">{t('admin.users.resetHelp')}</p>
+          <Input
+            type="password"
+            autoComplete="new-password"
+            label={t('admin.users.resetNew')}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoFocus
+          />
+          <Input
+            type="password"
+            autoComplete="new-password"
+            label={t('admin.users.resetConfirm')}
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+          />
+          <Checkbox checked={mustChange} onChange={setMustChange} label={t('admin.users.resetMustChange')} />
+          {error && <Alert severity="error">{error}</Alert>}
+          {/* Enter submits */}
+          <button type="submit" className="hidden" />
+        </form>
+      )}
+    </Modal>
   );
 };
 

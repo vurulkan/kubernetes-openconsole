@@ -41,7 +41,9 @@ import (
 type Server struct {
 	store      *store.Store
 	audit      *audit.Logger
-	kube       *kube.Manager
+	// clusters holds one connection per cluster; each request uses the
+	// caller's selected cluster (see cluster_ctx.go).
+	clusters   *kube.Registry
 	resources  *kube.ResourceClient
 	jwtKey     []byte
 	logLimiters map[int]*rate.Limiter
@@ -49,10 +51,10 @@ type Server struct {
 	staticDir  string
 	dataDir    string
 	timezone   *time.Location
-	// Active cluster id — cached from the clusters.is_active row and refreshed
-	// on activate/deactivate. 0 means "no active cluster", in which case
-	// permission checks fall back to wildcard matching.
-	activeClusterID atomic.Int64
+	// Default cluster id — cached from the clusters.is_active row and
+	// refreshed on activate/deactivate. Users who haven't picked a cluster
+	// work on this one. 0 = no default.
+	defaultClusterID atomic.Int64
 	// sessionToucher batches last_used_at writes so AuthMiddleware doesn't
 	// serialize every API call behind an UPDATE on SQLite's single writer.
 	sessionToucher *store.SessionToucher
@@ -95,7 +97,7 @@ func (s *Server) authValidator() auth.SessionValidator {
 	return &sessionValidator{s: s.store, t: s.sessionToucher}
 }
 
-func NewServer(st *store.Store, auditLogger *audit.Logger, kubeManager *kube.Manager, recorder *recording.Manager, staticDir string, dataDir string, timeZone string) *Server {
+func NewServer(st *store.Store, auditLogger *audit.Logger, clusters *kube.Registry, recorder *recording.Manager, staticDir string, dataDir string, timeZone string) *Server {
 	location, err := time.LoadLocation(timeZone)
 	if err != nil {
 		location = time.UTC
@@ -104,8 +106,8 @@ func NewServer(st *store.Store, auditLogger *audit.Logger, kubeManager *kube.Man
 	s := &Server{
 		store:          st,
 		audit:          auditLogger,
-		kube:           kubeManager,
-		resources:      kube.NewResourceClient(kubeManager),
+		clusters:       clusters,
+		resources:      kube.NewResourceClient(),
 		jwtKey:         st.SigningKey(),
 		logLimiters:    make(map[int]*rate.Limiter),
 		staticDir:      staticDir,
@@ -114,19 +116,11 @@ func NewServer(st *store.Store, auditLogger *audit.Logger, kubeManager *kube.Man
 		sessionToucher: toucher,
 		recorder:       recorder,
 	}
-	// Seed the active cluster id from whatever row is currently is_active.
-	// Called sync so permission checks on early requests see a stable value.
+	// Seed the default cluster id from whatever row is currently is_active.
 	if cluster, err := st.GetActiveCluster(context.Background()); err == nil && cluster != nil {
-		s.activeClusterID.Store(int64(cluster.ID))
+		s.defaultClusterID.Store(int64(cluster.ID))
 	}
 	return s
-}
-
-// ActiveClusterID returns the currently-active cluster id, or 0 when none is
-// set (fresh install or after a deactivate). Permission checks treat 0 as
-// "wildcard — any permission row applies".
-func (s *Server) ActiveClusterID() int {
-	return int(s.activeClusterID.Load())
 }
 
 func (s *Server) Router() http.Handler {
@@ -146,17 +140,14 @@ func (s *Server) Router() http.Handler {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("live"))
 	})
-	// Readiness: DB handle usable + if a cluster is configured, it must be
-	// ready. Returns 503 otherwise so Kubernetes rolls the pod out of service.
+	// Readiness: the DB handle is usable. Clusters are deliberately not part
+	// of it: with several clusters (one per user's choice) a single
+	// unreachable cluster must not take the whole console — including the
+	// admin screens needed to fix it — out of service.
 	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		if err := s.store.Ping(r.Context()); err != nil {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			_, _ = w.Write([]byte("db not reachable"))
-			return
-		}
-		if creds, err := s.store.GetKubeCredentials(r.Context()); err == nil && creds.Active && !s.kube.Ready() {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte("cluster not ready"))
 			return
 		}
 		w.WriteHeader(http.StatusOK)
@@ -179,7 +170,9 @@ func (s *Server) Router() http.Handler {
 
 	r.Group(func(r chi.Router) {
 		r.Use(auth.AuthMiddleware(s.jwtKey, s.authValidator()))
+		r.Use(s.clusterMiddleware)
 		r.Get("/api/cluster/active", s.handleGetActiveCluster)
+		r.Post("/api/cluster/select", s.handleSelectCluster)
 		r.Get("/api/clusters/public", s.handleListClustersPublic)
 		r.Get("/api/namespaces", s.handleNamespaces)
 		r.Get("/api/namespaces/{namespace}/permissions", s.handleNamespacePermissions)
@@ -234,10 +227,12 @@ func (s *Server) Router() http.Handler {
 		// Recording writes check admin in the handler so denials are audited.
 		r.Delete("/api/admin/recordings/{id}", s.handleDeleteRecording)
 		r.Put("/api/admin/recordings/settings", s.handleUpdateRecordingSettings)
+		r.Post("/api/admin/users/{id}/reset-password", s.handleResetUserPassword)
 	})
 
 	r.Group(func(r chi.Router) {
 		r.Use(auth.AuthMiddleware(s.jwtKey, s.authValidator()))
+		r.Use(s.clusterMiddleware)
 		r.Use(s.requireAdmin)
 		r.Get("/api/admin/users", s.handleListUsers)
 		r.Post("/api/admin/users", s.handleCreateUser)
@@ -497,7 +492,11 @@ func (s *Server) auditCtx(r *http.Request) context.Context {
 	if r == nil {
 		return context.Background()
 	}
-	return s.auditCtxFromID(logpkg.RequestIDFrom(r.Context()))
+	ctx := s.auditCtxFromID(logpkg.RequestIDFrom(r.Context()))
+	if cluster := logpkg.ClusterFrom(r.Context()); cluster != "" {
+		ctx = context.WithValue(ctx, logpkg.ClusterKey, cluster)
+	}
+	return ctx
 }
 
 // auditCtxFromID is the string-ID variant used by helpers that already fished
@@ -571,6 +570,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := auth.LDAPAuthenticate(ldapCfg, request.Username, request.Password); err == nil {
 				authenticated = true
+				// Authenticated by the directory: mark the account LDAP so
+				// an admin can't give it a local password.
+				if user.AuthSource != models.AuthSourceLDAP {
+					_ = s.store.SetUserAuthSource(r.Context(), user.ID, models.AuthSourceLDAP)
+				}
 			}
 		}
 	}
@@ -749,6 +753,11 @@ func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "user is disabled")
 		return
 	}
+	// Signed in through Azure AD: the stored password is random and must
+	// never become resettable.
+	if user.AuthSource != models.AuthSourceAzure {
+		_ = s.store.SetUserAuthSource(r.Context(), user.ID, models.AuthSourceAzure)
+	}
 
 	session, err := s.store.GetSessionSettings(r.Context())
 	if err != nil {
@@ -820,7 +829,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	engine := rbac.New(perms)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"user":        user,
-		"namespaces":  engine.AllowedNamespaces(s.ActiveClusterID()),
+		"namespaces":  engine.AllowedNamespaces(clusterIDFrom(r.Context())),
 		"permissions": perms,
 	})
 }
@@ -887,7 +896,7 @@ func (s *Server) handleNamespaces(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-	allowed := engine.AllowedNamespaces(s.ActiveClusterID())
+	allowed := engine.AllowedNamespaces(clusterIDFrom(r.Context()))
 	allowedSet := make(map[string]struct{})
 	for _, ns := range allowed {
 		allowedSet[ns] = struct{}{}
@@ -932,7 +941,7 @@ func (s *Server) handleNamespacePermissions(w http.ResponseWriter, r *http.Reque
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-	permissions := engine.AllowedResources(s.ActiveClusterID(), namespace)
+	permissions := engine.AllowedResources(clusterIDFrom(r.Context()), namespace)
 	if len(permissions) == 0 {
 		w.WriteHeader(http.StatusForbidden)
 		return
@@ -1073,7 +1082,7 @@ func (s *Server) handlePodLogsWS(w http.ResponseWriter, r *http.Request) {
 
 	s.recordAudit(r, "logs", namespace, "pods", chi.URLParam(r, "name"))
 
-	client, ok := s.kube.Client()
+	client, ok := kubeFor(r).Client()
 	if !ok {
 		logWarnf("logs ws client not ready")
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -1327,8 +1336,8 @@ func (s *Server) handlePodEvents(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	client, ok := s.kube.Client()
-	if !ok || !s.kube.Ready() {
+	client, ok := kubeFor(r).Client()
+	if !ok || !kubeFor(r).Ready() {
 		writeError(w, http.StatusServiceUnavailable, "kubernetes client not ready")
 		return
 	}
@@ -1348,8 +1357,8 @@ func (s *Server) handleDeploymentEvents(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	client, ok := s.kube.Client()
-	if !ok || !s.kube.Ready() {
+	client, ok := kubeFor(r).Client()
+	if !ok || !kubeFor(r).Ready() {
 		writeError(w, http.StatusServiceUnavailable, "kubernetes client not ready")
 		return
 	}
@@ -1895,7 +1904,8 @@ func (s *Server) handleImportLDAPUsers(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-		if _, err := s.store.CreateUser(r.Context(), username, randomHash); err == nil {
+		if id, err := s.store.CreateUser(r.Context(), username, randomHash); err == nil {
+			_ = s.store.SetUserAuthSource(r.Context(), id, models.AuthSourceLDAP)
 			created++
 		}
 	}
@@ -1938,61 +1948,40 @@ func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
+// handleGetCluster is the pre-multi-cluster status endpoint, kept for API
+// compatibility: it now describes the default cluster.
 func (s *Server) handleGetCluster(w http.ResponseWriter, r *http.Request) {
-	creds, err := s.store.GetKubeCredentials(r.Context())
+	id := s.DefaultClusterID()
+	if id == 0 {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"method": "", "server": "", "active": false, "ready": false, "lastError": ""})
+		return
+	}
+	c, err := s.store.GetCluster(r.Context(), id)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
+	lastError := ""
+	ready := false
+	if m, err := s.clusters.Get(r.Context(), id); err != nil {
+		lastError = err.Error()
+	} else {
+		ready = m.Ready()
+		lastError = m.LastError()
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"method": creds.Method,
-		"server": creds.Server,
-		"active": creds.Active,
-		"ready":  s.kube.Ready(),
-		"lastError": s.kube.LastError(),
+		"method":    c.Method,
+		"server":    c.Server,
+		"active":    true,
+		"ready":     ready,
+		"lastError": lastError,
 	})
 }
 
+// handleUpdateCluster was the single-cluster write endpoint. Clusters are
+// managed through /api/admin/clusters now.
 func (s *Server) handleUpdateCluster(w http.ResponseWriter, r *http.Request) {
-	logf("cluster update received")
-	creds, err := parseClusterRequest(r)
-	if err != nil {
-		logf("cluster update invalid: %v", err)
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	creds.Active = true
-	if err := s.kube.ValidateCredentials(creds); err != nil {
-		logf("cluster update validation failed: %v", err)
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	logf("cluster update validation ok")
-	if err := runWithTimeout(5*time.Second, func() error {
-		return s.store.UpdateKubeCredentials(r.Context(), creds)
-	}); err != nil {
-		logf("cluster update store failed: %v", err)
-		writeError(w, http.StatusInternalServerError, "failed to store cluster credentials")
-		return
-	}
-	logf("cluster update stored")
-	if err := runWithTimeout(5*time.Second, func() error {
-		return s.kube.ApplyCredentials(creds)
-	}); err != nil {
-		logf("cluster update apply failed: %v", err)
-		writeError(w, http.StatusGatewayTimeout, err.Error())
-		return
-	}
-	logf("cluster update applied")
-	s.kube.StartAsync()
-	writeJSON(w, http.StatusAccepted, map[string]interface{}{
-		"status":    "starting",
-		"active":    true,
-		"ready":     s.kube.Ready(),
-		"lastError": s.kube.LastError(),
-	})
-	logf("cluster update response sent")
-	s.recordAudit(r, "admin.update", "-", "kube_cluster", creds.Method)
+	writeError(w, http.StatusGone, "single-cluster settings were replaced by Admin → Clusters (/api/admin/clusters)")
 }
 
 func runWithTimeout(timeout time.Duration, fn func() error) error {
@@ -2014,7 +2003,7 @@ func (s *Server) handleValidateCluster(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := s.kube.ValidateCredentials(creds); err != nil {
+	if err := kube.ValidateCredentials(creds); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -2060,6 +2049,7 @@ func (s *Server) handleAuditLogs(w http.ResponseWriter, r *http.Request) {
 			"namespace": entry.Namespace,
 			"resourceType": entry.ResourceType,
 			"resourceName": entry.ResourceName,
+			"cluster": entry.Cluster,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -2091,12 +2081,13 @@ func (s *Server) handleAuditLogsExport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/csv")
 	w.Header().Set("Content-Disposition", "attachment; filename=audit-logs.csv")
 	writer := csv.NewWriter(w)
-	_ = writer.Write([]string{"timestamp", "user", "action", "namespace", "resource_type", "resource_name"})
+	_ = writer.Write([]string{"timestamp", "user", "action", "cluster", "namespace", "resource_type", "resource_name"})
 	for _, entry := range logs {
 		_ = writer.Write([]string{
 			entry.Timestamp.In(s.timezone).Format(time.RFC3339),
 			entry.User,
 			entry.Action,
+			entry.Cluster,
 			entry.Namespace,
 			entry.ResourceType,
 			entry.ResourceName,
@@ -2230,7 +2221,7 @@ func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, resou
 		w.WriteHeader(http.StatusUnauthorized)
 		return "", false
 	}
-	if !engine.Can(s.ActiveClusterID(), namespace, resource, action) {
+	if !engine.Can(clusterIDFrom(r.Context()), namespace, resource, action) {
 		w.WriteHeader(http.StatusForbidden)
 		return "", false
 	}
@@ -2250,7 +2241,7 @@ func (s *Server) can(ctx context.Context, userID int, namespace, resource, actio
 		return false
 	}
 	engine := rbac.New(perms)
-	return engine.Can(s.ActiveClusterID(), namespace, resource, action)
+	return engine.Can(clusterIDFrom(ctx), namespace, resource, action)
 }
 
 func (s *Server) userForRequest(r *http.Request) (*models.User, bool) {

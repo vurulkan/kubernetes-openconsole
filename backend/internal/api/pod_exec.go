@@ -55,7 +55,7 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 	requestID := logging.RequestIDFrom(r.Context())
 
 	if !s.can(r.Context(), claims.UserID, namespace, "pods", "exec") {
-		s.recordExecAudit(claims.Username, namespace, pod, "denied", "", requestID)
+		s.recordExecAudit(claims.Username, namespace, pod, "denied", "", r)
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
@@ -66,12 +66,12 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 		command = "auto"
 	}
 
-	client, ok := s.kube.Client()
+	client, ok := kubeFor(r).Client()
 	if !ok {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
-	cfg, ok := s.kube.RESTConfig()
+	cfg, ok := kubeFor(r).RESTConfig()
 	if !ok {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
@@ -102,7 +102,7 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 	executor, err := remotecommand.NewSPDYExecutor(cfg, "POST", req.URL())
 	if err != nil {
 		writeExecError(conn, "spdy init failed: "+err.Error())
-		s.recordExecAudit(claims.Username, namespace, pod, "failed", "spdy_init:"+err.Error(), requestID)
+		s.recordExecAudit(claims.Username, namespace, pod, "failed", "spdy_init:"+err.Error(), r)
 		return
 	}
 
@@ -114,7 +114,7 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 	s.recordExecAudit(claims.Username, namespace, pod, "start",
-		"container="+container+";cmd="+command, requestID)
+		"container="+container+";cmd="+command, r)
 	slog.Info("pod.exec.start",
 		slog.String("user", claims.Username),
 		slog.String("namespace", namespace),
@@ -147,7 +147,7 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 	}
 	duration := time.Since(start)
 	s.recordExecAudit(claims.Username, namespace, pod, outcome,
-		detail+";dur_ms="+itoa(duration.Milliseconds()), requestID)
+		detail+";dur_ms="+itoa(duration.Milliseconds()), r)
 	slog.Info("pod.exec.end",
 		slog.String("user", claims.Username),
 		slog.String("namespace", namespace),
@@ -165,7 +165,7 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 		if res.Truncated {
 			detail += ";truncated=" + res.TruncateReason
 		}
-		s.recordExecAudit(claims.Username, namespace, pod, "session.recorded", detail, requestID)
+		s.recordExecAudit(claims.Username, namespace, pod, "session.recorded", detail, r)
 	}
 }
 
@@ -176,10 +176,7 @@ func (s *Server) startExecRecording(r *http.Request, conn *websocket.Conn, user,
 	if s.recorder == nil {
 		return nil
 	}
-	cluster := ""
-	if c, err := s.store.GetActiveCluster(r.Context()); err == nil && c != nil {
-		cluster = c.Name
-	}
+	cluster := clusterFrom(r.Context()).Name
 	cols, _ := strconv.ParseUint(r.URL.Query().Get("cols"), 10, 16)
 	rows, _ := strconv.ParseUint(r.URL.Query().Get("rows"), 10, 16)
 	rec, err := s.recorder.Start(r.Context(), recording.Meta{
@@ -200,13 +197,13 @@ func (s *Server) startExecRecording(r *http.Request, conn *websocket.Conn, user,
 		return rec
 	case errors.Is(err, recording.ErrDisabled):
 	case errors.Is(err, recording.ErrNoSpace):
-		s.recordExecAudit(user, namespace, pod, "session.record_skipped", "reason=disk_quota", requestID)
+		s.recordExecAudit(user, namespace, pod, "session.record_skipped", "reason=disk_quota", r)
 	default:
 		slog.Warn("exec recording failed to start",
 			slog.Any("error", err),
 			slog.String("request_id", requestID),
 		)
-		s.recordExecAudit(user, namespace, pod, "session.record_failed", err.Error(), requestID)
+		s.recordExecAudit(user, namespace, pod, "session.record_failed", err.Error(), r)
 	}
 	return nil
 }
@@ -278,12 +275,12 @@ func formatInt(v int64) string {
 }
 
 // recordExecAudit writes an audit row and keeps the console log aligned.
-func (s *Server) recordExecAudit(user, namespace, pod, outcome, detail, requestID string) {
+func (s *Server) recordExecAudit(user, namespace, pod, outcome, detail string, r *http.Request) {
 	resource := pod
 	if detail != "" {
 		resource = pod + " (" + detail + ")"
 	}
-	go s.audit.Record(s.auditCtxFromID(requestID), models.AuditLog{
+	go s.audit.Record(s.auditCtx(r), models.AuditLog{
 		User:         user,
 		Action:       "pod.exec." + outcome,
 		Namespace:    namespace,

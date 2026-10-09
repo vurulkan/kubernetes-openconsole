@@ -42,7 +42,7 @@ func (c *ResourceClient) Apply(
 	raw []byte,
 	dryRun bool,
 ) (*ApplyResult, error) {
-	cfg, ok := c.manager.RESTConfig()
+	cfg, ok := c.mgr(ctx).RESTConfig()
 	if !ok {
 		return nil, fmt.Errorf("kubernetes client not ready")
 	}

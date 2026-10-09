@@ -74,3 +74,14 @@ func (e *Engine) AllowedResources(clusterID int, namespace string) map[string][]
 	}
 	return result
 }
+
+// CoversCluster reports whether any grant applies to the cluster (a grant for
+// that cluster, or one for all clusters).
+func (e *Engine) CoversCluster(clusterID int) bool {
+	for _, perm := range e.permissions {
+		if perm.ClusterID == 0 || perm.ClusterID == clusterID {
+			return true
+		}
+	}
+	return false
+}

@@ -68,12 +68,12 @@ func (s *Store) EnsureDefaultAdmin(ctx context.Context, passwordHash string) err
 }
 
 func (s *Store) GetUserByUsername(ctx context.Context, username string) (*models.User, error) {
-	row := s.conn.QueryRowContext(ctx, `SELECT id, username, password_hash, must_change_password, is_active, is_admin, created_at FROM users WHERE username = ?`, username)
+	row := s.conn.QueryRowContext(ctx, `SELECT id, username, password_hash, must_change_password, is_active, is_admin, created_at, auth_source, COALESCE(active_cluster_id, 0) FROM users WHERE username = ?`, username)
 	var user models.User
 	var mustChange int
 	var isActive int
 	var isAdmin int
-	if err := row.Scan(&user.ID, &user.Username, &user.PasswordHash, &mustChange, &isActive, &isAdmin, &user.CreatedAt); err != nil {
+	if err := row.Scan(&user.ID, &user.Username, &user.PasswordHash, &mustChange, &isActive, &isAdmin, &user.CreatedAt, &user.AuthSource, &user.ActiveClusterID); err != nil {
 		return nil, err
 	}
 	user.MustChangePassword = mustChange == 1
@@ -83,12 +83,12 @@ func (s *Store) GetUserByUsername(ctx context.Context, username string) (*models
 }
 
 func (s *Store) GetUserByID(ctx context.Context, id int) (*models.User, error) {
-	row := s.conn.QueryRowContext(ctx, `SELECT id, username, password_hash, must_change_password, is_active, is_admin, created_at FROM users WHERE id = ?`, id)
+	row := s.conn.QueryRowContext(ctx, `SELECT id, username, password_hash, must_change_password, is_active, is_admin, created_at, auth_source, COALESCE(active_cluster_id, 0) FROM users WHERE id = ?`, id)
 	var user models.User
 	var mustChange int
 	var isActive int
 	var isAdmin int
-	if err := row.Scan(&user.ID, &user.Username, &user.PasswordHash, &mustChange, &isActive, &isAdmin, &user.CreatedAt); err != nil {
+	if err := row.Scan(&user.ID, &user.Username, &user.PasswordHash, &mustChange, &isActive, &isAdmin, &user.CreatedAt, &user.AuthSource, &user.ActiveClusterID); err != nil {
 		return nil, err
 	}
 	user.MustChangePassword = mustChange == 1
@@ -98,7 +98,7 @@ func (s *Store) GetUserByID(ctx context.Context, id int) (*models.User, error) {
 }
 
 func (s *Store) ListUsers(ctx context.Context) ([]models.User, error) {
-	rows, err := s.conn.QueryContext(ctx, `SELECT id, username, must_change_password, is_active, is_admin, created_at FROM users ORDER BY username`)
+	rows, err := s.conn.QueryContext(ctx, `SELECT id, username, must_change_password, is_active, is_admin, created_at, auth_source, COALESCE(active_cluster_id, 0) FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +109,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]models.User, error) {
 		var mustChange int
 		var isActive int
 		var isAdmin int
-		if err := rows.Scan(&user.ID, &user.Username, &mustChange, &isActive, &isAdmin, &user.CreatedAt); err != nil {
+		if err := rows.Scan(&user.ID, &user.Username, &mustChange, &isActive, &isAdmin, &user.CreatedAt, &user.AuthSource, &user.ActiveClusterID); err != nil {
 			return nil, err
 		}
 		user.MustChangePassword = mustChange == 1
@@ -588,12 +588,12 @@ func (s *Store) UpdateKubeCredentials(ctx context.Context, creds models.KubeCred
 }
 
 func (s *Store) AddAuditLog(ctx context.Context, entry models.AuditLog) error {
-	_, err := s.conn.ExecContext(ctx, `INSERT INTO audit_logs (timestamp, user, action, namespace, resource_type, resource_name) VALUES (?, ?, ?, ?, ?, ?)`, entry.Timestamp, entry.User, entry.Action, entry.Namespace, entry.ResourceType, entry.ResourceName)
+	_, err := s.conn.ExecContext(ctx, `INSERT INTO audit_logs (timestamp, user, action, namespace, resource_type, resource_name, cluster) VALUES (?, ?, ?, ?, ?, ?, ?)`, entry.Timestamp, entry.User, entry.Action, entry.Namespace, entry.ResourceType, entry.ResourceName, entry.Cluster)
 	return err
 }
 
 func (s *Store) ListAuditLogs(ctx context.Context, limit, offset int, userFilter, actionFilter, namespaceFilter string, startTime, endTime *time.Time) ([]models.AuditLog, error) {
-	query := `SELECT id, timestamp, user, action, namespace, resource_type, resource_name FROM audit_logs`
+	query := `SELECT id, timestamp, user, action, namespace, resource_type, resource_name, cluster FROM audit_logs`
 	args := []interface{}{}
 	conditions := []string{}
 	if userFilter != "" {
@@ -629,7 +629,7 @@ func (s *Store) ListAuditLogs(ctx context.Context, limit, offset int, userFilter
 	var logs []models.AuditLog
 	for rows.Next() {
 		var entry models.AuditLog
-		if err := rows.Scan(&entry.ID, &entry.Timestamp, &entry.User, &entry.Action, &entry.Namespace, &entry.ResourceType, &entry.ResourceName); err != nil {
+		if err := rows.Scan(&entry.ID, &entry.Timestamp, &entry.User, &entry.Action, &entry.Namespace, &entry.ResourceType, &entry.ResourceName, &entry.Cluster); err != nil {
 			return nil, err
 		}
 		logs = append(logs, entry)
@@ -699,3 +699,21 @@ func (s *Store) ListPermissionsByUser(ctx context.Context, userID int) ([]models
 	}
 	return permissions, nil
 }
+
+// SetUserActiveCluster stores the cluster a user picked; 0 clears it (use the
+// default cluster).
+func (s *Store) SetUserActiveCluster(ctx context.Context, userID, clusterID int) error {
+	var v any
+	if clusterID > 0 {
+		v = clusterID
+	}
+	_, err := s.conn.ExecContext(ctx, `UPDATE users SET active_cluster_id = ? WHERE id = ?`, v, userID)
+	return err
+}
+
+// SetUserAuthSource records where a user signs in (local / ldap / azure).
+func (s *Store) SetUserAuthSource(ctx context.Context, userID int, source string) error {
+	_, err := s.conn.ExecContext(ctx, `UPDATE users SET auth_source = ? WHERE id = ?`, source, userID)
+	return err
+}
+

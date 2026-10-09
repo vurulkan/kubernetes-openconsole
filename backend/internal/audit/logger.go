@@ -29,6 +29,9 @@ func (l *Logger) SetConsoleMirror(enabled bool) {
 
 func (l *Logger) Record(ctx context.Context, entry models.AuditLog) {
 	entry.Timestamp = time.Now().UTC()
+	if entry.Cluster == "" {
+		entry.Cluster = logging.ClusterFrom(ctx)
+	}
 	_ = l.store.AddAuditLog(ctx, entry)
 	if hook := auditMetricHook; hook != nil {
 		hook()
@@ -45,6 +48,7 @@ func (l *Logger) Record(ctx context.Context, entry models.AuditLog) {
 			slog.String("namespace", entry.Namespace),
 			slog.String("resource_type", entry.ResourceType),
 			slog.String("resource_name", entry.ResourceName),
+			slog.String("cluster", entry.Cluster),
 			slog.String("request_id", logging.RequestIDFrom(ctx)),
 			slog.Time("ts", entry.Timestamp),
 		)

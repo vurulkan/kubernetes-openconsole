@@ -62,7 +62,8 @@ func newTestEnv(t *testing.T) *testEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.CreateCluster(ctx, "beta", "", creds); err != nil {
+	beta, err := st.CreateCluster(ctx, "beta", "", creds)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := st.ActivateCluster(ctx, alpha); err != nil {
@@ -100,7 +101,18 @@ func newTestEnv(t *testing.T) *testEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := NewServer(st, auditLogger, kube.NewManagerWithClient(client), rec, filepath.Join(tmp, "public"), tmp, "UTC")
+	clusters := kube.NewRegistry(nil)
+	clusters.Put(alpha, kube.NewManagerWithClient(client))
+	// beta is a different "cluster": its own objects, so tests can tell
+	// which cluster a request actually reached.
+	betaClient := fake.NewSimpleClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "team-a"}},
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "beta-only"}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "beta-pod", Namespace: "team-a"}},
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "team-a"}},
+	)
+	clusters.Put(beta, kube.NewManagerWithClient(betaClient))
+	srv := NewServer(st, auditLogger, clusters, rec, filepath.Join(tmp, "public"), tmp, "UTC")
 	hs := httptest.NewServer(srv.Router())
 	t.Cleanup(hs.Close)
 	return &testEnv{t: t, client: client, store: st, server: srv, http: hs}

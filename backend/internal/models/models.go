@@ -10,7 +10,20 @@ type User struct {
 	IsActive           bool      `json:"isActive"`
 	IsAdmin            bool      `json:"isAdmin"`
 	CreatedAt          time.Time `json:"createdAt"`
+	// AuthSource is where the user signs in: "local" (password stored here),
+	// "ldap" or "azure". Only local users can have their password reset.
+	AuthSource string `json:"authSource"`
+	// ActiveClusterID is the cluster this user picked in the header
+	// switcher; 0 = use the default cluster.
+	ActiveClusterID int `json:"activeClusterId"`
 }
+
+// Where a user authenticates.
+const (
+	AuthSourceLocal = "local"
+	AuthSourceLDAP  = "ldap"
+	AuthSourceAzure = "azure"
+)
 
 type Group struct {
 	ID   int    `json:"id"`
@@ -85,6 +98,9 @@ type AuditLog struct {
 	Namespace    string    `json:"namespace"`
 	ResourceType string    `json:"resourceType"`
 	ResourceName string    `json:"resourceName"`
+	// Cluster the action ran against ("" for cluster-independent actions
+	// such as logins or admin settings).
+	Cluster string `json:"cluster"`
 }
 
 // SessionTokenRow is one row from session_tokens with the owner's username

@@ -4,6 +4,9 @@ export type User = {
   mustChangePassword: boolean;
   isActive: boolean;
   isAdmin: boolean;
+  /** Where the user signs in. Only local users can have their password reset. */
+  authSource?: 'local' | 'ldap' | 'azure';
+  activeClusterId?: number;
 };
 
 export type NamespacePermission = {
@@ -356,14 +359,24 @@ export type ClusterListItem = {
   createdAt?: string;
 };
 
+// Clusters the caller may use: isActive = the default cluster, selected =
+// the caller's current one.
 export const listClustersPublic = () =>
-  apiRequest<{ items: Array<{ id: number; name: string; isActive: boolean }> }>(
+  apiRequest<{ items: Array<{ id: number; name: string; isActive: boolean; selected: boolean }> }>(
     '/api/clusters/public'
   );
 
+// Picks the caller's own cluster (0 = back to the default). Only affects the
+// current user.
+export const selectCluster = (clusterId: number) =>
+  apiRequest<{ status: string; clusterId: number; name: string }>('/api/cluster/select', {
+    method: 'POST',
+    body: JSON.stringify({ clusterId }),
+  });
+
 export const getActiveCluster = () =>
   apiRequest<{
-    active: { id: number; name: string; description: string; server: string; method: string } | null;
+    active: { id: number; name: string; description: string; server: string; method: string; isDefault: boolean } | null;
   }>('/api/cluster/active');
 
 export const listClustersAdmin = () =>
@@ -751,3 +764,11 @@ export const downloadRecordingCast = async (id: number) => {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
+
+// Admin sets a new password for a LOCAL user; by default the user must change
+// it at next login. All of that user's sessions are signed out.
+export const resetUserPassword = (userId: number, password: string, mustChange: boolean) =>
+  apiRequest<{ status: string; mustChangePassword: boolean }>(`/api/admin/users/${userId}/reset-password`, {
+    method: 'POST',
+    body: JSON.stringify({ password, mustChange }),
+  });

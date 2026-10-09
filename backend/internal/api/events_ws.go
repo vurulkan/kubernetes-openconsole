@@ -17,7 +17,7 @@ import (
 func (s *Server) handleEventsWS(w http.ResponseWriter, r *http.Request) {
 	ns := r.URL.Query().Get("namespace")
 
-	bus := s.kube.EventBus()
+	bus := kubeFor(r).EventBus()
 	if bus == nil {
 		writeError(w, http.StatusServiceUnavailable, "event bus unavailable")
 		return

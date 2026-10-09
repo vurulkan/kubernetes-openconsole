@@ -63,8 +63,16 @@ func main() {
 		fatal("admin seed error", err)
 	}
 
-	kubeManager := kube.NewManager()
-	restoreActiveCluster(context.Background(), stor, kubeManager)
+	// One connection per cluster, opened on first use; each user works on
+	// the cluster they selected (see api/cluster_ctx.go).
+	clusters := kube.NewRegistry(func(ctx context.Context, id int) (models.KubeCredentials, error) {
+		c, err := stor.GetCluster(ctx, id)
+		if err != nil {
+			return models.KubeCredentials{}, err
+		}
+		return c.Credentials, nil
+	})
+	warmDefaultCluster(context.Background(), stor, clusters)
 
 	auditLogger := audit.New(stor)
 	auditLogger.SetConsoleMirror(cfg.LogIncludeAudit)
@@ -93,7 +101,7 @@ func main() {
 		staticDir = value
 	}
 	dataDir := filepath.Dir(cfg.DataPath)
-	server := api.NewServer(stor, auditLogger, kubeManager, recorder, staticDir, dataDir, cfg.TimeZone)
+	server := api.NewServer(stor, auditLogger, clusters, recorder, staticDir, dataDir, cfg.TimeZone)
 	httpServer := &http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      server.Router(),
@@ -121,29 +129,19 @@ func main() {
 	slog.Info("server stopped")
 }
 
-// restoreActiveCluster reconnects to whichever cluster was active before the
-// restart. The clusters table is the source of truth since multi-cluster;
-// the legacy single kube_credentials row is only a fallback for installs
-// that never had a cluster row. Failures are logged, not fatal: the console
-// still boots and an admin can fix or re-activate the cluster from the UI.
-func restoreActiveCluster(ctx context.Context, stor *store.Store, km *kube.Manager) {
-	if c, err := stor.GetActiveCluster(ctx); err == nil && c != nil {
-		if err := km.ApplyCredentials(c.Credentials); err != nil {
-			slog.Warn("active cluster credentials rejected", slog.String("cluster", c.Name), slog.Any("error", err))
-			return
-		}
-		if err := km.Start(ctx); err != nil {
-			slog.Warn("active cluster start failed", slog.String("cluster", c.Name), slog.Any("error", err))
-			return
-		}
-		slog.Info("active cluster restored", slog.String("cluster", c.Name))
+// warmDefaultCluster connects the default cluster at boot so the first
+// requests don't pay the connection cost. A failure is logged, not fatal:
+// the console still starts and an admin can fix the cluster in the UI.
+func warmDefaultCluster(ctx context.Context, stor *store.Store, clusters *kube.Registry) {
+	c, err := stor.GetActiveCluster(ctx)
+	if err != nil || c == nil {
 		return
 	}
-	if creds, err := stor.GetKubeCredentials(ctx); err == nil && creds.Active {
-		if err := km.ApplyCredentials(creds); err == nil {
-			_ = km.Start(ctx)
-		}
+	if _, err := clusters.Get(ctx, c.ID); err != nil {
+		slog.Warn("default cluster unavailable", slog.String("cluster", c.Name), slog.Any("error", err))
+		return
 	}
+	slog.Info("default cluster connected", slog.String("cluster", c.Name))
 }
 
 func fatal(msg string, err error) {

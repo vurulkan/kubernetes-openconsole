@@ -9,13 +9,14 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"k8s-dashboard/backend/internal/kube"
 	"k8s-dashboard/backend/internal/models"
 )
 
-// Minimal multi-cluster management: operators save N cluster definitions and
-// pick which one is "active" at any time. Per-user-per-cluster permissions
-// remain a future milestone — today, admin controls the active cluster and
-// every authenticated user queries whichever cluster is currently active.
+// Multi-cluster management. Admins save N cluster definitions and mark one as
+// the default ("active" in the API, kept for compatibility). Every user then
+// picks their own cluster in the header (POST /api/cluster/select, see
+// cluster_ctx.go); users who never picked one work on the default.
 
 type clusterPayload struct {
 	Name             string `json:"name"`
@@ -67,30 +68,46 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
-// handleListClustersPublic returns id+name+isActive only, for the header
-// dropdown that any authenticated user can see.
+// handleListClustersPublic feeds the header switcher: the clusters the
+// caller may use (admins: all; others: clusters their grants cover).
+// isActive marks the default cluster, selected the caller's current one.
 func (s *Server) handleListClustersPublic(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.userForRequest(r)
+	if !ok {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
 	items, err := s.store.ListClusters(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"items": []any{}})
 		return
 	}
+	current := clusterIDFrom(r.Context())
 	type lite struct {
 		ID       int    `json:"id"`
 		Name     string `json:"name"`
 		IsActive bool   `json:"isActive"`
+		Selected bool   `json:"selected"`
 	}
 	out := make([]lite, 0, len(items))
 	for _, c := range items {
-		out = append(out, lite{ID: c.ID, Name: c.Name, IsActive: c.IsActive})
+		if !s.canUseCluster(r.Context(), user, c.ID) {
+			continue
+		}
+		out = append(out, lite{ID: c.ID, Name: c.Name, IsActive: c.IsActive, Selected: c.ID == current})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
-// handleGetActiveCluster is exposed to any authenticated user so the UI header
-// can show the active cluster name without needing admin.
+// handleGetActiveCluster returns the caller's current cluster (their own
+// pick, else the default).
 func (s *Server) handleGetActiveCluster(w http.ResponseWriter, r *http.Request) {
-	c, err := s.store.GetActiveCluster(r.Context())
+	ci := clusterFrom(r.Context())
+	if ci.ID == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{"active": nil})
+		return
+	}
+	c, err := s.store.GetCluster(r.Context(), ci.ID)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"active": nil})
 		return
@@ -102,6 +119,7 @@ func (s *Server) handleGetActiveCluster(w http.ResponseWriter, r *http.Request) 
 			"description": c.Description,
 			"server":      c.Server,
 			"method":      c.Method,
+			"isDefault":   c.ID == s.DefaultClusterID(),
 		},
 	})
 }
@@ -123,7 +141,7 @@ func (s *Server) handleCreateCluster(w http.ResponseWriter, r *http.Request) {
 	}
 	// Validate credentials against the cluster BEFORE persisting; a bad kubeconfig
 	// should fail here rather than silently stuck in the DB.
-	if err := s.kube.ValidateCredentials(creds); err != nil {
+	if err := kube.ValidateCredentials(creds); err != nil {
 		writeError(w, http.StatusBadRequest, "cluster validation failed: "+err.Error())
 		return
 	}
@@ -135,7 +153,7 @@ func (s *Server) handleCreateCluster(w http.ResponseWriter, r *http.Request) {
 	user, _ := s.userForRequest(r)
 	go s.audit.Record(s.auditCtx(r), models.AuditLog{
 		User: userName(user), Action: "cluster.create", Namespace: "-",
-		ResourceType: "cluster", ResourceName: p.Name,
+		ResourceType: "cluster", ResourceName: p.Name, Cluster: p.Name,
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"id": id})
 }
@@ -157,7 +175,7 @@ func (s *Server) handleUpdateClusterByID(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if p.ReplaceSecrets {
-		if err := s.kube.ValidateCredentials(creds); err != nil {
+		if err := kube.ValidateCredentials(creds); err != nil {
 			writeError(w, http.StatusBadRequest, "cluster validation failed: "+err.Error())
 			return
 		}
@@ -166,16 +184,15 @@ func (s *Server) handleUpdateClusterByID(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "failed to update cluster")
 		return
 	}
-	// If this is the active cluster and we replaced creds, re-apply them.
+	// New credentials: drop the live connection; the next request for this
+	// cluster reconnects with what was just stored.
 	if p.ReplaceSecrets {
-		if active, err := s.store.GetActiveCluster(r.Context()); err == nil && active.ID == id {
-			_ = s.kube.ApplyCredentials(active.Credentials)
-		}
+		s.clusters.Invalidate(id)
 	}
 	user, _ := s.userForRequest(r)
 	go s.audit.Record(s.auditCtx(r), models.AuditLog{
 		User: userName(user), Action: "cluster.update", Namespace: "-",
-		ResourceType: "cluster", ResourceName: p.Name,
+		ResourceType: "cluster", ResourceName: p.Name, Cluster: p.Name,
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
@@ -186,14 +203,18 @@ func (s *Server) handleDeleteCluster(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	name, _ := s.store.GetClusterName(r.Context(), id)
 	if err := s.store.DeleteCluster(r.Context(), id); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
+	s.clusters.Invalidate(id)
+	// Users who had picked it fall back to the default cluster.
+	_ = s.store.ClearClusterSelections(r.Context(), id)
 	user, _ := s.userForRequest(r)
 	go s.audit.Record(s.auditCtx(r), models.AuditLog{
 		User: userName(user), Action: "cluster.delete", Namespace: "-",
-		ResourceType: "cluster", ResourceName: strconv.Itoa(id),
+		ResourceType: "cluster", ResourceName: strconv.Itoa(id), Cluster: name,
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
@@ -208,14 +229,14 @@ func (s *Server) handleDeactivateCluster(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	// Tell the running Manager to drop its credentials so no further API calls
-	// hit the previous cluster.
-	_ = s.kube.ApplyCredentials(models.KubeCredentials{Method: "token", Server: "", Token: []byte{}})
-	s.activeClusterID.Store(0)
+	// Only the default changes: users who picked this cluster explicitly
+	// keep working on it.
+	s.defaultClusterID.Store(0)
+	name, _ := s.store.GetClusterName(r.Context(), id)
 	user, _ := s.userForRequest(r)
 	go s.audit.Record(s.auditCtx(r), models.AuditLog{
 		User: userName(user), Action: "cluster.deactivate", Namespace: "-",
-		ResourceType: "cluster", ResourceName: strconv.Itoa(id),
+		ResourceType: "cluster", ResourceName: strconv.Itoa(id), Cluster: name,
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
@@ -226,30 +247,28 @@ func (s *Server) handleActivateCluster(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	name, err := s.store.GetClusterName(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "cluster not found")
+		return
+	}
+	// Connect first: a cluster that can't be reached must not become the
+	// default every new user lands on.
+	if _, err := s.clusters.Get(r.Context(), id); err != nil {
+		writeError(w, http.StatusBadGateway, "activation failed: "+err.Error())
+		return
+	}
 	if err := s.store.ActivateCluster(r.Context(), id); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	c, err := s.store.GetCluster(r.Context(), id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "cluster vanished after activation")
-		return
-	}
-	if err := s.kube.ApplyCredentials(c.Credentials); err != nil {
-		writeError(w, http.StatusBadGateway, "activation failed: "+err.Error())
-		return
-	}
-	if err := s.kube.Start(r.Context()); err != nil {
-		writeError(w, http.StatusBadGateway, "cluster start failed: "+err.Error())
-		return
-	}
-	s.activeClusterID.Store(int64(c.ID))
+	s.defaultClusterID.Store(int64(id))
 	user, _ := s.userForRequest(r)
 	go s.audit.Record(s.auditCtx(r), models.AuditLog{
 		User: userName(user), Action: "cluster.activate", Namespace: "-",
-		ResourceType: "cluster", ResourceName: c.Name,
+		ResourceType: "cluster", ResourceName: name, Cluster: name,
 	})
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "name": c.Name})
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "name": name})
 }
 
 func userName(u *models.User) string {
