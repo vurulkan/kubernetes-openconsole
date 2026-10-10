@@ -67,35 +67,36 @@ docker build -t kubernetes-openconsole:local .
 ### Option B — prebuilt image (GHCR)
 
 ```yaml
-image: ghcr.io/vurulkan/kubernetes-openconsole:2.14.1   # pin a release
+image: ghcr.io/vurulkan/kubernetes-openconsole:2.14.2   # pin a release
 ```
 
-Images are multi-arch (**linux/amd64** and **linux/arm64**: Graviton, Ampere, Apple silicon); the runtime picks the right one. CI is the only publisher of image tags:
+Images are multi-arch (**linux/amd64** and **linux/arm64**: Graviton, Ampere, Apple silicon); the runtime picks the right one. CI is the only publisher, and there are just two kinds of tags:
 
-| Tag | Built from | Moves? |
+| Tag | Points to | Moves? |
 |---|---|---|
-| `X.Y.Z` (e.g. `2.14.1`) | the `vX.Y.Z` git tag | no — use this in production |
-| `latest` | every push to `main` | yes |
-| `<full commit sha>` | every push to `main` | no |
+| `X.Y.Z` (e.g. `2.14.2`) | that release | no — use this in production |
+| `latest` | the newest release, same image (same digest) as its `X.Y.Z` | yes, on each release |
 
-Releasing = push the `vX.Y.Z` tag; CI builds and pushes `:X.Y.Z`.
+Releasing = push the `vX.Y.Z` git tag; CI builds once and pushes `:X.Y.Z` and `:latest`. Pushes to `main` are built and tested but not published.
 
 #### Verifying an image
 
-Every published image (since 2.14.0) is signed with [cosign](https://docs.sigstore.dev/) keyless signing by the CI workflow, and carries an SPDX **SBOM** and SLSA **provenance** attestation.
+Every release image has a signed SLSA **build provenance** and an SPDX **SBOM** attestation, created by the CI workflow with [GitHub artifact attestations](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations) (Sigstore, keyless). They are stored on GitHub, so the registry holds nothing but the image tags.
 
 ```bash
-# Signature: must have been produced by this repository's CI workflow
-cosign verify ghcr.io/vurulkan/kubernetes-openconsole:2.14.1 \
-  --certificate-identity-regexp '^https://github.com/vurulkan/kubernetes-openconsole/\.github/workflows/ci\.yml@refs/(heads/main|tags/v.*)$' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+# Provenance: built by this repository's CI from a release tag
+gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.14.2 \
+  --repo vurulkan/kubernetes-openconsole \
+  --signer-workflow vurulkan/kubernetes-openconsole/.github/workflows/ci.yml
 
-# SBOM (packages in the image) and build provenance
-docker buildx imagetools inspect ghcr.io/vurulkan/kubernetes-openconsole:2.14.1 --format '{{ json .SBOM }}'
-docker buildx imagetools inspect ghcr.io/vurulkan/kubernetes-openconsole:2.14.1 --format '{{ json .Provenance }}'
+# SBOM (packages in the image)
+gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.14.2 \
+  --repo vurulkan/kubernetes-openconsole \
+  --predicate-type https://spdx.dev/Document/v2.3 --format json \
+  --jq '.[0].verificationResult.statement.predicate.packages | length'
 ```
 
-Admission controllers such as Kyverno or Sigstore policy-controller can enforce the same identity before a pod is admitted.
+Kyverno and the Sigstore policy-controller can check the same attestations before a pod is admitted. (2.14.0 and 2.14.1 were signed with cosign instead: `cosign verify` with `--certificate-oidc-issuer https://token.actions.githubusercontent.com`.)
 
 ### Tests
 
@@ -117,7 +118,7 @@ cd frontend && npx tsc --noEmit -p . && npm test && npm run build
 docker run --rm -p 8080:8080 \
   -e TIMEZONE=Europe/Istanbul \
   -v kubernetes-openconsole-data:/data \
-  ghcr.io/vurulkan/kubernetes-openconsole:2.14.1
+  ghcr.io/vurulkan/kubernetes-openconsole:2.14.2
 ```
 
 The image defaults to `DATA_PATH=/data/app.db` and `STATIC_DIR=/app/public`; the SQLite DB and session recordings live under `/data`. Drop the `-v` for a throwaway instance. Then open http://localhost:8080 and add a cluster ([Connecting clusters](#connecting-clusters)).
@@ -143,7 +144,7 @@ Then:
 1. Open the UI and log in as `admin` / `admin` ([First login](#first-login)).
 2. Add the cluster in **Admin → Clusters** ([Connecting clusters](#connecting-clusters)). The backend never picks up a cluster on its own.
 
-To upgrade, run `kubectl -n kubernetes-openconsole rollout restart deploy/kubernetes-openconsole`. The pod pulls the newest `:latest` image. To stay on a fixed version, set a release tag (e.g. `2.14.1`) in `deployment.yaml` or through the `images:` override in `kustomization.yaml`, then re-apply.
+To upgrade, run `kubectl -n kubernetes-openconsole rollout restart deploy/kubernetes-openconsole`. The pod pulls `:latest`, i.e. the newest release. To stay on a fixed version, set a release tag (e.g. `2.14.2`) in `deployment.yaml` or through the `images:` override in `kustomization.yaml`, then re-apply.
 
 ## Environment variables
 

@@ -31,9 +31,9 @@ spec:
           type: RuntimeDefault
       containers:
         - name: dashboard
-          # :latest follows every push to main (built by CI). Always pull so a
-          # restart (kubectl rollout restart) picks up the newest build. To
-          # freeze a version, use a release tag (e.g. 2.12.0) and
+          # :latest is the newest release (same image as its X.Y.Z tag). Always
+          # pull so a restart (kubectl rollout restart) picks up a new release.
+          # To freeze a version, use a release tag (e.g. 2.14.2) and
           # IfNotPresent — or the images: override in kustomization.yaml.
           image: ghcr.io/vurulkan/kubernetes-openconsole:latest
           imagePullPolicy: Always
@@ -159,7 +159,7 @@ spec:
             # Handy if you deploy multiple parallel versions (canary, blue /
             # green). Uncomment to use.
             # - name: APP_VERSION
-            #   value: "2.14.1"
+            #   value: "2.14.2"
 
             # ── Tracing (OpenTelemetry, 2.14.0+) ────────────────────────────────
             # Off unless an OTLP/HTTP endpoint is set. Standard OTEL_* variables
