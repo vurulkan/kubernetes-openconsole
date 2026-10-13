@@ -323,6 +323,9 @@ const en = {
     audit: {
       filterUser: 'User',
       filterAction: 'Action',
+      actionPlaceholder: 'Type or pick… (pod.exec.* = all)',
+      filterOutcome: 'Outcome',
+      outcomeAny: 'Any',
       filterNamespace: 'Namespace',
       filterStart: 'Start date',
       filterEnd: 'End date',
@@ -496,6 +499,10 @@ const en = {
     playerTitle: 'Recording · {{target}}',
     speed: 'Playback speed',
     skipIdle: 'Skip idle time',
+  },
+  combobox: {
+    clear: 'Clear {{label}}',
+    allInFamily: 'all in this family',
   },
   ldapImport: {
     help: 'Type part of a name and search; the LDAP user filter is applied. Imported users sign in with their directory password.',
@@ -1021,6 +1028,9 @@ const tr = {
     audit: {
       filterUser: 'Kullanıcı',
       filterAction: 'Aksiyon',
+      actionPlaceholder: 'Yaz ya da seç… (pod.exec.* = hepsi)',
+      filterOutcome: 'Sonuç',
+      outcomeAny: 'Hepsi',
       filterNamespace: 'Namespace',
       filterStart: 'Başlangıç tarihi',
       filterEnd: 'Bitiş tarihi',
@@ -1194,6 +1204,10 @@ const tr = {
     playerTitle: 'Kayıt · {{target}}',
     speed: 'Oynatma hızı',
     skipIdle: 'Boşta geçen süreyi atla',
+  },
+  combobox: {
+    clear: '{{label}} filtresini temizle',
+    allInFamily: 'bu ailenin tümü',
   },
   ldapImport: {
     help: 'İsmin bir kısmını yazıp ara; LDAP kullanıcı filtresi uygulanır. İçe aktarılan kullanıcılar dizin şifreleriyle giriş yapar.',

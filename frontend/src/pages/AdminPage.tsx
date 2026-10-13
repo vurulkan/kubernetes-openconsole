@@ -14,6 +14,7 @@ import {
 } from '../components/ui';
 import { UsersSection } from './admin/UsersSection';
 import LdapImportPanel from '../components/LdapImportPanel';
+import Combobox from '../components/Combobox';
 import { GroupsSection } from './admin/GroupsSection';
 import { SessionsSection } from './admin/SessionsSection';
 import { RecordingSettingsPanel, RecordingsSection } from './admin/RecordingsSection';
@@ -33,6 +34,8 @@ import {
   deactivateCluster,
   listUsers,
   createUser,
+  getAuditFacets,
+  AuditQuery,
   updateUser,
   deleteUser,
   setUserGroups,
@@ -278,6 +281,13 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
   const [auditOffset, setAuditOffset] = useState(0);
   const [auditUserFilter, setAuditUserFilter] = useState('');
   const [auditActionFilter, setAuditActionFilter] = useState('');
+  const [auditActionExact, setAuditActionExact] = useState(false);
+  const [auditOutcome, setAuditOutcome] = useState<AuditQuery['outcome']>('');
+  const [auditFacets, setAuditFacets] = useState<{ actions: string[]; users: string[]; namespaces: string[] }>({
+    actions: [],
+    users: [],
+    namespaces: [],
+  });
   const [auditNamespaceFilter, setAuditNamespaceFilter] = useState('');
   const [auditStartDate, setAuditStartDate] = useState('');
   const [auditEndDate, setAuditEndDate] = useState('');
@@ -450,6 +460,16 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     }
   };
 
+  const auditQuery: AuditQuery = {
+    user: auditUserFilter,
+    action: auditActionFilter,
+    actionExact: auditActionExact,
+    outcome: auditOutcome,
+    namespace: auditNamespaceFilter,
+    start: auditStartDate,
+    end: auditEndDate,
+  };
+
   const refresh = async () => {
     setError(null);
     const results = await Promise.allSettled([
@@ -460,15 +480,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
       getAzureAD(),
       getSession(),
       getCluster(),
-      listAuditLogs(
-        50,
-        auditOffset,
-        auditUserFilter,
-        auditActionFilter,
-        auditNamespaceFilter,
-        auditStartDate,
-        auditEndDate
-      ),
+      listAuditLogs(50, auditOffset, auditQuery),
       listNamespaces(),
     ]);
 
@@ -599,10 +611,20 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     auditOffset,
     auditUserFilter,
     auditActionFilter,
+    auditActionExact,
+    auditOutcome,
     auditNamespaceFilter,
     auditStartDate,
     auditEndDate,
   ]);
+
+  // Suggestions for the audit filters, reloaded each time the tab opens.
+  useEffect(() => {
+    if (tab !== 'audit') return;
+    getAuditFacets()
+      .then(setAuditFacets)
+      .catch(() => setAuditFacets({ actions: [], users: [], namespaces: [] }));
+  }, [tab]);
 
   const handleCreateUser = async () => {
     if (!newUser.username || (newUser.source === 'local' && !newUser.password)) return;
@@ -800,7 +822,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
 
   const handleAuditExport = async () => {
     try {
-      await exportAuditLogs(auditUserFilter, auditActionFilter, auditNamespaceFilter, auditStartDate, auditEndDate);
+      await exportAuditLogs(auditQuery);
     } catch (err) {
       setError((err as Error).message);
     }
@@ -1986,32 +2008,52 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
           {tab === 'audit' && (
             <SectionCard title={tr('admin.sections.audit')}>
               <div className="mb-4 flex flex-wrap items-end gap-3">
-                <Input
-                  label={tr("admin.audit.filterUser")}
+                <Combobox
+                  label={tr('admin.audit.filterUser')}
                   value={auditUserFilter}
-                  onChange={(e) => {
+                  options={auditFacets.users}
+                  onChange={(v) => {
                     setAuditOffset(0);
-                    setAuditUserFilter(e.target.value);
+                    setAuditUserFilter(v);
                   }}
-                  className="w-40"
+                  className="w-44"
                 />
-                <Input
-                  label={tr("admin.audit.filterAction")}
+                <Combobox
+                  label={tr('admin.audit.filterAction')}
                   value={auditActionFilter}
-                  onChange={(e) => {
+                  options={auditFacets.actions}
+                  families
+                  placeholder={tr('admin.audit.actionPlaceholder')}
+                  onChange={(v, mode) => {
                     setAuditOffset(0);
-                    setAuditActionFilter(e.target.value);
+                    setAuditActionFilter(v);
+                    setAuditActionExact(mode === 'exact');
                   }}
-                  className="w-40"
+                  className="w-64"
                 />
-                <Input
-                  label={tr("admin.audit.filterNamespace")}
-                  value={auditNamespaceFilter}
+                <NativeSelect
+                  label={tr('admin.audit.filterOutcome')}
+                  value={auditOutcome}
                   onChange={(e) => {
                     setAuditOffset(0);
-                    setAuditNamespaceFilter(e.target.value);
+                    setAuditOutcome(e.target.value as AuditQuery['outcome']);
                   }}
-                  className="w-40"
+                >
+                  <option value="">{tr('admin.audit.outcomeAny')}</option>
+                  <option value="success">success</option>
+                  <option value="denied">denied</option>
+                  <option value="failed">failed</option>
+                  <option value="rate_limited">rate_limited</option>
+                </NativeSelect>
+                <Combobox
+                  label={tr('admin.audit.filterNamespace')}
+                  value={auditNamespaceFilter}
+                  options={auditFacets.namespaces}
+                  onChange={(v) => {
+                    setAuditOffset(0);
+                    setAuditNamespaceFilter(v);
+                  }}
+                  className="w-44"
                 />
                 <Input
                   label={tr("admin.audit.filterStart")}

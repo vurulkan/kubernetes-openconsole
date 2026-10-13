@@ -297,6 +297,7 @@ func (s *Server) Router() http.Handler {
 
 		r.Get("/api/admin/audit-logs", s.handleAuditLogs)
 		r.Get("/api/admin/audit-logs/export", s.handleAuditLogsExport)
+		r.Get("/api/admin/audit-logs/facets", s.handleAuditFacets)
 
 		// Session management (M4-B3 phase 1). List all/active, revoke a
 		// single session row, or revoke every session for a user. Audit
@@ -2149,17 +2150,16 @@ func (s *Server) handleAuditLogs(w http.ResponseWriter, r *http.Request) {
 			offset = parsed
 		}
 	}
-	userFilter := r.URL.Query().Get("user")
-	actionFilter := r.URL.Query().Get("action")
-	namespaceFilter := r.URL.Query().Get("namespace")
-	startTime := parseTimeParam(r.URL.Query().Get("start"))
-	endTime := parseTimeParam(r.URL.Query().Get("end"))
-	logs, err := s.store.ListAuditLogs(r.Context(), limit, offset, userFilter, actionFilter, namespaceFilter, startTime, endTime)
+	filter, ok := auditFilterFrom(w, r)
+	if !ok {
+		return
+	}
+	logs, err := s.store.ListAuditLogsFiltered(r.Context(), limit, offset, filter)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	total, err := s.store.CountAuditLogs(r.Context(), userFilter, actionFilter, namespaceFilter, startTime, endTime)
+	total, err := s.store.CountAuditLogsFiltered(r.Context(), filter)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -2187,19 +2187,53 @@ func (s *Server) handleAuditLogs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// auditOutcomes are the values the outcome filter accepts.
+var auditOutcomes = map[string]bool{"success": true, "denied": true, "failed": true, "rate_limited": true}
+
+// auditFilterFrom reads the audit filter query parameters: user, action
+// (contains; "family.*" for a whole family), actionExact=1, outcome,
+// namespace, start, end.
+func auditFilterFrom(w http.ResponseWriter, r *http.Request) (store.AuditFilter, bool) {
+	q := r.URL.Query()
+	f := store.AuditFilter{
+		User:        q.Get("user"),
+		Action:      q.Get("action"),
+		ActionExact: q.Get("actionExact") == "1" || q.Get("actionExact") == "true",
+		Outcome:     q.Get("outcome"),
+		Namespace:   q.Get("namespace"),
+		Start:       parseTimeParam(q.Get("start")),
+		End:         parseTimeParam(q.Get("end")),
+	}
+	if f.Outcome != "" && !auditOutcomes[f.Outcome] {
+		writeError(w, http.StatusBadRequest, "outcome must be success, denied, failed or rate_limited")
+		return f, false
+	}
+	return f, true
+}
+
+// handleAuditFacets lists the actions, users and namespaces found in the
+// audit log, for the filter suggestions in Admin → Audit Logs.
+func (s *Server) handleAuditFacets(w http.ResponseWriter, r *http.Request) {
+	actions, users, namespaces, err := s.store.AuditFacets(r.Context(), 1000)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read audit facets")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string][]string{"actions": actions, "users": users, "namespaces": namespaces})
+}
+
 func (s *Server) handleAuditLogsExport(w http.ResponseWriter, r *http.Request) {
-	userFilter := r.URL.Query().Get("user")
-	actionFilter := r.URL.Query().Get("action")
-	namespaceFilter := r.URL.Query().Get("namespace")
-	startTime := parseTimeParam(r.URL.Query().Get("start"))
-	endTime := parseTimeParam(r.URL.Query().Get("end"))
+	filter, ok := auditFilterFrom(w, r)
+	if !ok {
+		return
+	}
 	limit := 1000
 	if value := r.URL.Query().Get("limit"); value != "" {
 		if parsed, err := strconv.Atoi(value); err == nil {
 			limit = parsed
 		}
 	}
-	logs, err := s.store.ListAuditLogs(r.Context(), limit, 0, userFilter, actionFilter, namespaceFilter, startTime, endTime)
+	logs, err := s.store.ListAuditLogsFiltered(r.Context(), limit, 0, filter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to fetch audit logs")
 		return

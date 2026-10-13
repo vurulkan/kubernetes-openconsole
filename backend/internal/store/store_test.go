@@ -257,3 +257,68 @@ func TestAuditFiltersAndCluster(t *testing.T) {
 		t.Fatalf("after purge = %d", n)
 	}
 }
+
+func TestAuditFilterModesAndFacets(t *testing.T) {
+	conn, st := open(t, filepath.Join(t.TempDir(), "app.db"))
+	defer conn.Close()
+	ctx := context.Background()
+	for _, e := range []models.AuditLog{
+		{User: "alice", Action: "pod.exec.start", Namespace: "team-a"},
+		{User: "alice", Action: "pod.exec.end", Namespace: "team-a"},
+		{User: "bob", Action: "pod.exec.denied", Namespace: "team-b"},
+		{User: "bob", Action: "secret.reveal.denied", Namespace: "team-b"},
+		{User: "carol", Action: "secret.reveal.success", Namespace: "team-a"},
+		{User: "carol", Action: "deployment.scale.rate_limited", Namespace: "team-a"},
+		{User: "dave_x", Action: "login.failed", Namespace: "-"},
+	} {
+		e.Timestamp = time.Now().UTC()
+		e.ResourceType, e.ResourceName = "x", "x"
+		if err := st.AddAuditLog(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	count := func(f store.AuditFilter) int {
+		t.Helper()
+		n, err := st.CountAuditLogsFiltered(ctx, f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	cases := []struct {
+		name string
+		f    store.AuditFilter
+		want int
+	}{
+		{"family", store.AuditFilter{Action: "pod.exec.*"}, 3},
+		{"exact", store.AuditFilter{Action: "pod.exec.end", ActionExact: true}, 1},
+		{"exact needs the whole name", store.AuditFilter{Action: "pod.exec", ActionExact: true}, 0},
+		{"contains", store.AuditFilter{Action: "reveal"}, 2},
+		{"outcome", store.AuditFilter{Outcome: "denied"}, 2},
+		{"outcome rate_limited", store.AuditFilter{Outcome: "rate_limited"}, 1},
+		{"family + outcome", store.AuditFilter{Action: "secret.*", Outcome: "denied"}, 1},
+		// _ and % are literal, not LIKE wildcards.
+		{"underscore literal", store.AuditFilter{User: "e_x"}, 1},
+		{"underscore literal, no false match", store.AuditFilter{User: "v_x"}, 0},
+		{"percent literal", store.AuditFilter{Action: "%"}, 0},
+	}
+	for _, c := range cases {
+		if got := count(c.f); got != c.want {
+			t.Errorf("%s: %d, want %d", c.name, got, c.want)
+		}
+	}
+
+	actions, users, namespaces, err := st.AuditFacets(ctx, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(actions) != 7 || actions[0] != "deployment.scale.rate_limited" {
+		t.Fatalf("actions = %v", actions)
+	}
+	if strings.Join(users, ",") != "alice,bob,carol,dave_x" {
+		t.Fatalf("users = %v", users)
+	}
+	if strings.Join(namespaces, ",") != "team-a,team-b" { // "-" left out
+		t.Fatalf("namespaces = %v", namespaces)
+	}
+}

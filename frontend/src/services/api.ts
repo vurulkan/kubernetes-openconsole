@@ -600,18 +600,37 @@ export const validateCluster = (payload: {
     body: JSON.stringify(payload)
   });
 
-export const listAuditLogs = (
-  limit = 50,
-  offset = 0,
-  user = '',
-  action = '',
-  namespace = '',
-  start = '',
-  end = ''
-) =>
-  apiRequest<{ items: Array<Record<string, unknown>>; total: number; limit: number; offset: number }>(
-    `/api/admin/audit-logs?limit=${limit}&offset=${offset}&user=${encodeURIComponent(user)}&action=${encodeURIComponent(action)}&namespace=${encodeURIComponent(namespace)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`
+/** Audit filters. action: contains, or "family.*"; actionExact matches it exactly. */
+export type AuditQuery = {
+  user?: string;
+  action?: string;
+  actionExact?: boolean;
+  outcome?: '' | 'success' | 'denied' | 'failed' | 'rate_limited';
+  namespace?: string;
+  start?: string;
+  end?: string;
+};
+
+const auditParams = (q: AuditQuery) => {
+  const p = new URLSearchParams();
+  for (const key of ['user', 'action', 'outcome', 'namespace', 'start', 'end'] as const) {
+    if (q[key]) p.set(key, q[key] as string);
+  }
+  if (q.action && q.actionExact) p.set('actionExact', '1');
+  return p;
+};
+
+export const listAuditLogs = (limit = 50, offset = 0, q: AuditQuery = {}) => {
+  const p = auditParams(q);
+  p.set('limit', String(limit));
+  p.set('offset', String(offset));
+  return apiRequest<{ items: Array<Record<string, unknown>>; total: number; limit: number; offset: number }>(
+    `/api/admin/audit-logs?${p.toString()}`
   );
+};
+
+export const getAuditFacets = () =>
+  apiRequest<{ actions: string[]; users: string[]; namespaces: string[] }>('/api/admin/audit-logs/facets');
 
 // Downloads a file from an authenticated endpoint. The bearer token can't
 // ride on a plain link, so the file is fetched and handed to the browser as
@@ -644,11 +663,8 @@ export const downloadWithAuth = async (path: string, fallbackName: string) => {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 
-export const exportAuditLogs = (user = '', action = '', namespace = '', start = '', end = '') =>
-  downloadWithAuth(
-    `/api/admin/audit-logs/export?user=${encodeURIComponent(user)}&action=${encodeURIComponent(action)}&namespace=${encodeURIComponent(namespace)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
-    'audit-logs.csv',
-  );
+export const exportAuditLogs = (q: AuditQuery) =>
+  downloadWithAuth(`/api/admin/audit-logs/export?${auditParams(q).toString()}`, 'audit-logs.csv');
 
 export const exportUsersCsv = () => downloadWithAuth('/api/admin/users/export', 'users.csv');
 export const exportGroupsCsv = () => downloadWithAuth('/api/admin/groups/export', 'groups.csv');
