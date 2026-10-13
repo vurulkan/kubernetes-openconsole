@@ -1,16 +1,26 @@
 {
-  "description": "Kubernetes OpenConsole (LOG_FORMAT=ecs): decode the JSON line (no grok), derive event.outcome for audit events, and route audit / application records to logs-openconsole.audit-* / logs-openconsole.app-*. Lines from other containers are left alone. See deploy/elk/README.md.",
+  "description": "Kubernetes OpenConsole (LOG_FORMAT=ecs): decode the JSON line (no grok) and route audit / application records to logs-openconsole.audit-* / logs-openconsole.app-*. Lines from other containers are left alone. Handles the nested format (2.16.2+) and the dotted one (2.16.1). See deploy/elk/README.md.",
   "processors": [
     {
       "json": {
         "tag": "openconsole-decode",
-        "if": "ctx.message instanceof String && ctx.message.startsWith('{') && ctx.message.contains('\"service.name\":\"openconsole\"')",
+        "if": "ctx.message instanceof String && ctx.message.startsWith('{') && (ctx.message.contains('\"service\":{\"name\":\"openconsole\"') || ctx.message.contains('\"service.name\":\"openconsole\"'))",
         "field": "message",
         "add_to_root": true,
         "add_to_root_conflict_strategy": "merge",
         "on_failure": [
-          { "append": { "field": "tags", "value": "openconsole_json_failure" } },
-          { "set": { "field": "error.message", "value": "{{{_ingest.on_failure_message}}}" } }
+          {
+            "append": {
+              "field": "tags",
+              "value": "openconsole_json_failure"
+            }
+          },
+          {
+            "set": {
+              "field": "error.message",
+              "value": "{{{_ingest.on_failure_message}}}"
+            }
+          }
         ]
       }
     },
@@ -27,7 +37,7 @@
         "tag": "openconsole-classify",
         "if": "ctx.service?.name == 'openconsole'",
         "lang": "painless",
-        "source": "if (ctx.event == null) { ctx.event = [:]; } boolean audit = ctx.message == 'audit'; ctx.event.dataset = audit ? 'openconsole.audit' : 'openconsole.app'; if (audit) { ctx.event.kind = 'event'; String a = ctx.event.action instanceof String ? ctx.event.action : ''; if (a.endsWith('.success')) { ctx.event.outcome = 'success'; } else if (a.endsWith('.failed') || a.endsWith('.denied') || a.endsWith('.rate_limited') || a.endsWith('.locked')) { ctx.event.outcome = 'failure'; } }"
+        "source": "if (ctx.event == null) { ctx.event = [:]; } String ds = ctx.event.dataset instanceof String ? ctx.event.dataset : ''; if (!ds.startsWith('openconsole.')) { ds = ctx.message == 'audit' ? 'openconsole.audit' : 'openconsole.app'; ctx.event.dataset = ds; } if (ds == 'openconsole.audit') { if (ctx.event.kind == null) { ctx.event.kind = 'event'; } if (ctx.event.outcome == null) { String a = ctx.event.action instanceof String ? ctx.event.action : ''; if (a.endsWith('.success')) { ctx.event.outcome = 'success'; } else if (a.endsWith('.failed') || a.endsWith('.denied') || a.endsWith('.rate_limited') || a.endsWith('.locked')) { ctx.event.outcome = 'failure'; } } }"
       }
     },
     {

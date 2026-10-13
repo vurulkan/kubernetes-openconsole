@@ -153,12 +153,13 @@ spec:
             # - name: SESSION_RECORDING_DIR
             #   value: /recordings
 
-            # ── Optional labels on every log record ──────────────────────────────
-            # APP_ENV: deployment environment label (dev / staging / prod).
-            # Shows up as "env=…" on every structured log line — useful for
-            # cross-environment Elastic queries. Uncomment to use.
-            # - name: APP_ENV
-            #   value: prod
+            # ── Labels on every log record ───────────────────────────────────────
+            # APP_ENV: deployment environment (dev / staging / prod). Becomes
+            # service.environment in the ecs format (env in json) and
+            # deployment.environment on traces, so Kibana can filter one
+            # environment across services. Set it to this cluster's environment.
+            - name: APP_ENV
+              value: prod
 
             # APP_VERSION: overrides the version label on every log line and
             # trace. Release images already carry their own version, so set it
