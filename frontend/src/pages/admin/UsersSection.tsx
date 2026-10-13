@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Download, KeyRound, Pencil, Plus, Search as SearchIcon, Trash2 } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { ChevronDown, Cloud, Download, FolderTree, KeyRound, Pencil, Plus, Search as SearchIcon, Trash2, UserRound } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { confirm } from '../../components/ConfirmDialog';
 import { Alert, Badge, Button, Checkbox, Input, Modal } from '../../components/ui';
@@ -14,7 +14,11 @@ type Props = {
   userGroups: Record<number, Array<{ id: number; name: string }>>;
   filter: string;
   onFilter: (v: string) => void;
-  onNew: () => void;
+  /** Opens the create dialog for a local user or a pre-created Azure AD user. */
+  onNew: (source: 'local' | 'azure') => void;
+  /** Set when LDAP is enabled: opens the directory import dialog. */
+  onImportLdap?: () => void;
+  azureEnabled?: boolean;
   onEdit: (u: User) => void;
   onDelete: (u: User) => void;
 };
@@ -25,6 +29,8 @@ export const UsersSection: React.FC<Props> = ({
   filter,
   onFilter,
   onNew,
+  onImportLdap,
+  azureEnabled,
   onEdit,
   onDelete,
 }) => {
@@ -150,10 +156,11 @@ export const UsersSection: React.FC<Props> = ({
             <Download size={14} />
             {t('admin.exportCsv')}
           </Button>
-          <Button variant="primary" size="sm" onClick={onNew}>
-            <Plus size={14} />
-            {t('admin.users.new')}
-          </Button>
+          <NewUserMenu
+            onLocal={() => onNew('local')}
+            onLdap={onImportLdap}
+            onAzure={azureEnabled ? () => onNew('azure') : undefined}
+          />
         </div>
       </div>
       <DataTable
@@ -271,3 +278,107 @@ function alertExport(err: unknown) {
   });
 }
 
+/**
+ * "New user" button. With only local accounts available it is a plain
+ * button; with LDAP and / or Azure AD enabled it opens a small menu.
+ */
+const NewUserMenu: React.FC<{ onLocal: () => void; onLdap?: () => void; onAzure?: () => void }> = ({
+  onLocal,
+  onLdap,
+  onAzure,
+}) => {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const firstItemRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    firstItemRef.current?.focus();
+    const onDown = (e: MouseEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey, true);
+    };
+  }, [open]);
+
+  if (!onLdap && !onAzure) {
+    return (
+      <Button variant="primary" size="sm" onClick={onLocal}>
+        <Plus size={14} />
+        {t('admin.users.new')}
+      </Button>
+    );
+  }
+
+  const items = [
+    { key: 'local', icon: UserRound, label: t('admin.newUserMenu.local'), hint: t('admin.newUserMenu.localHint'), run: onLocal },
+    ...(onLdap
+      ? [{ key: 'ldap', icon: FolderTree, label: t('admin.newUserMenu.ldap'), hint: t('admin.newUserMenu.ldapHint'), run: onLdap }]
+      : []),
+    ...(onAzure
+      ? [{ key: 'azure', icon: Cloud, label: t('admin.newUserMenu.azure'), hint: t('admin.newUserMenu.azureHint'), run: onAzure }]
+      : []),
+  ];
+
+  return (
+    <div ref={rootRef} className="relative">
+      <Button
+        variant="primary"
+        size="sm"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <Plus size={14} />
+        {t('admin.users.new')}
+        <ChevronDown size={14} />
+      </Button>
+      {open && (
+        <div
+          role="menu"
+          aria-label={t('admin.users.new')}
+          className="absolute right-0 z-30 mt-1 w-72 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-elevated dark:border-slate-800 dark:bg-slate-900"
+          onKeyDown={(e) => {
+            if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+            e.preventDefault();
+            const buttons = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'));
+            const i = buttons.indexOf(document.activeElement as HTMLButtonElement);
+            const next = e.key === 'ArrowDown' ? (i + 1) % buttons.length : (i - 1 + buttons.length) % buttons.length;
+            buttons[next]?.focus();
+          }}
+        >
+          {items.map((item, i) => (
+            <button
+              key={item.key}
+              ref={i === 0 ? firstItemRef : undefined}
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                item.run();
+              }}
+              className="flex w-full items-start gap-3 px-3 py-2 text-left hover:bg-slate-50 focus:bg-slate-50 focus:outline-none dark:hover:bg-slate-800 dark:focus:bg-slate-800"
+            >
+              <item.icon size={16} className="mt-0.5 shrink-0 text-slate-500 dark:text-slate-400" aria-hidden="true" />
+              <span className="flex flex-col">
+                <span className="text-sm font-medium text-slate-900 dark:text-slate-100">{item.label}</span>
+                <span className="text-xs text-slate-500 dark:text-slate-400">{item.hint}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};

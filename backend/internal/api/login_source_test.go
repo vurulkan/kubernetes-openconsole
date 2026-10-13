@@ -71,3 +71,59 @@ func TestLoginRespectsAuthSource(t *testing.T) {
 	}
 	e.waitAudit("login.failed", "azure_account")
 }
+
+// TestCreateUserSources: admins can pre-create Azure AD accounts (no
+// password, source azure) and put new users straight into groups.
+func TestCreateUserSources(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	_, admin := e.user("root", true)
+	gid, err := e.store.CreateGroup(ctx, "devs")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	e.expect("POST", "/api/admin/users", admin, map[string]any{
+		"username": "jane@example.com", "source": "azure", "groupIds": []int{gid},
+	}, http.StatusCreated)
+	u, _ := e.store.GetUserByUsername(ctx, "jane@example.com")
+	if u.AuthSource != models.AuthSourceAzure || u.MustChangePassword {
+		t.Fatalf("azure user = %+v", u)
+	}
+	if groups, _ := e.store.GetUserGroups(ctx, u.ID); len(groups) != 1 {
+		t.Fatalf("azure user groups = %v", groups)
+	}
+	e.waitAudit("admin.create", "source=azure")
+
+	// Local users still need a password that meets the policy; LDAP users
+	// are imported, not created.
+	e.expect("POST", "/api/admin/users", admin, map[string]any{"username": "bob"}, http.StatusBadRequest)
+	e.expect("POST", "/api/admin/users", admin, map[string]any{"username": "carl", "source": "ldap", "password": "Long-enough-1"}, http.StatusBadRequest)
+	e.expect("POST", "/api/admin/users", admin, map[string]any{"username": "bob", "password": "Long-enough-1", "groupIds": []int{gid}}, http.StatusCreated)
+	bob, _ := e.store.GetUserByUsername(ctx, "bob")
+	if groups, _ := e.store.GetUserGroups(ctx, bob.ID); bob.AuthSource != models.AuthSourceLocal || len(groups) != 1 {
+		t.Fatalf("bob = %+v groups=%v", bob, groups)
+	}
+}
+
+// TestLDAPImportIntoGroups: imported users can land in groups right away,
+// existing accounts are reported as skipped, and the audit names them.
+func TestLDAPImportIntoGroups(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	_, admin := e.user("root", true)
+	e.user("jo", false) // already exists
+	gid, _ := e.store.CreateGroup(ctx, "devs")
+
+	out := e.expect("POST", "/api/admin/ldap/users/import", admin, map[string]any{
+		"usernames": []string{"john", "jo"}, "groupIds": []int{gid},
+	}, http.StatusOK)
+	if !strings.Contains(out, `"createdUsers":["john"]`) || !strings.Contains(out, `"skippedExisting":["jo"]`) {
+		t.Fatalf("import = %s", out)
+	}
+	john, _ := e.store.GetUserByUsername(ctx, "john")
+	if groups, _ := e.store.GetUserGroups(ctx, john.ID); john.AuthSource != models.AuthSourceLDAP || len(groups) != 1 {
+		t.Fatalf("john = %+v groups=%v", john, groups)
+	}
+	e.waitAudit("admin.import", "1: john")
+}

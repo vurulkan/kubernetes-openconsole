@@ -429,7 +429,14 @@ export const scaleDeployment = (namespace: string, name: string, replicas: numbe
 
 export const listUsers = () => apiRequest<{ items: User[] }>('/api/admin/users');
 
-export const createUser = (payload: { username: string; password: string; isAdmin: boolean }) =>
+export const createUser = (payload: {
+  username: string;
+  password?: string;
+  isAdmin: boolean;
+  /** 'azure' pre-creates an Azure AD account (no password). */
+  source?: 'local' | 'azure';
+  groupIds?: number[];
+}) =>
   apiRequest<User>('/api/admin/users', {
     method: 'POST',
     body: JSON.stringify(payload)
@@ -551,10 +558,10 @@ export const searchLdapUsers = (query: string) =>
     body: JSON.stringify({ query })
   });
 
-export const importLdapUsers = (usernames: string[]) =>
-  apiRequest<{ created: number }>('/api/admin/ldap/users/import', {
+export const importLdapUsers = (usernames: string[], groupIds: number[] = []) =>
+  apiRequest<{ created: number; createdUsers?: string[]; skippedExisting?: string[] }>('/api/admin/ldap/users/import', {
     method: 'POST',
-    body: JSON.stringify({ usernames })
+    body: JSON.stringify({ usernames, groupIds })
   });
 
 export const getSession = () => apiRequest<SessionSettings>('/api/admin/session');

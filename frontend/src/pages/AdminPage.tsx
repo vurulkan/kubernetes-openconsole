@@ -13,6 +13,7 @@ import {
   Spinner,
 } from '../components/ui';
 import { UsersSection } from './admin/UsersSection';
+import LdapImportPanel from '../components/LdapImportPanel';
 import { GroupsSection } from './admin/GroupsSection';
 import { SessionsSection } from './admin/SessionsSection';
 import { RecordingSettingsPanel, RecordingsSection } from './admin/RecordingsSection';
@@ -57,8 +58,6 @@ import {
   deleteLogo,
   testLdapConnection,
   testAzureAdConnection,
-  searchLdapUsers,
-  importLdapUsers,
   getSession,
   updateSession,
   getCluster,
@@ -261,17 +260,10 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     status: 'success' | 'error';
     message: string;
   } | null>(null);
-  const [ldapSearchQuery, setLdapSearchQuery] = useState('');
-  const [ldapSearchResults, setLdapSearchResults] = useState<
-    Array<{ username: string; dn: string }>
-  >([]);
-  const [ldapSelectedUsers, setLdapSelectedUsers] = useState<string[]>([]);
-  const [ldapSearchLoading, setLdapSearchLoading] = useState(false);
   const [ldapTestStatus, setLdapTestStatus] = useState<{
     status: 'success' | 'error';
     message: string;
   } | null>(null);
-  const [ldapSearchError, setLdapSearchError] = useState<string | null>(null);
   const [ldapUpdatePassword, setLdapUpdatePassword] = useState(false);
   const [sessionMinutes, setSessionMinutes] = useState(60);
   const [cluster, setCluster] = useState({
@@ -339,7 +331,15 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
       requestId: '',
     };
   });
-  const [newUser, setNewUser] = useState({ username: '', password: '', isAdmin: false });
+  const [newUser, setNewUser] = useState<{
+    username: string;
+    password: string;
+    isAdmin: boolean;
+    source: 'local' | 'azure';
+    groupIds: number[];
+  }>({ username: '', password: '', isAdmin: false, source: 'local', groupIds: [] });
+  const [showLdapImport, setShowLdapImport] = useState(false);
+  const [createUserError, setCreateUserError] = useState<string | null>(null);
   const [showCreateUser, setShowCreateUser] = useState(false);
   const [showCreateGroup, setShowCreateGroup] = useState(false);
   const [showCreateRole, setShowCreateRole] = useState(false);
@@ -605,9 +605,9 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
   ]);
 
   const handleCreateUser = async () => {
-    if (!newUser.username || !newUser.password) return;
-    await createUser(newUser);
-    setNewUser({ username: '', password: '', isAdmin: false });
+    if (!newUser.username || (newUser.source === 'local' && !newUser.password)) return;
+    await createUser(newUser.source === 'azure' ? { ...newUser, password: undefined } : newUser);
+    setNewUser({ username: '', password: '', isAdmin: false, source: 'local', groupIds: [] });
     await refresh();
   };
 
@@ -796,30 +796,6 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
         message: (err as Error).message || 'Azure AD test failed.',
       });
     }
-  };
-
-  const handleLdapSearch = async () => {
-    setLdapSearchLoading(true);
-    setLdapSearchError(null);
-    try {
-      const result = await searchLdapUsers(ldapSearchQuery);
-      setLdapSearchResults(result.items ?? []);
-      setLdapSelectedUsers([]);
-    } catch (err) {
-      setLdapSearchResults([]);
-      setLdapSearchError((err as Error).message || 'LDAP search failed.');
-    } finally {
-      setLdapSearchLoading(false);
-    }
-  };
-
-  const handleLdapImport = async () => {
-    if (ldapSelectedUsers.length === 0) return;
-    await importLdapUsers(ldapSelectedUsers);
-    setLdapSearchQuery('');
-    setLdapSelectedUsers([]);
-    setLdapSearchResults([]);
-    await refresh();
   };
 
   const handleAuditExport = async () => {
@@ -1023,10 +999,13 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
               userGroups={userGroups}
               filter={usersFilter}
               onFilter={setUsersFilter}
-              onNew={() => {
-                setNewUser({ username: '', password: '', isAdmin: false });
+              onNew={(source) => {
+                setNewUser({ username: '', password: '', isAdmin: false, source, groupIds: [] });
+                setCreateUserError(null);
                 setShowCreateUser(true);
               }}
+              onImportLdap={ldapConfig.enabled ? () => setShowLdapImport(true) : undefined}
+              azureEnabled={azureAdConfig.enabled}
               onEdit={(u) =>
                 setEditingUser({
                   id: u.id,
@@ -1454,68 +1433,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
               </SectionCard>
 
               <SectionCard title={tr('admin.cards.importLdapUsers')}>
-                <div className="flex flex-wrap gap-3">
-                  <Input
-                    label={tr("common.searchQuery")}
-                    value={ldapSearchQuery}
-                    onChange={(e) => setLdapSearchQuery(e.target.value)}
-                    className="w-60"
-                  />
-                  <div className="flex items-end">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleLdapSearch}
-                      disabled={ldapSearchLoading}
-                    >
-                      {ldapSearchLoading ? (
-                        <span className="flex items-center gap-2">
-                          <Spinner size="sm" />
-                          Searching...
-                        </span>
-                      ) : (
-                        'Search'
-                      )}
-                    </Button>
-                  </div>
-                </div>
-
-                {ldapSearchResults.length > 0 && (
-                  <MultiSelect
-                    label={tr("common.ldapUsers")}
-                    className="mt-3"
-                    options={ldapSearchResults.map((u) => ({
-                      id: u.username,
-                      label: `${u.username} (${u.dn})`,
-                    }))}
-                    value={ldapSearchResults
-                      .filter((u) => ldapSelectedUsers.includes(u.username))
-                      .map((u) => ({
-                        id: u.username,
-                        label: `${u.username} (${u.dn})`,
-                      }))}
-                    onChange={(value: MultiSelectOption[]) =>
-                      setLdapSelectedUsers(value.map((v) => String(v.id)))
-                    }
-                    noOptionsText="No LDAP users found"
-                    placeholder={tr("common.selectToImport")}
-                  />
-                )}
-
-                {ldapSearchError && (
-                  <Alert severity="error" className="mt-3">
-                    {ldapSearchError}
-                  </Alert>
-                )}
-                <Button
-                  variant="primary"
-                  size="sm"
-                  className="mt-3"
-                  onClick={handleLdapImport}
-                  disabled={ldapSelectedUsers.length === 0}
-                >
-                  Import Selected Users
-                </Button>
+                <LdapImportPanel groups={groups} onImported={refresh} />
               </SectionCard>
             </div>
           )}
@@ -2206,72 +2124,109 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
         </div>
       </div>
 
-      {/* ── Create User modal ─────────────────────────────────────── */}
+      {/* ── Create User modal (local or pre-created Azure AD) ─────── */}
       {(() => {
+        const azure = newUser.source === 'azure';
+        const ready = !!newUser.username.trim() && (azure || !!newUser.password);
         const submit = async () => {
-          if (!newUser.username || !newUser.password) return;
+          if (!ready) return;
           setSavingDrawer(true);
-          setError(null);
+          setCreateUserError(null);
           try {
             await handleCreateUser();
             setShowCreateUser(false);
           } catch (err) {
-            setError((err as Error).message || 'Create failed.');
+            setCreateUserError((err as Error).message || tr('admin.newUserMenu.createFailed'));
           } finally {
             setSavingDrawer(false);
           }
         };
+        const groupOption = (g: { id: number; name: string }) => ({ id: g.id, label: g.name });
         return (
           <Modal
             open={showCreateUser}
             onClose={() => setShowCreateUser(false)}
-            title={tr('admin.newUser')}
+            title={azure ? tr('admin.newUserMenu.azureTitle') : tr('admin.newUserMenu.localTitle')}
             size="sm"
             footer={
               <>
                 <Button variant="outline" size="sm" onClick={() => setShowCreateUser(false)}>
-                  Cancel
+                  {tr('actions.cancel')}
                 </Button>
                 <Button
+                  type="submit"
+                  form="create-user-form"
                   variant="primary"
                   size="sm"
-                  disabled={savingDrawer || !newUser.username || !newUser.password}
-                  onClick={submit}
+                  disabled={savingDrawer || !ready}
                 >
-                  {savingDrawer ? 'Creating…' : 'Create user'}
+                  {savingDrawer ? tr('admin.newUserMenu.creating') : tr('admin.newUserMenu.create')}
                 </Button>
               </>
             }
           >
             <form
+              id="create-user-form"
               className="flex flex-col gap-4"
               onSubmit={(e) => {
                 e.preventDefault();
                 void submit();
               }}
             >
+              {azure && (
+                <p className="text-xs text-slate-500 dark:text-slate-400">{tr('admin.newUserMenu.azureHelp')}</p>
+              )}
               <Input
-                label={tr("common.username")}
+                label={azure ? tr('admin.newUserMenu.upn') : tr('common.username')}
+                placeholder={azure ? 'jane@example.com' : undefined}
                 value={newUser.username}
                 onChange={(e) => setNewUser({ ...newUser, username: e.target.value })}
                 autoFocus
               />
-              <Input
-                label={tr("common.password")}
-                type="password"
-                value={newUser.password}
-                onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+              {!azure && (
+                <Input
+                  label={tr('common.password')}
+                  type="password"
+                  autoComplete="new-password"
+                  value={newUser.password}
+                  onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+                />
+              )}
+              <MultiSelect
+                label={tr('admin.newUserMenu.groups')}
+                options={groups.map(groupOption)}
+                value={groups.filter((g) => newUser.groupIds.includes(g.id)).map(groupOption)}
+                onChange={(value: MultiSelectOption[]) =>
+                  setNewUser({ ...newUser, groupIds: value.map((v) => Number(v.id)) })
+                }
+                noOptionsText={tr('ldapImport.noGroups')}
+                placeholder={tr('ldapImport.groupsPlaceholder')}
               />
               <Checkbox
                 checked={newUser.isAdmin}
                 onChange={(v) => setNewUser({ ...newUser, isAdmin: v })}
-                label={tr("common.grantAdmin")}
+                label={tr('common.grantAdmin')}
               />
-              <button type="submit" className="hidden" aria-hidden="true" />
+              {createUserError && <Alert severity="error">{createUserError}</Alert>}
             </form>
           </Modal>
         );
       })()}
+
+      {/* ── Import from LDAP (from Admin → Users) ─────────────────── */}
+      <Modal
+        open={showLdapImport}
+        onClose={() => setShowLdapImport(false)}
+        title={tr('admin.newUserMenu.ldapTitle')}
+        size="md"
+        footer={
+          <Button variant="outline" size="sm" onClick={() => setShowLdapImport(false)}>
+            {tr('actions.close')}
+          </Button>
+        }
+      >
+        {showLdapImport && <LdapImportPanel groups={groups} onImported={refresh} />}
+      </Modal>
 
       {/* ── Edit User modal ───────────────────────────────────────── */}
       {editingUser && (() => {

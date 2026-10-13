@@ -1455,6 +1455,10 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		Username string `json:"username"`
 		Password string `json:"password"`
 		IsAdmin  bool   `json:"isAdmin"`
+		// Source "azure" pre-creates an Azure AD account (no password; the
+		// first Microsoft sign-in uses it). Empty or "local" is a local user.
+		Source   string `json:"source"`
+		GroupIDs []int  `json:"groupIds"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -1465,11 +1469,26 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "username is required")
 		return
 	}
-	if err := auth.CheckPasswordPolicy(request.Password); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	source := strings.ToLower(strings.TrimSpace(request.Source))
+	if source == "" {
+		source = models.AuthSourceLocal
+	}
+	var password string
+	switch source {
+	case models.AuthSourceLocal:
+		if err := auth.CheckPasswordPolicy(request.Password); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		password = request.Password
+	case models.AuthSourceAzure:
+		// Never usable: Azure AD accounts don't sign in with a password.
+		password = randomPassword()
+	default:
+		writeError(w, http.StatusBadRequest, "source must be local or azure (LDAP users are imported)")
 		return
 	}
-	hash, err := auth.HashPassword(request.Password)
+	hash, err := auth.HashPassword(password)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -1478,6 +1497,9 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusConflict, "a user with this name already exists")
 		return
+	}
+	if source != models.AuthSourceLocal {
+		_ = s.store.SetUserAuthSource(r.Context(), id, source)
 	}
 	user, err := s.store.GetUserByID(r.Context(), id)
 	if err != nil {
@@ -1489,7 +1511,13 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	s.recordAudit(r, "admin.create", "-", "users", user.Username)
+	if len(request.GroupIDs) > 0 {
+		if err := s.store.SetUserGroups(r.Context(), id, request.GroupIDs); err != nil {
+			writeError(w, http.StatusBadRequest, "user created, but the groups could not be set: "+err.Error())
+			return
+		}
+	}
+	s.recordAudit(r, "admin.create", "-", "users", user.Username+" (source="+source+")")
 	writeJSON(w, http.StatusCreated, user)
 }
 
@@ -1964,30 +1992,51 @@ func (s *Server) handleSearchLDAPUsers(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleImportLDAPUsers(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Usernames []string `json:"usernames"`
+		// Optional groups every newly imported user is added to, so they
+		// can see something on their first sign-in.
+		GroupIDs []int `json:"groupIds"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
-	created := 0
+	var created, skipped []string
 	for _, username := range request.Usernames {
+		username = strings.TrimSpace(username)
 		if username == "" {
 			continue
 		}
 		if _, err := s.store.GetUserByUsername(r.Context(), username); err == nil {
+			skipped = append(skipped, username)
 			continue
 		}
 		randomHash, err := auth.HashPassword(randomPassword())
 		if err != nil {
 			continue
 		}
-		if id, err := s.store.CreateUser(r.Context(), username, randomHash); err == nil {
-			_ = s.store.SetUserAuthSource(r.Context(), id, models.AuthSourceLDAP)
-			created++
+		id, err := s.store.CreateUser(r.Context(), username, randomHash)
+		if err != nil {
+			continue
+		}
+		_ = s.store.SetUserAuthSource(r.Context(), id, models.AuthSourceLDAP)
+		if len(request.GroupIDs) > 0 {
+			_ = s.store.SetUserGroups(r.Context(), id, request.GroupIDs)
+		}
+		created = append(created, username)
+	}
+	detail := fmt.Sprintf("%d", len(created))
+	if len(created) > 0 {
+		detail += ": " + strings.Join(created, ", ")
+		if r := []rune(detail); len(r) > 500 {
+			detail = string(r[:500]) + "…"
 		}
 	}
-	s.recordAudit(r, "admin.import", "-", "ldap_users", fmt.Sprintf("%d", created))
-	writeJSON(w, http.StatusOK, map[string]interface{}{"created": created})
+	s.recordAudit(r, "admin.import", "-", "ldap_users", detail)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"created":         len(created),
+		"createdUsers":    created,
+		"skippedExisting": skipped,
+	})
 }
 
 func randomPassword() string {
