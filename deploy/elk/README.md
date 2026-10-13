@@ -36,6 +36,38 @@ ok   PUT /_ingest/pipeline/logs-kubernetes.container_logs@custom
 
 The API key needs the `manage_index_templates` and `manage_pipeline` cluster privileges.
 
+### Without install.sh
+
+**Nothing is parsed until these are installed.** OpenConsole's lines still reach Elasticsearch through the Kubernetes integration, but each one stays a single JSON string in `message` in `logs-kubernetes.container_logs-*`. So:
+- there are no `user.name`, `event.action` or `http.response.status_code` fields to filter, aggregate or chart on;
+- audit and application records are mixed;
+- `@timestamp` is when Agent read the line, not when it was written.
+
+If you can't run the script (no shell access to Elasticsearch, only Kibana), send the same requests from **Kibana → Dev Tools**. Paste the content of each file as the body, in this order:
+
+```text
+PUT _component_template/openconsole@mappings        ← openconsole@mappings.component-template.json
+PUT _index_template/logs-openconsole                ← logs-openconsole.index-template.json
+PUT _ingest/pipeline/openconsole-logs               ← openconsole-logs.pipeline.json
+GET _ingest/pipeline/logs-kubernetes.container_logs@custom
+```
+
+If the last request returns 404, create it:
+
+```json
+PUT _ingest/pipeline/logs-kubernetes.container_logs@custom
+{
+  "description": "Calls openconsole-logs (kubernetes-openconsole deploy/elk).",
+  "processors": [
+    { "pipeline": { "name": "openconsole-logs", "ignore_missing_pipeline": true } }
+  ]
+}
+```
+
+If it already exists, add that `pipeline` processor to it instead (Stack Management → Ingest Pipelines → edit), so its existing processors stay.
+
+Only lines written after the installation are parsed; earlier lines stay as they arrived.
+
 ### How the pipeline is reached
 
 Elastic Agent's **Kubernetes** integration collects the pod's stdout into `logs-kubernetes.container_logs-*`, and its ingest pipeline calls `logs-kubernetes.container_logs@custom` at the end. `install.sh` creates that `@custom` pipeline with one processor that calls `openconsole-logs`.
