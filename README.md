@@ -137,6 +137,7 @@ This installs, in namespace `kubernetes-openconsole`:
 | `rbac.yaml` | ServiceAccount `openconsole-reader`, its long-lived token Secret, ClusterRole `openconsole-readonly` + binding. It produces the token you paste into the UI; see [Connecting clusters](#connecting-clusters). `rbac-readonly.yaml` is the [read-only](#read-only-mode) alternative. Not needed if you connect with your own kubeconfig identity |
 | `pvc.yaml` | 5 Gi PVC for `/data` (SQLite + session recordings); a commented second PVC for recordings |
 | `service.yaml` | ClusterIP Service on port 80 → container 8080 (put your Ingress / Gateway in front) |
+| `elk/` | Optional, not applied by kustomize: Elasticsearch ingest pipeline, mappings and installer for the logs ([deploy/elk/README.md](deploy/elk/README.md)) |
 | `deployment.yaml` | 1 replica (SQLite on a RWO volume — do not scale out), `:latest` image with `imagePullPolicy: Always`, every env var documented inline, requests / limits, `/livez` + `/readyz` probes, non-root, `seccompProfile: RuntimeDefault`, and **no ServiceAccount token mounted** (`automountServiceAccountToken: false`). The app never uses the pod's own identity |
 
 Then:
@@ -257,26 +258,19 @@ Every HTTP response also carries an `X-Request-Id` header matching the request i
 
 Pick the variant that matches your setup. All of them read the container's stdout and need no grok.
 
-**Elastic Agent managed by Fleet, with the Kubernetes integration already collecting container logs.** Leave the integration as it is and add one ingest pipeline. The integration calls it for every container log line; it only touches lines from OpenConsole pods (label `app: kubernetes-openconsole`). In Kibana → Dev Tools:
+**Elastic Agent managed by Fleet, with the Kubernetes integration already collecting container logs (recommended).** Leave the integration as it is and run [`deploy/elk/install.sh`](deploy/elk/README.md) once against Elasticsearch:
 
-```json
-PUT _ingest/pipeline/logs-kubernetes.container_logs@custom
-{
-  "description": "OpenConsole: decode LOG_FORMAT=ecs lines into ECS fields",
-  "processors": [
-    {
-      "json": {
-        "if": "ctx.kubernetes?.labels?.app == 'kubernetes-openconsole' && ctx.message instanceof String && ctx.message.startsWith('{')",
-        "field": "message",
-        "add_to_root": true,
-        "ignore_failure": true
-      }
-    }
-  ]
-}
+```bash
+ES_URL=https://elasticsearch.example:9200 ES_API_KEY=<base64 id:key> deploy/elk/install.sh
 ```
 
-If that pipeline already exists, add the processor to it instead of replacing it. The decoded `message` ("audit", "http.request", …) replaces the raw line, and `@timestamp` becomes the time the record was written.
+It installs an ingest pipeline that the Kubernetes integration calls for every container log line (through `logs-kubernetes.container_logs@custom`). The pipeline:
+- decodes only OpenConsole's lines, so other pods' lines stay as they are;
+- keeps Agent's `kubernetes.*` / `container.*` / `log.file.path` fields;
+- sets `event.outcome` on audit events;
+- routes the records to two data streams with proper mappings: `logs-openconsole.audit-*` (audit events) and `logs-openconsole.app-*` (everything else).
+
+Tested on Elasticsearch 8.15.3 with real OpenConsole lines; see [deploy/elk/README.md](deploy/elk/README.md) for the details, KQL examples and how to remove it.
 
 **Elastic Agent standalone, or Filebeat.** Add a filestream input for the OpenConsole pods' log files. The `container` parser strips the CRI prefix and `ndjson` decodes the record into the root:
 
