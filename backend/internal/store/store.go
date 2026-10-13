@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"k8s-dashboard/backend/internal/models"
+	"strconv"
 	"strings"
 )
 
@@ -380,8 +381,9 @@ func (s *Store) ListUserGroups(ctx context.Context, userID int) ([]int, error) {
 }
 
 func (s *Store) GetLDAPConfig(ctx context.Context) (models.LDAPConfig, error) {
-	row := s.conn.QueryRowContext(ctx, `SELECT enabled, url, host, port, use_ssl, start_tls, ssl_skip_verify, timeout_seconds, bind_dn, bind_password_enc, user_base_dn, user_base_dns, user_filter, username_attribute FROM ldap_config WHERE id = 1`)
-	var enabled int
+	row := s.conn.QueryRowContext(ctx, `SELECT enabled, url, host, port, use_ssl, start_tls, ssl_skip_verify, timeout_seconds, bind_dn, bind_password_enc, user_base_dn, user_base_dns, user_filter, username_attribute, auto_provision, auto_provision_groups FROM ldap_config WHERE id = 1`)
+	var enabled, autoProvision int
+	var autoGroups string
 	var useSSL int
 	var startTLS int
 	var skipVerify int
@@ -403,10 +405,19 @@ func (s *Store) GetLDAPConfig(ctx context.Context) (models.LDAPConfig, error) {
 		&baseDNs,
 		&cfg.UserFilter,
 		&cfg.UsernameAttribute,
+		&autoProvision,
+		&autoGroups,
 	); err != nil {
 		return cfg, err
 	}
 	cfg.Enabled = enabled == 1
+	cfg.AutoProvision = autoProvision == 1
+	cfg.AutoProvisionGroupIDs = []int{}
+	for _, part := range strings.Split(autoGroups, ",") {
+		if id, err := strconv.Atoi(strings.TrimSpace(part)); err == nil {
+			cfg.AutoProvisionGroupIDs = append(cfg.AutoProvisionGroupIDs, id)
+		}
+	}
 	cfg.UseSSL = useSSL == 1
 	cfg.StartTLS = startTLS == 1
 	cfg.SkipVerify = skipVerify == 1
@@ -452,10 +463,19 @@ func (s *Store) UpdateLDAPConfig(ctx context.Context, cfg models.LDAPConfig) err
 		skipVerify = 1
 	}
 	baseDNs := strings.Join(cfg.UserBaseDNs, ",")
+	autoProvision := 0
+	if cfg.AutoProvision {
+		autoProvision = 1
+	}
+	groupParts := make([]string, 0, len(cfg.AutoProvisionGroupIDs))
+	for _, id := range cfg.AutoProvisionGroupIDs {
+		groupParts = append(groupParts, strconv.Itoa(id))
+	}
 	_, err := s.conn.ExecContext(ctx, `
 		UPDATE ldap_config
 		SET enabled = ?, url = ?, host = ?, port = ?, use_ssl = ?, start_tls = ?, ssl_skip_verify = ?, timeout_seconds = ?,
-		    bind_dn = ?, bind_password_enc = ?, user_base_dn = ?, user_base_dns = ?, user_filter = ?, username_attribute = ?
+		    bind_dn = ?, bind_password_enc = ?, user_base_dn = ?, user_base_dns = ?, user_filter = ?, username_attribute = ?,
+		    auto_provision = ?, auto_provision_groups = ?
 		WHERE id = 1`,
 		enabled,
 		cfg.URL,
@@ -471,6 +491,8 @@ func (s *Store) UpdateLDAPConfig(ctx context.Context, cfg models.LDAPConfig) err
 		baseDNs,
 		cfg.UserFilter,
 		cfg.UsernameAttribute,
+		autoProvision,
+		strings.Join(groupParts, ","),
 	)
 	return err
 }

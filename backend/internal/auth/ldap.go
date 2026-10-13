@@ -28,8 +28,21 @@ type LDAPConfig struct {
 }
 
 func LDAPAuthenticate(cfg LDAPConfig, username, password string) error {
+	_, err := LDAPAuthenticateUser(cfg, username, password)
+	return err
+}
+
+// LDAPAuthenticateUser binds as the user and returns their name as the
+// directory spells it (the username attribute), e.g. "john" for a typed
+// "John". Falls back to the typed name when the entry has no such value.
+func LDAPAuthenticateUser(cfg LDAPConfig, username, password string) (string, error) {
 	if !cfg.Enabled {
-		return fmt.Errorf("ldap disabled")
+		return "", fmt.Errorf("ldap disabled")
+	}
+	// An empty password would be an anonymous ("unauthenticated") bind,
+	// which many directories accept for any DN.
+	if password == "" {
+		return "", fmt.Errorf("empty password")
 	}
 	url := cfg.URL
 	if url == "" {
@@ -50,30 +63,33 @@ func LDAPAuthenticate(cfg LDAPConfig, username, password string) error {
 	dialer := &net.Dialer{Timeout: timeout}
 	conn, err := ldap.DialURL(url, ldap.DialWithDialer(dialer))
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer conn.Close()
 
 	if cfg.StartTLS {
 		if err := conn.StartTLS(&tls.Config{InsecureSkipVerify: cfg.SkipVerify}); err != nil {
-			return err
+			return "", err
 		}
 	}
 
 	if cfg.BindDN != "" {
 		if err := conn.Bind(cfg.BindDN, cfg.BindPassword); err != nil {
-			return err
+			return "", err
 		}
 	}
 
-	userDN, err := findUserDN(conn, cfg, username)
+	userDN, canonical, err := findUser(conn, cfg, username)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if err := conn.Bind(userDN, password); err != nil {
-		return err
+		return "", err
 	}
-	return nil
+	if canonical == "" {
+		canonical = username
+	}
+	return canonical, nil
 }
 
 type LDAPUser struct {
@@ -235,13 +251,18 @@ func TestConnection(cfg LDAPConfig) error {
 	return nil
 }
 
-func findUserDN(conn *ldap.Conn, cfg LDAPConfig, username string) (string, error) {
+// findUser returns the DN to bind as and the entry's username attribute.
+func findUser(conn *ldap.Conn, cfg LDAPConfig, username string) (string, string, error) {
 	baseDNs := cfg.UserBaseDNs
 	if len(baseDNs) == 0 && cfg.UserBaseDN != "" {
 		baseDNs = []string{cfg.UserBaseDN}
 	}
 	if len(baseDNs) == 0 {
-		return "", fmt.Errorf("user base DN not set")
+		return "", "", fmt.Errorf("user base DN not set")
+	}
+	attr := cfg.UsernameAttribute
+	if attr == "" {
+		attr = "sAMAccountName"
 	}
 	filter := loginFilter(cfg, username)
 	for _, baseDN := range baseDNs {
@@ -253,7 +274,7 @@ func findUserDN(conn *ldap.Conn, cfg LDAPConfig, username string) (string, error
 			0,
 			false,
 			filter,
-			[]string{"dn"},
+			[]string{"dn", attr},
 			nil,
 		)
 		result, err := conn.Search(search)
@@ -261,10 +282,10 @@ func findUserDN(conn *ldap.Conn, cfg LDAPConfig, username string) (string, error
 			continue
 		}
 		if len(result.Entries) > 0 {
-			return result.Entries[0].DN, nil
+			return result.Entries[0].DN, result.Entries[0].GetAttributeValue(attr), nil
 		}
 	}
-	return "", fmt.Errorf("user not found")
+	return "", "", fmt.Errorf("user not found")
 }
 
 // loginFilter builds the search filter that finds the DN to bind as. The

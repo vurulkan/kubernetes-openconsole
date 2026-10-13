@@ -1,6 +1,7 @@
 import React, { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronDown, Search, X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 // ─── Button ─────────────────────────────────────────────────────────────────
 
@@ -406,10 +407,14 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
+  // The field box (measured to place the dropdown) holds the selected chips,
+  // each with its own remove button, and the trigger button. Buttons are
+  // siblings, never nested.
+  const buttonRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number; width: number } | null>(null);
   const id = useId();
+  const { t } = useTranslation();
 
   // Portal the dropdown to document.body so it escapes any ancestor with
   // overflow:hidden (table rows, cards, drawers). Measure the trigger button
@@ -462,37 +467,46 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
           {label}
         </label>
       )}
-      <button
+      <div
         ref={buttonRef}
-        id={id}
-        type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex min-h-[40px] w-full cursor-pointer flex-wrap items-center gap-1.5 rounded-lg border px-3 py-2 text-left text-sm shadow-sm transition-colors border-slate-300 bg-white text-slate-900 hover:border-slate-400 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/15 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-slate-600"
+        className="flex min-h-[40px] w-full cursor-pointer flex-wrap items-center gap-1.5 rounded-lg border px-3 py-2 text-left text-sm shadow-sm transition-colors border-slate-300 bg-white text-slate-900 hover:border-slate-400 focus-within:border-brand-500 focus-within:ring-4 focus-within:ring-brand-500/15 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-slate-600"
       >
-        {value.length === 0 ? (
-          <span className="flex-1 text-slate-500 dark:text-slate-400">{placeholder}</span>
-        ) : (
-          value.map((v) => (
-            <span
-              key={v.id}
-              className="inline-flex items-center gap-1 rounded-md bg-brand-50 dark:bg-brand-500/15 px-2 py-0.5 text-xs font-medium text-brand-700 dark:text-brand-200 ring-1 ring-inset ring-brand-200 dark:ring-brand-500/30"
+        {value.map((v) => (
+          <span
+            key={v.id}
+            className="inline-flex items-center gap-1 rounded-md bg-brand-50 dark:bg-brand-500/15 px-2 py-0.5 text-xs font-medium text-brand-700 dark:text-brand-200 ring-1 ring-inset ring-brand-200 dark:ring-brand-500/30"
+          >
+            {v.label}
+            <button
+              type="button"
+              aria-label={t('multiSelect.remove', { label: v.label })}
+              title={t('multiSelect.remove', { label: v.label })}
+              onClick={(e) => {
+                e.stopPropagation();
+                onChange(value.filter((item) => item.id !== v.id));
+              }}
+              className="rounded-sm text-brand-600 hover:text-brand-800 dark:text-brand-300 dark:hover:text-brand-100"
             >
-              {v.label}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onChange(value.filter((item) => item.id !== v.id));
-                }}
-                className="rounded-sm text-brand-500 hover:text-brand-800"
-              >
-                <X size={10} />
-              </button>
-            </span>
-          ))
-        )}
-        <ChevronDown size={14} className="ml-auto shrink-0 text-slate-500 dark:text-slate-400" />
-      </button>
+              <X size={10} />
+            </button>
+          </span>
+        ))}
+        <button
+          id={id}
+          type="button"
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          onClick={(e) => {
+            e.stopPropagation();
+            setOpen((o) => !o);
+          }}
+          className="flex min-w-[2rem] flex-1 items-center justify-end gap-2 text-left focus:outline-none"
+        >
+          {value.length === 0 && <span className="flex-1 text-slate-500 dark:text-slate-400">{placeholder}</span>}
+          <ChevronDown size={14} className="shrink-0 text-slate-500 dark:text-slate-400" aria-hidden="true" />
+        </button>
+      </div>
 
       {open && menuPos && createPortal(
         <div
@@ -507,7 +521,8 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
                 autoFocus
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search..."
+                placeholder={t('multiSelect.search')}
+                aria-label={t('multiSelect.search')}
                 className="w-full rounded-md border py-1.5 pl-7 pr-3 text-sm outline-none border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-brand-400 focus:ring-2 focus:ring-brand-500/15 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500"
               />
             </div>
@@ -520,6 +535,7 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
                 <button
                   key={opt.id}
                   type="button"
+                  aria-pressed={isSelected(opt)}
                   onClick={() => toggle(opt)}
                   className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-sm text-slate-700 transition-colors hover:bg-brand-50 dark:text-slate-200 dark:hover:bg-brand-500/15"
                 >

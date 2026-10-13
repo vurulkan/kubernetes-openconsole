@@ -346,6 +346,10 @@ const en = {
       hint: 'Tokens expire after this many minutes. 60 is the default.',
     },
     ldap: {
+      autoProvision: 'Create an account on a user\'s first sign-in',
+      autoProvisionHelp: 'Off (default): only users imported in Admin → Users can sign in. On: anyone the user filter finds in the base DNs can sign in, and their LDAP account is created then. To limit it to one directory group, put it in the user filter, e.g. (&(sAMAccountName=%s)(memberOf=CN=OpenConsole Users,OU=Groups,DC=example,DC=corp)).',
+      autoProvisionGroups: 'Add new accounts to groups',
+      autoProvisionWarning: 'Deleting an account doesn\'t lock its owner out: they get a new account on their next sign-in. Disable the account instead.',
       enabled: 'Enabled',
       url: 'URL (ldap://host:port or ldaps://host:port)',
       host: 'Host',
@@ -505,6 +509,10 @@ const en = {
   about: {
     github: 'OpenConsole {{version}} · source on GitHub',
     loginFooter: 'Kubernetes OpenConsole · GitHub',
+  },
+  multiSelect: {
+    remove: 'Remove {{label}}',
+    search: 'Search…',
   },
   combobox: {
     clear: 'Clear {{label}}',
@@ -1059,6 +1067,10 @@ const tr = {
       hint: 'Token\'lar bu kadar dakika sonra geçersiz olur. Varsayılan 60.',
     },
     ldap: {
+      autoProvision: 'Kullanıcının ilk girişinde hesabını oluştur',
+      autoProvisionHelp: 'Kapalı (varsayılan): yalnızca Admin → Kullanıcılar\'dan içe aktarılanlar giriş yapabilir. Açık: kullanıcı filtresinin base DN\'lerde bulduğu herkes giriş yapabilir ve LDAP hesabı o an açılır. Tek bir dizin grubuyla sınırlamak için grubu kullanıcı filtresine ekle, örn. (&(sAMAccountName=%s)(memberOf=CN=OpenConsole Users,OU=Groups,DC=example,DC=corp)).',
+      autoProvisionGroups: 'Yeni hesapları şu gruplara ekle',
+      autoProvisionWarning: 'Bir hesabı silmek sahibini dışarıda bırakmaz: bir sonraki girişinde yeni hesap açılır. Bunun yerine hesabı devre dışı bırak.',
       enabled: 'Etkin',
       url: 'URL (ldap://host:port veya ldaps://host:port)',
       host: 'Host',
@@ -1218,6 +1230,10 @@ const tr = {
   about: {
     github: 'OpenConsole {{version}} · GitHub\'da kaynak kodu',
     loginFooter: 'Kubernetes OpenConsole · GitHub',
+  },
+  multiSelect: {
+    remove: '{{label}} öğesini kaldır',
+    search: 'Ara…',
   },
   combobox: {
     clear: '{{label}} filtresini temizle',

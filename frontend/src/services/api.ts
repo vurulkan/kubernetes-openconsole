@@ -39,6 +39,9 @@ export type LDAPConfig = {
   userFilter: string;
   usernameAttribute: string;
   passwordConfigured?: boolean;
+  /** Create an LDAP account on a directory user's first sign-in (off by default). */
+  autoProvision?: boolean;
+  autoProvisionGroupIds?: number[];
 };
 
 export type AzureADConfig = {
