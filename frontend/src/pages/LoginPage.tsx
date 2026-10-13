@@ -47,7 +47,7 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
         navigate('/');
       }
     } catch (err) {
-      setError(t('login.failed'));
+      setError(azureEnabled ? `${t('login.failed')} ${t('login.failedAzureHint')}` : t('login.failed'));
     } finally {
       setLoading(false);
     }

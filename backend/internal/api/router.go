@@ -581,54 +581,78 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	authenticated := false
-	if err := auth.ComparePassword(user.PasswordHash, request.Password); err == nil {
-		authenticated = true
-	} else {
-		cfg, cfgErr := s.store.GetLDAPConfig(r.Context())
-		if cfgErr == nil && cfg.Enabled {
-			ldapCfg := auth.LDAPConfig{
-				Enabled: cfg.Enabled,
-				URL: cfg.URL,
-				Host: cfg.Host,
-				Port: cfg.Port,
-				UseSSL: cfg.UseSSL,
-				StartTLS: cfg.StartTLS,
-				SkipVerify: cfg.SkipVerify,
-				TimeoutSeconds: cfg.TimeoutSeconds,
-				BindDN: cfg.BindDN,
-				BindPassword: cfg.BindPassword,
-				UserBaseDN: cfg.UserBaseDN,
-				UserBaseDNs: cfg.UserBaseDNs,
-				UserFilter: cfg.UserFilter,
-				UsernameAttribute: cfg.UsernameAttribute,
-			}
-			if err := auth.LDAPAuthenticate(ldapCfg, request.Username, request.Password); err == nil {
-				authenticated = true
-				// Authenticated by the directory: mark the account LDAP so
-				// an admin can't give it a local password.
-				if user.AuthSource != models.AuthSourceLDAP {
-					_ = s.store.SetUserAuthSource(r.Context(), user.ID, models.AuthSourceLDAP)
-				}
-			}
+	// The account's source decides how the password is checked. Directory
+	// and Azure AD accounts never accept a local password, even if one was
+	// stored before 2.13 (an old reset), so they can't bypass the directory.
+	// Local accounts fall back to LDAP: users imported before 2.13 are still
+	// tagged local until their first directory sign-in tags them.
+	method := ""
+	failReason := "bad_password"
+	switch user.AuthSource {
+	case models.AuthSourceAzure:
+		failReason = "azure_account"
+	case models.AuthSourceLDAP:
+		if s.ldapAuthenticate(r.Context(), request.Username, request.Password) {
+			method = models.AuthSourceLDAP
+		}
+	default:
+		if auth.ComparePassword(user.PasswordHash, request.Password) == nil {
+			method = models.AuthSourceLocal
+		} else if s.ldapAuthenticate(r.Context(), request.Username, request.Password) {
+			method = models.AuthSourceLDAP
+			_ = s.store.SetUserAuthSource(r.Context(), user.ID, models.AuthSourceLDAP)
 		}
 	}
 
-	if !authenticated {
+	if method == "" {
 		LoginGate().recordFailure(gateKey)
 		go s.audit.Record(s.auditCtx(r), models.AuditLog{
 			User:         request.Username,
 			Action:       "login.failed",
 			Namespace:    "-",
 			ResourceType: "auth",
-			ResourceName: "bad_password",
+			ResourceName: failReason,
 		})
+		// Same answer for every failure, so the response doesn't reveal
+		// whether an account exists or where it signs in.
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
 
+	go s.audit.Record(s.auditCtx(r), models.AuditLog{
+		User:         user.Username,
+		Action:       "login.success",
+		Namespace:    "-",
+		ResourceType: "auth",
+		ResourceName: method,
+	})
 	LoginGate().recordSuccess(gateKey)
 	s.issueTokenForUser(w, r, user)
+}
+
+// ldapAuthenticate binds as the user against the configured directory; false
+// when LDAP is off, unconfigured or the credentials are wrong.
+func (s *Server) ldapAuthenticate(ctx context.Context, username, password string) bool {
+	cfg, err := s.store.GetLDAPConfig(ctx)
+	if err != nil || !cfg.Enabled {
+		return false
+	}
+	return auth.LDAPAuthenticate(auth.LDAPConfig{
+		Enabled:           cfg.Enabled,
+		URL:               cfg.URL,
+		Host:              cfg.Host,
+		Port:              cfg.Port,
+		UseSSL:            cfg.UseSSL,
+		StartTLS:          cfg.StartTLS,
+		SkipVerify:        cfg.SkipVerify,
+		TimeoutSeconds:    cfg.TimeoutSeconds,
+		BindDN:            cfg.BindDN,
+		BindPassword:      cfg.BindPassword,
+		UserBaseDN:        cfg.UserBaseDN,
+		UserBaseDNs:       cfg.UserBaseDNs,
+		UserFilter:        cfg.UserFilter,
+		UsernameAttribute: cfg.UsernameAttribute,
+	}, username, password) == nil
 }
 
 func (s *Server) issueTokenForUser(w http.ResponseWriter, r *http.Request, user *models.User) {
