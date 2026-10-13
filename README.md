@@ -270,7 +270,7 @@ It installs an ingest pipeline that the Kubernetes integration calls for every c
 - sets `event.outcome` on audit events;
 - routes the records to two data streams with proper mappings: `logs-openconsole.audit-*` (audit events) and `logs-openconsole.app-*` (everything else).
 
-Tested on Elasticsearch 8.15.3 with real OpenConsole lines; see [deploy/elk/README.md](deploy/elk/README.md) for the details, KQL examples and how to remove it.
+Tested on Elasticsearch 8.15.3 and 9.1.0 with real OpenConsole lines; see [deploy/elk/README.md](deploy/elk/README.md) for the details, KQL examples and how to remove it.
 
 **Elastic Agent standalone, or Filebeat.** Add a filestream input for the OpenConsole pods' log files. The `container` parser strips the CRI prefix and `ndjson` decodes the record into the root:
 

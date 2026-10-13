@@ -18,7 +18,7 @@ Field reference: README → [Structured logging](../../README.md#structured-logg
 | `logs-openconsole.index-template.json` | Index template for the two data streams. It combines the stack's `logs@*` / `ecs@mappings` templates with the mappings above. |
 | `install.sh` | Installs the three and hooks the pipeline into the Kubernetes integration (below). Safe to re-run. |
 
-Requires Elasticsearch 8.8 or later (`reroute`); tested on 8.15.3.
+Requires Elasticsearch 8.8 or later (`reroute`); tested on 8.15.3 and 9.1.0. On 9.x the two data streams are created in LogsDB index mode (the stack default for `logs-*-*`), which only lowers storage; fields and queries are the same.
 
 ## Install
 
@@ -93,7 +93,7 @@ DELETE _component_template/openconsole@mappings
 
 ## Verified
 
-Tested on Elasticsearch 8.15.3 with the image built from this version, using lines captured while it worked against a k3d cluster: sign-ins, user creation, a denied and an allowed restart, a pod shell with exit code 3, then the cluster stopped to produce client-go errors. The lines were sent the way the Kubernetes integration sends them, and:
+Tested on Elasticsearch 8.15.3 and 9.1.0 with the image built from this version, using lines captured while it worked against a k3d cluster: sign-ins, user creation, a denied and an allowed restart, a pod shell with exit code 3, then the cluster stopped to produce client-go errors. The lines were sent the way the Kubernetes integration sends them, and:
 - `_bulk` reported no errors, and the records landed in their data streams (14 audit, 119 application);
 - `@timestamp` is the event time;
 - Agent's `kubernetes.*`, `container.*` and `log.file.path` are kept;
