@@ -155,11 +155,11 @@ spec:
             # - name: APP_ENV
             #   value: prod
 
-            # APP_VERSION: static version label attached to every log line.
-            # Handy if you deploy multiple parallel versions (canary, blue /
-            # green). Uncomment to use.
+            # APP_VERSION: overrides the version label on every log line and
+            # trace. Release images already carry their own version, so set it
+            # only to tell parallel deployments apart (canary, blue / green).
             # - name: APP_VERSION
-            #   value: "2.14.2"
+            #   value: "2.15.0-canary"
 
             # ── Tracing (OpenTelemetry, 2.14.0+) ────────────────────────────────
             # Off unless an OTLP/HTTP endpoint is set. Standard OTEL_* variables

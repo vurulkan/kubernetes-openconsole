@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ShieldCheck } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Alert, Button, Input } from '../components/ui';
-import { getAuthProviders, login, startAzureLogin } from '../services/api';
+import { getAuthProviders, login, PROJECT_URL, startAzureLogin } from '../services/api';
 import LocaleSwitcher from '../components/LocaleSwitcher';
 
 type Props = {
@@ -47,14 +47,14 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
         navigate('/');
       }
     } catch (err) {
-      setError(t('login.failed'));
+      setError(azureEnabled ? `${t('login.failed')} ${t('login.failedAzureHint')}` : t('login.failed'));
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center p-4 font-sans">
+    <div className="relative flex min-h-screen flex-col items-center justify-center p-4 font-sans">
       <div className="pointer-events-none absolute inset-0 bg-brand-radial" aria-hidden="true" />
 
       {/* Locale switcher pinned top-right so a user whose browser is TR but
@@ -194,6 +194,15 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
           </div>
         </div>
       </div>
+
+      <a
+        href={PROJECT_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="relative mt-6 text-xs text-slate-500 transition-colors hover:text-slate-700 focus:outline-none focus-visible:underline dark:text-slate-400 dark:hover:text-slate-200"
+      >
+        {t('about.loginFooter')}
+      </a>
     </div>
   );
 };

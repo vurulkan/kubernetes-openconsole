@@ -32,7 +32,7 @@ Every write action records `{resource}.{action}.{success|denied|failed|rate_limi
 - **JWT authentication** with forced password change on first login.
 - **Session management** (Admin → Sessions): list every active token, revoke individual sessions or every session for a user, change-password revokes everything.
 - **Session recordings** (Admin → Recordings): filter, replay (1x / 2x / 4x, seek, skip idle), download `.cast`, delete; retention, quota and on/off switch editable in the UI.
-- **Login brute-force protection** (5 fails per IP+user → 5-minute lock, audited).
+- **Login brute-force protection** (5 fails per IP+user → 5-minute lock, audited). Every sign-in is audited: `login.success` with the method (`local` / `ldap`), `login.azure`, `login.failed` with the reason.
 
 ### UX
 - **Light / Dark / System theme** (persisted; respects OS).
@@ -67,14 +67,14 @@ docker build -t kubernetes-openconsole:local .
 ### Option B — prebuilt image (GHCR)
 
 ```yaml
-image: ghcr.io/vurulkan/kubernetes-openconsole:2.14.2   # pin a release
+image: ghcr.io/vurulkan/kubernetes-openconsole:2.15.0   # pin a release
 ```
 
 Images are multi-arch (**linux/amd64** and **linux/arm64**: Graviton, Ampere, Apple silicon); the runtime picks the right one. CI is the only publisher, and there are just two kinds of tags:
 
 | Tag | Points to | Moves? |
 |---|---|---|
-| `X.Y.Z` (e.g. `2.14.2`) | that release | no — use this in production |
+| `X.Y.Z` (e.g. `2.15.0`) | that release | no — use this in production |
 | `latest` | the newest release, same image (same digest) as its `X.Y.Z` | yes, on each release |
 
 Releasing = push the `vX.Y.Z` git tag; CI builds once and pushes `:X.Y.Z` and `:latest`. Pushes to `main` are built and tested but not published.
@@ -85,12 +85,12 @@ Every release image has a signed SLSA **build provenance** and an SPDX **SBOM** 
 
 ```bash
 # Provenance: built by this repository's CI from a release tag
-gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.14.2 \
+gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.15.0 \
   --repo vurulkan/kubernetes-openconsole \
   --signer-workflow vurulkan/kubernetes-openconsole/.github/workflows/ci.yml
 
 # SBOM (packages in the image)
-gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.14.2 \
+gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.15.0 \
   --repo vurulkan/kubernetes-openconsole \
   --predicate-type https://spdx.dev/Document/v2.3 --format json \
   --jq '.[0].verificationResult.statement.predicate.packages | length'
@@ -118,7 +118,7 @@ cd frontend && npx tsc --noEmit -p . && npm test && npm run build
 docker run --rm -p 8080:8080 \
   -e TIMEZONE=Europe/Istanbul \
   -v kubernetes-openconsole-data:/data \
-  ghcr.io/vurulkan/kubernetes-openconsole:2.14.2
+  ghcr.io/vurulkan/kubernetes-openconsole:2.15.0
 ```
 
 The image defaults to `DATA_PATH=/data/app.db` and `STATIC_DIR=/app/public`; the SQLite DB and session recordings live under `/data`. Drop the `-v` for a throwaway instance. Then open http://localhost:8080 and add a cluster ([Connecting clusters](#connecting-clusters)).
@@ -144,7 +144,7 @@ Then:
 1. Open the UI and log in as `admin` / `admin` ([First login](#first-login)).
 2. Add the cluster in **Admin → Clusters** ([Connecting clusters](#connecting-clusters)). The backend never picks up a cluster on its own.
 
-To upgrade, run `kubectl -n kubernetes-openconsole rollout restart deploy/kubernetes-openconsole`. The pod pulls `:latest`, i.e. the newest release. To stay on a fixed version, set a release tag (e.g. `2.14.2`) in `deployment.yaml` or through the `images:` override in `kustomization.yaml`, then re-apply.
+To upgrade, run `kubectl -n kubernetes-openconsole rollout restart deploy/kubernetes-openconsole`. The pod pulls `:latest`, i.e. the newest release. To stay on a fixed version, set a release tag (e.g. `2.15.0`) in `deployment.yaml` or through the `images:` override in `kustomization.yaml`, then re-apply.
 
 ## Environment variables
 
@@ -216,7 +216,7 @@ Logs go to stdout via Go's `log/slog`. In production set `LOG_FORMAT=json` so Fi
 - `LOG_OUTPUT` (default `stdout`) — `stdout` | `stderr`.
 - `LOG_ADD_SOURCE` (default `false`) — include `file:line` in every record.
 - `LOG_INCLUDE_AUDIT` (default `true`) — mirror DB audit entries to stdout with event name `audit`. Each audit line carries `request_id` so you can join it to the matching `http.request` entry in Elastic.
-- `APP_ENV`, `APP_VERSION` — optional static labels attached to every log record.
+- `APP_ENV`, `APP_VERSION` — static labels attached to every log record. Release images already carry their version (shown to signed-in users at the bottom of the nav rail and in logs / traces); set `APP_VERSION` only to override it, e.g. for a canary.
 
 Example JSON record (`LOG_FORMAT=json`):
 
@@ -574,10 +574,37 @@ On the very first start a default admin is created: **`admin` / `admin`**. You m
 | LDAP | directory username + directory password | in the directory |
 | Azure AD | "Sign in with Microsoft" | in Azure AD / Entra ID |
 
-- **New user** creates a local account. The admin sets the first password; tick **Admin** for full access. Non-admins see nothing until they are in a group with a role ([below](#groups-roles-and-permissions)).
+- **New user** creates an account. When LDAP or Azure AD is enabled it opens a menu:
+  - **Local user**: the admin sets the first password.
+  - **Import from LDAP…**: the same search-and-import panel as Admin → LDAP ([below](#ldap--active-directory)).
+  - **Azure AD user**: pre-creates a Microsoft account with no password, by the person's UPN or e-mail address (e.g. `jane@example.com`). Their first "Sign in with Microsoft" uses it.
+
+  The main part of the button opens the local-user form directly; the arrow opens the menu. Pick **Groups** right away, and tick **Admin** for full access. New accounts are listed first and highlighted for a moment. Non-admins see nothing until they are in a group with a role ([below](#groups-roles-and-permissions)).
+- **The source decides how a password is checked.** Local accounts use their OpenConsole password. LDAP accounts are checked against the directory only, and Azure AD accounts never accept a password (they use the Microsoft button), so a stray local password can't bypass the directory. A failed sign-in always gets the same answer, so the login form doesn't reveal whether an account exists or where it signs in; the `login.failed` audit entry records the reason.
 - **Edit** (pencil): admin flag, active / disabled, group membership. A disabled user is signed out on the next request.
 - **Reset password** (key icon, **local users only**): sets a new password (min. 8 characters, see `PASSWORD_MIN_LENGTH`) and by default forces a change at next login. All of that user's sessions are signed out, and the reset is audited as `user.password_reset.*`. LDAP and Azure AD users have no reset here: their password lives in the directory, and a local one would let them bypass it.
 - Users change their own password from the header menu. Doing so signs out all their other sessions.
+- **Accounts from before 2.13** start out as Local. LDAP accounts switch to LDAP on their next directory sign-in. To fix sources up front (for example for users who haven't signed in since), update the database directly. Stop the app, since the volume is ReadWriteOnce and the image has no `sqlite3`:
+
+  ```bash
+  NS=kubernetes-openconsole
+  kubectl -n $NS scale deploy/kubernetes-openconsole --replicas=0
+  kubectl -n $NS wait --for=delete pod -l app=kubernetes-openconsole --timeout=120s
+  kubectl -n $NS run oc-sql --rm -it --restart=Never --image=alpine:3.20 --overrides='{"spec":{"containers":[{"name":"oc-sql","image":"alpine:3.20","stdin":true,"tty":true,"command":["sh","-c","apk add -q sqlite && cp /data/app.db /data/app.db.bak-$(date +%s) && sqlite3 /data/app.db"],"volumeMounts":[{"name":"data","mountPath":"/data"}]}],"volumes":[{"name":"data","persistentVolumeClaim":{"claimName":"kubernetes-openconsole-data"}}]}}'
+  ```
+
+  ```sql
+  SELECT username, auth_source FROM users ORDER BY auth_source, username;
+  -- Azure AD: everyone with a Microsoft sign-in in the audit log (kept LOG_RETENTION_DAYS)
+  UPDATE users SET auth_source = 'azure' WHERE auth_source = 'local'
+     AND username IN (SELECT DISTINCT user FROM audit_logs WHERE action = 'login.azure');
+  -- By name
+  UPDATE users SET auth_source = 'azure' WHERE username IN ('jane@example.com');
+  UPDATE users SET auth_source = 'ldap'  WHERE username IN ('john', 'ayse.yilmaz');
+  .quit
+  ```
+
+  Then `kubectl -n $NS scale deploy/kubernetes-openconsole --replicas=1`. The command above keeps a backup next to the database. To turn an account back into a local one, set `auth_source = 'local'` and give it a password with **Reset password**.
 - **Delete** removes the account and its group memberships. The last active admin can't be deleted or demoted.
 - **Export CSV** (Users and Groups tabs): users with source, admin / active flags and groups; groups with members and roles. Handy for periodic access reviews. Each export is audited as `admin.export`.
 
@@ -601,9 +628,9 @@ LDAP works alongside local accounts. Users must exist in OpenConsole before they
 
 **Save LDAP settings**, then **Test connection**. The test binds with the service account and runs a search in each base DN.
 
-**2. Import users**: in the search box under the settings, type part of a name. The user filter is applied with `%s` replaced by what you typed; results are capped at 100 per base DN. Tick the users you want and click **Import selected**. Imported accounts get source **LDAP** and an unusable random local password. Users who already exist are skipped.
+**2. Import users**: from **Admin → Users → New user → Import from LDAP…**, or under the settings on Admin → LDAP. Type part of a name and search; the user filter is applied with `%s` replaced by what you typed, and results are capped at 100 per base DN. Users who already have an account are listed separately and can't be picked again. Pick the users, optionally pick **groups** to add them to, and import. Imported accounts get source **LDAP** and no usable local password. Users who already exist are skipped and reported. The `admin.import` audit entry names the imported users.
 
-**3. Give them access**: add the imported users to groups (Admin → Users → edit, or Admin → Groups). Until then they can sign in but see no namespaces.
+**3. Give them access**: if you didn't pick groups during the import, add the users to groups (Admin → Users → edit, or Admin → Groups). Until then they can sign in but see no namespaces.
 
 **4. Sign-in**: users type their directory username and password on the normal login form. OpenConsole finds their DN with the user filter and binds as them. A wildcard filter (`%s*`) is safe here: at login, OpenConsole additionally requires an exact match on the username attribute, so `jo` can never resolve to `john`. Turning **Enabled** off stops all LDAP sign-ins immediately.
 
@@ -623,7 +650,12 @@ Single-tenant sign-in that works alongside local / LDAP accounts.
 
 **3. Sign-in**: the login page shows **Sign in with Microsoft**. On a user's first successful sign-in, the account is created automatically with source **Azure AD**. The username is the token's `preferred_username`, or `email` / `upn` if that is missing.
 
-**4. Give them access**: add the new user to groups after their first sign-in. Alternatively, pre-create a local user with exactly that username (usually the UPN, e.g. `jane@example.com`) and put it in groups; the first Microsoft sign-in then uses that account and marks it Azure AD.
+**4. Give them access**: add the new user to groups after their first sign-in. Or, better, set them up in advance: **Admin → Users → New user → Azure AD user**, enter their UPN or e-mail address (e.g. `jane@example.com`) and pick the groups. The first Microsoft sign-in then uses that account.
+
+How the account is found on sign-in:
+- First by `preferred_username`, which is usually the UPN.
+- If there's no exact match, OpenConsole looks for a **pre-created Azure AD account that nobody has signed in to yet** whose name matches `preferred_username` in another letter case, or the token's `email` or `upn` claim. That covers a pre-created `jane.doe@corp.com` when the UPN is `jdoe@corp.onmicrosoft.com`.
+- Local, LDAP and already used accounts are never claimed this way. The `login.azure` audit entry notes when an account was claimed.
 
 Signing out of OpenConsole does not sign the user out of Microsoft.
 
@@ -665,7 +697,10 @@ Every user works on **their own** cluster:
 
 ## Admin tools
 
-- **Audit Logs**: every read and write action with user, cluster, namespace and resource. Filter by user / action / namespace / date and export to CSV. Retention: `LOG_RETENTION_DAYS`.
+- **Audit Logs**: every read and write action with user, cluster, namespace and resource. Retention: `LOG_RETENTION_DAYS`. The CSV export uses the same filters as the screen. Filters:
+  - **User**, **Action** and **Namespace** suggest the values that actually occur in the log as you type. Typed text matches anywhere.
+  - Picking an action matches it exactly. Its family row, e.g. `pod.exec.*`, selects the whole family.
+  - **Outcome** (success / denied / failed / rate_limited) narrows any of them, e.g. "everything denied", or `secret.*` + denied.
 - **Users / Groups → Export CSV**: who has access and through which group and role.
 - **Sessions**: every issued token; revoke one or all of a user's ([Sessions](#sessions-admin--sessions)).
 - **Recordings**: replay, download (with a warning) or delete pod shell sessions, and set retention / disk limits ([Session Recording](#session-recording)).
@@ -683,7 +718,7 @@ Every user works on **their own** cluster:
 - **Cluster connection is UI-only**. No env vars, mounted kubeconfigs or in-cluster ServiceAccount auto-detection are used by the backend: add even the local cluster in Admin → Clusters.
 - **Namespace visibility is permission-based**; if a user sees nothing, check role permissions.
 - If LDAP bind password is already configured, toggle **Update Bind Password** only when actually changing it.
-- Audit log filters combine user / action / namespace / date range.
+- Audit log filters combine user / action / outcome / namespace / date range.
 - Pod logs stream via WebSocket; verify connectivity from the backend pod to the API server.
 - The YAML modal is read-only by default — the Edit button only appears when the viewer has `{resource}:edit`.
 - Monaco loads from `cdn.jsdelivr.net`. In air-gapped deployments, self-host the `vs` folder and point `@monaco-editor/react`'s `loader.config({ paths: { vs: '/vs' } })` at the local path, then tighten CSP back to `self`.

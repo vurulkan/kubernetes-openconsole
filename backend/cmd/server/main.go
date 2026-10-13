@@ -22,10 +22,15 @@ import (
 	"k8s-dashboard/backend/internal/recording"
 	"k8s-dashboard/backend/internal/store"
 	"k8s-dashboard/backend/internal/telemetry"
+	"k8s-dashboard/backend/internal/version"
 )
 
 func main() {
 	cfg := config.Load()
+	// APP_VERSION overrides the built-in version (e.g. a canary label).
+	if cfg.Version == "" {
+		cfg.Version = version.Version
+	}
 	auth.MinPasswordLength = cfg.PasswordMinLength
 	shutdownTracing, err := telemetry.Setup(context.Background(), cfg.Version, cfg.Env)
 	if err != nil {

@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Home, KeyRound, Keyboard, LogOut, Menu, Settings, ShieldCheck, X } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Github, Home, KeyRound, Keyboard, LogOut, Menu, Settings, ShieldCheck, X } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button } from './ui';
@@ -7,7 +7,7 @@ import { ThemeToggle } from './ThemeProvider';
 import ClusterSwitcher from './ClusterSwitcher';
 import LocaleSwitcher from './LocaleSwitcher';
 import { dispatchOpenShortcuts } from '../hooks/useGlobalShortcuts';
-import { User } from '../services/api';
+import { getVersion, PROJECT_URL, User } from '../services/api';
 
 type Props = {
   user: User;
@@ -67,6 +67,10 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, children }) => {
   const location = useLocation();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { t } = useTranslation();
+  const [version, setVersion] = useState('');
+  useEffect(() => {
+    void getVersion().then(setVersion);
+  }, []);
   const RAIL_LABELS: Record<string, string> = {
     dashboard: t('nav.dashboard'),
     admin: t('nav.admin'),
@@ -209,6 +213,16 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, children }) => {
           <div className="flex h-10 w-10 items-center justify-center rounded-lg text-emerald-400" title="Permissioned cluster access">
             <ShieldCheck size={18} />
           </div>
+          <a
+            href={PROJECT_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={t('about.github', { version: version || '—' })}
+            aria-label={t('about.github', { version: version || '—' })}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-white/5 hover:text-slate-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/60"
+          >
+            <Github size={15} />
+          </a>
         </div>
       </aside>
 

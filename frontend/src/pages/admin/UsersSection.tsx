@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import { Download, KeyRound, Pencil, Plus, Search as SearchIcon, Trash2 } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { ChevronDown, Cloud, Download, FolderTree, KeyRound, Pencil, Plus, Search as SearchIcon, Trash2, UserRound } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { confirm } from '../../components/ConfirmDialog';
 import { Alert, Badge, Button, Checkbox, Input, Modal } from '../../components/ui';
@@ -14,7 +15,13 @@ type Props = {
   userGroups: Record<number, Array<{ id: number; name: string }>>;
   filter: string;
   onFilter: (v: string) => void;
-  onNew: () => void;
+  /** Opens the create dialog for a local user or a pre-created Azure AD user. */
+  onNew: (source: 'local' | 'azure') => void;
+  /** Set when LDAP is enabled: opens the directory import dialog. */
+  onImportLdap?: () => void;
+  azureEnabled?: boolean;
+  /** Just created or imported: shown first and highlighted. */
+  newUsernames?: string[];
   onEdit: (u: User) => void;
   onDelete: (u: User) => void;
 };
@@ -25,23 +32,27 @@ export const UsersSection: React.FC<Props> = ({
   filter,
   onFilter,
   onNew,
+  onImportLdap,
+  azureEnabled,
+  newUsernames = [],
   onEdit,
   onDelete,
 }) => {
   const { t } = useTranslation();
   const [resetTarget, setResetTarget] = useState<User | null>(null);
   const q = filter.trim().toLowerCase();
-  const rows = q
-    ? users.filter((u) => u.username.toLowerCase().includes(q))
-    : users;
+  const isNew = (u: User) => newUsernames.includes(u.username);
+  const filtered = q ? users.filter((u) => u.username.toLowerCase().includes(q)) : users;
+  const rows = newUsernames.length > 0 ? [...filtered.filter(isNew), ...filtered.filter((u) => !isNew(u))] : filtered;
 
   const columns: Column<User>[] = [
     {
       key: 'username',
       header: t('admin.users.col.username'),
       cell: (u) => (
-        <span className="font-mono text-[13px] font-medium text-slate-900 dark:text-slate-100">
-          {u.username}
+        <span className="inline-flex items-center gap-2">
+          <span className="font-mono text-[13px] font-medium text-slate-900 dark:text-slate-100">{u.username}</span>
+          {isNew(u) && <Badge variant="success">{t('admin.users.newBadge')}</Badge>}
         </span>
       ),
     },
@@ -150,14 +161,16 @@ export const UsersSection: React.FC<Props> = ({
             <Download size={14} />
             {t('admin.exportCsv')}
           </Button>
-          <Button variant="primary" size="sm" onClick={onNew}>
-            <Plus size={14} />
-            {t('admin.users.new')}
-          </Button>
+          <NewUserMenu
+            onLocal={() => onNew('local')}
+            onLdap={onImportLdap}
+            onAzure={azureEnabled ? () => onNew('azure') : undefined}
+          />
         </div>
       </div>
       <DataTable
         keyboardNav
+        rowClassName={(u) => (isNew(u) ? 'bg-emerald-50/70 dark:bg-emerald-500/10' : '')}
         rows={rows}
         columns={columns}
         rowKey={(u) => u.id}
@@ -271,3 +284,141 @@ function alertExport(err: unknown) {
   });
 }
 
+/**
+ * "New user" button. With only local accounts available it is a plain
+ * button; with LDAP and / or Azure AD enabled it opens a small menu.
+ */
+const NewUserMenu: React.FC<{ onLocal: () => void; onLdap?: () => void; onAzure?: () => void }> = ({
+  onLocal,
+  onLdap,
+  onAzure,
+}) => {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const firstItemRef = useRef<HTMLButtonElement>(null);
+
+  // The menu is portalled to <body> with fixed positioning, so a card with
+  // overflow: hidden can't clip it.
+  useEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const r = rootRef.current?.getBoundingClientRect();
+      if (r) setPos({ top: r.bottom + 4, right: window.innerWidth - r.right });
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || !pos) return;
+    firstItemRef.current?.focus();
+  }, [open, pos]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey, true);
+    };
+  }, [open]);
+
+  if (!onLdap && !onAzure) {
+    return (
+      <Button variant="primary" size="sm" onClick={onLocal}>
+        <Plus size={14} />
+        {t('admin.users.new')}
+      </Button>
+    );
+  }
+
+  const items = [
+    { key: 'local', icon: UserRound, label: t('admin.newUserMenu.local'), hint: t('admin.newUserMenu.localHint'), run: onLocal },
+    ...(onLdap
+      ? [{ key: 'ldap', icon: FolderTree, label: t('admin.newUserMenu.ldap'), hint: t('admin.newUserMenu.ldapHint'), run: onLdap }]
+      : []),
+    ...(onAzure
+      ? [{ key: 'azure', icon: Cloud, label: t('admin.newUserMenu.azure'), hint: t('admin.newUserMenu.azureHint'), run: onAzure }]
+      : []),
+  ];
+
+  return (
+    <div ref={rootRef} className="relative inline-flex">
+      {/* Split button: the main part opens the local-user form, the arrow
+          opens the menu with the other sources. */}
+      <Button variant="primary" size="sm" onClick={onLocal} className="rounded-r-none">
+        <Plus size={14} />
+        {t('admin.users.new')}
+      </Button>
+      <Button
+        variant="primary"
+        size="sm"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={t('admin.users.moreWays')}
+        title={t('admin.users.moreWays')}
+        onClick={() => setOpen((v) => !v)}
+        className="rounded-l-none border-l border-l-white/30 px-2"
+      >
+        <ChevronDown size={14} />
+      </Button>
+      {open && pos && createPortal(
+        <div
+          ref={menuRef}
+          role="menu"
+          aria-label={t('admin.users.new')}
+          style={{ position: 'fixed', top: pos.top, right: pos.right }}
+          className="z-50 w-72 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-elevated dark:border-slate-800 dark:bg-slate-900"
+          onKeyDown={(e) => {
+            if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+            e.preventDefault();
+            const buttons = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'));
+            const i = buttons.indexOf(document.activeElement as HTMLButtonElement);
+            const next = e.key === 'ArrowDown' ? (i + 1) % buttons.length : (i - 1 + buttons.length) % buttons.length;
+            buttons[next]?.focus();
+          }}
+        >
+          {items.map((item, i) => (
+            <button
+              key={item.key}
+              ref={i === 0 ? firstItemRef : undefined}
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                item.run();
+              }}
+              className="flex w-full items-start gap-3 px-3 py-2 text-left hover:bg-slate-50 focus:bg-slate-50 focus:outline-none dark:hover:bg-slate-800 dark:focus:bg-slate-800"
+            >
+              <item.icon size={16} className="mt-0.5 shrink-0 text-slate-500 dark:text-slate-400" aria-hidden="true" />
+              <span className="flex flex-col">
+                <span className="text-sm font-medium text-slate-900 dark:text-slate-100">{item.label}</span>
+                <span className="text-xs text-slate-500 dark:text-slate-400">{item.hint}</span>
+              </span>
+            </button>
+          ))}
+        </div>,
+        document.body,
+      )}
+    </div>
+  );
+};

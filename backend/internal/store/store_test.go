@@ -257,3 +257,113 @@ func TestAuditFiltersAndCluster(t *testing.T) {
 		t.Fatalf("after purge = %d", n)
 	}
 }
+
+func TestAuditFilterModesAndFacets(t *testing.T) {
+	conn, st := open(t, filepath.Join(t.TempDir(), "app.db"))
+	defer conn.Close()
+	ctx := context.Background()
+	for _, e := range []models.AuditLog{
+		{User: "alice", Action: "pod.exec.start", Namespace: "team-a"},
+		{User: "alice", Action: "pod.exec.end", Namespace: "team-a"},
+		{User: "bob", Action: "pod.exec.denied", Namespace: "team-b"},
+		{User: "bob", Action: "secret.reveal.denied", Namespace: "team-b"},
+		{User: "carol", Action: "secret.reveal.success", Namespace: "team-a"},
+		{User: "carol", Action: "deployment.scale.rate_limited", Namespace: "team-a"},
+		{User: "dave_x", Action: "login.failed", Namespace: "-"},
+	} {
+		e.Timestamp = time.Now().UTC()
+		e.ResourceType, e.ResourceName = "x", "x"
+		if err := st.AddAuditLog(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	count := func(f store.AuditFilter) int {
+		t.Helper()
+		n, err := st.CountAuditLogsFiltered(ctx, f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	cases := []struct {
+		name string
+		f    store.AuditFilter
+		want int
+	}{
+		{"family", store.AuditFilter{Action: "pod.exec.*"}, 3},
+		{"exact", store.AuditFilter{Action: "pod.exec.end", ActionExact: true}, 1},
+		{"exact needs the whole name", store.AuditFilter{Action: "pod.exec", ActionExact: true}, 0},
+		{"contains", store.AuditFilter{Action: "reveal"}, 2},
+		{"outcome", store.AuditFilter{Outcome: "denied"}, 2},
+		{"outcome rate_limited", store.AuditFilter{Outcome: "rate_limited"}, 1},
+		{"family + outcome", store.AuditFilter{Action: "secret.*", Outcome: "denied"}, 1},
+		// _ and % are literal, not LIKE wildcards.
+		{"underscore literal", store.AuditFilter{User: "e_x"}, 1},
+		{"underscore literal, no false match", store.AuditFilter{User: "v_x"}, 0},
+		{"percent literal", store.AuditFilter{Action: "%"}, 0},
+	}
+	for _, c := range cases {
+		if got := count(c.f); got != c.want {
+			t.Errorf("%s: %d, want %d", c.name, got, c.want)
+		}
+	}
+
+	actions, users, namespaces, err := st.AuditFacets(ctx, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(actions) != 7 || actions[0] != "deployment.scale.rate_limited" {
+		t.Fatalf("actions = %v", actions)
+	}
+	if strings.Join(users, ",") != "alice,bob,carol,dave_x" {
+		t.Fatalf("users = %v", users)
+	}
+	if strings.Join(namespaces, ",") != "team-a,team-b" { // "-" left out
+		t.Fatalf("namespaces = %v", namespaces)
+	}
+}
+
+// last_login_at: existing accounts are backfilled once, when the column is
+// added; accounts pre-created afterwards stay "never signed in" across
+// restarts until their first sign-in.
+func TestLastLoginBackfillAndUnclaimedAzure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	legacy, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE,
+			password_hash TEXT NOT NULL, must_change_password INTEGER NOT NULL DEFAULT 1,
+			is_active INTEGER NOT NULL DEFAULT 1, is_admin INTEGER NOT NULL DEFAULT 0, created_at DATETIME NOT NULL)`,
+		`INSERT INTO users (username, password_hash, created_at) VALUES ('old@corp.com', 'h', '2025-01-01 00:00:00')`,
+	} {
+		if _, err := legacy.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	legacy.Close()
+
+	ctx := context.Background()
+	conn, st := open(t, path)
+	old, _ := st.GetUserByUsername(ctx, "old@corp.com")
+	_ = st.SetUserAuthSource(ctx, old.ID, models.AuthSourceAzure)
+	if _, err := st.FindUnclaimedAzureAccount(ctx, "old@corp.com"); err == nil {
+		t.Fatal("an account from before the upgrade must not count as unclaimed")
+	}
+	newID, _ := st.CreateUser(ctx, "new@corp.com", "h")
+	_ = st.SetUserAuthSource(ctx, newID, models.AuthSourceAzure)
+	conn.Close()
+
+	conn, st = open(t, path) // migrations run again: no second backfill
+	defer conn.Close()
+	if u, err := st.FindUnclaimedAzureAccount(ctx, "NEW@corp.com"); err != nil || u.ID != newID {
+		t.Fatalf("unclaimed = %+v, %v", u, err)
+	}
+	if err := st.MarkLogin(ctx, newID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.FindUnclaimedAzureAccount(ctx, "new@corp.com"); err == nil {
+		t.Fatal("still unclaimed after a sign-in")
+	}
+}

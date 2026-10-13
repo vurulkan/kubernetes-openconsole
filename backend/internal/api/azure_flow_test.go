@@ -140,3 +140,68 @@ func TestAzureADEndToEnd(t *testing.T) {
 	// And can no longer be given a local password.
 	e.expect("POST", "/api/admin/users/"+itoa(int64(bobID))+"/reset-password", admin, map[string]string{"password": "New-passw0rd"}, http.StatusConflict)
 }
+
+// TestAzurePreCreatedByEmail: an account an admin pre-created under the
+// person's e-mail is claimed on their first Microsoft sign-in even when
+// preferred_username (the UPN) differs. Only unclaimed Azure AD accounts can
+// be claimed this way.
+func TestAzurePreCreatedByEmail(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	_, admin := e.user("root", true)
+	gid, _ := e.store.CreateGroup(ctx, "payments")
+	fakeEntra(t, func(code string) jwt.MapClaims {
+		c := goodClaims("jdoe@corp.onmicrosoft.com")
+		switch code {
+		case "jane":
+			c["email"] = "Jane.Doe@corp.com" // other case than the pre-created name
+		case "mallory":
+			c["preferred_username"] = "mallory@corp.onmicrosoft.com"
+			c["email"] = "jane.doe@corp.com" // same e-mail, after Jane claimed it
+		case "local":
+			c["preferred_username"] = "eve@corp.onmicrosoft.com"
+			c["email"] = "ops@corp.com" // matches a local account
+		}
+		return c
+	})
+	e.expect("PUT", "/api/admin/azure-ad", admin, map[string]any{
+		"enabled": true, "tenantId": testTenant, "clientId": testClientID,
+		"clientSecret": "s3cret", "redirectUrl": e.http.URL + "/api/auth/azure/callback",
+	}, http.StatusOK)
+	e.expect("POST", "/api/admin/users", admin, map[string]any{
+		"username": "jane.doe@corp.com", "source": "azure", "groupIds": []int{gid},
+	}, http.StatusCreated)
+
+	if code, body := e.azureLogin("jane", false); code != http.StatusOK {
+		t.Fatalf("jane = %d %.200s", code, body)
+	}
+	jane, err := e.store.GetUserByUsername(ctx, "jane.doe@corp.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if groups, _ := e.store.GetUserGroups(ctx, jane.ID); len(groups) != 1 {
+		t.Fatalf("pre-created account lost its groups: %v", groups)
+	}
+	if _, err := e.store.GetUserByUsername(ctx, "jdoe@corp.onmicrosoft.com"); err == nil {
+		t.Fatal("a second account was created instead of claiming the pre-created one")
+	}
+	e.waitAudit("login.azure", "claimed by email")
+
+	// Already claimed: the same e-mail on another person gets a new account.
+	if code, _ := e.azureLogin("mallory", false); code != http.StatusOK {
+		t.Fatalf("mallory = %d", code)
+	}
+	if m, err := e.store.GetUserByUsername(ctx, "mallory@corp.onmicrosoft.com"); err != nil || m.ID == jane.ID {
+		t.Fatalf("mallory = %+v, %v", m, err)
+	}
+
+	// A local account is never claimed by e-mail.
+	opsID, _ := e.user("ops@corp.com", false)
+	if code, _ := e.azureLogin("local", false); code != http.StatusOK {
+		t.Fatalf("eve = %d", code)
+	}
+	if ops, _ := e.store.GetUserByID(ctx, opsID); ops.AuthSource != models.AuthSourceLocal {
+		t.Fatalf("local account was claimed: %+v", ops)
+	}
+}
+

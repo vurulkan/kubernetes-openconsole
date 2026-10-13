@@ -239,6 +239,15 @@ func migrate(ctx context.Context, conn *sql.DB) error {
 			continue
 		}
 	}
+	// 2.15.0: last sign-in. When the column is new, every existing account
+	// counts as having signed in, so only accounts pre-created from now on
+	// are "never signed in" (which lets an Azure AD sign-in claim them by
+	// e-mail, see handleAzureCallback).
+	if _, err := conn.ExecContext(ctx, `ALTER TABLE users ADD COLUMN last_login_at DATETIME NULL`); err == nil {
+		if _, err := conn.ExecContext(ctx, `UPDATE users SET last_login_at = created_at`); err != nil {
+			return fmt.Errorf("backfill last_login_at: %w", err)
+		}
+	}
 
 	if _, err := conn.ExecContext(ctx, `INSERT OR IGNORE INTO session_settings (id, session_minutes) VALUES (1, 60);`); err != nil {
 		return fmt.Errorf("seed session settings: %w", err)

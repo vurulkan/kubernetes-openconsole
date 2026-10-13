@@ -49,6 +49,11 @@ func TestLDAPEndToEnd(t *testing.T) {
 	if u, _ := e.store.GetUserByUsername(context.Background(), "jo"); u.AuthSource != models.AuthSourceLDAP {
 		t.Fatalf("jo source = %q", u.AuthSource)
 	}
+	// A new search flags who is already in OpenConsole.
+	out = e.expect("POST", "/api/admin/ldap/users/search", admin, map[string]string{"query": "jo"}, http.StatusOK)
+	if !strings.Contains(out, `"username":"jo","dn":"`) || !strings.Contains(out, `"exists":true`) || !strings.Contains(out, `"exists":false`) {
+		t.Fatalf("search after import = %s", out)
+	}
 	// Someone else's directory password never works for jo.
 	e.expect("POST", "/api/auth/login", "", map[string]string{"username": "jo", "password": ldapfake.JohnPwd}, http.StatusUnauthorized)
 

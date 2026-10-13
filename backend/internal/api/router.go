@@ -39,6 +39,7 @@ import (
 	"k8s-dashboard/backend/internal/rbac"
 	"k8s-dashboard/backend/internal/recording"
 	"k8s-dashboard/backend/internal/store"
+	"k8s-dashboard/backend/internal/version"
 )
 
 type Server struct {
@@ -180,6 +181,10 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/cluster/active", s.handleGetActiveCluster)
 		r.Post("/api/cluster/select", s.handleSelectCluster)
 		r.Get("/api/features", s.handleFeatures)
+		// Signed-in users only: the version isn't shown before login.
+		r.Get("/api/version", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]string{"version": version.Version})
+		})
 		r.Get("/api/views", s.handleListViews)
 		r.Post("/api/views", s.handleSaveView)
 		r.Put("/api/views/{id}", s.handleShareView)
@@ -297,6 +302,7 @@ func (s *Server) Router() http.Handler {
 
 		r.Get("/api/admin/audit-logs", s.handleAuditLogs)
 		r.Get("/api/admin/audit-logs/export", s.handleAuditLogsExport)
+		r.Get("/api/admin/audit-logs/facets", s.handleAuditFacets)
 
 		// Session management (M4-B3 phase 1). List all/active, revoke a
 		// single session row, or revoke every session for a user. Audit
@@ -581,54 +587,87 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	authenticated := false
-	if err := auth.ComparePassword(user.PasswordHash, request.Password); err == nil {
-		authenticated = true
-	} else {
-		cfg, cfgErr := s.store.GetLDAPConfig(r.Context())
-		if cfgErr == nil && cfg.Enabled {
-			ldapCfg := auth.LDAPConfig{
-				Enabled: cfg.Enabled,
-				URL: cfg.URL,
-				Host: cfg.Host,
-				Port: cfg.Port,
-				UseSSL: cfg.UseSSL,
-				StartTLS: cfg.StartTLS,
-				SkipVerify: cfg.SkipVerify,
-				TimeoutSeconds: cfg.TimeoutSeconds,
-				BindDN: cfg.BindDN,
-				BindPassword: cfg.BindPassword,
-				UserBaseDN: cfg.UserBaseDN,
-				UserBaseDNs: cfg.UserBaseDNs,
-				UserFilter: cfg.UserFilter,
-				UsernameAttribute: cfg.UsernameAttribute,
-			}
-			if err := auth.LDAPAuthenticate(ldapCfg, request.Username, request.Password); err == nil {
-				authenticated = true
-				// Authenticated by the directory: mark the account LDAP so
-				// an admin can't give it a local password.
-				if user.AuthSource != models.AuthSourceLDAP {
-					_ = s.store.SetUserAuthSource(r.Context(), user.ID, models.AuthSourceLDAP)
-				}
-			}
+	// The account's source decides how the password is checked. Directory
+	// and Azure AD accounts never accept a local password, even if one was
+	// stored before 2.13 (an old reset), so they can't bypass the directory.
+	// Local accounts fall back to LDAP: users imported before 2.13 are still
+	// tagged local until their first directory sign-in tags them.
+	method := ""
+	failReason := "bad_password"
+	switch user.AuthSource {
+	case models.AuthSourceAzure:
+		failReason = "azure_account"
+	case models.AuthSourceLDAP:
+		if s.ldapAuthenticate(r.Context(), request.Username, request.Password) {
+			method = models.AuthSourceLDAP
+		}
+	default:
+		if auth.ComparePassword(user.PasswordHash, request.Password) == nil {
+			method = models.AuthSourceLocal
+		} else if s.ldapAuthenticate(r.Context(), request.Username, request.Password) {
+			method = models.AuthSourceLDAP
+			_ = s.store.SetUserAuthSource(r.Context(), user.ID, models.AuthSourceLDAP)
 		}
 	}
 
-	if !authenticated {
+	if method == "" {
 		LoginGate().recordFailure(gateKey)
 		go s.audit.Record(s.auditCtx(r), models.AuditLog{
 			User:         request.Username,
 			Action:       "login.failed",
 			Namespace:    "-",
 			ResourceType: "auth",
-			ResourceName: "bad_password",
+			ResourceName: failReason,
 		})
+		// Same answer for every failure, so the response doesn't reveal
+		// whether an account exists or where it signs in.
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
 
+	_ = s.store.MarkLogin(r.Context(), user.ID)
+	go s.audit.Record(s.auditCtx(r), models.AuditLog{
+		User:         user.Username,
+		Action:       "login.success",
+		Namespace:    "-",
+		ResourceType: "auth",
+		ResourceName: method,
+	})
 	LoginGate().recordSuccess(gateKey)
 	s.issueTokenForUser(w, r, user)
+}
+
+// azureLoginDetail describes how a Microsoft sign-in found its account.
+func azureLoginDetail(linkedBy, signedInAs string) string {
+	if linkedBy == "" {
+		return "azure_ad"
+	}
+	return "azure_ad (pre-created account claimed by " + linkedBy + "; signed in as " + signedInAs + ")"
+}
+
+// ldapAuthenticate binds as the user against the configured directory; false
+// when LDAP is off, unconfigured or the credentials are wrong.
+func (s *Server) ldapAuthenticate(ctx context.Context, username, password string) bool {
+	cfg, err := s.store.GetLDAPConfig(ctx)
+	if err != nil || !cfg.Enabled {
+		return false
+	}
+	return auth.LDAPAuthenticate(auth.LDAPConfig{
+		Enabled:           cfg.Enabled,
+		URL:               cfg.URL,
+		Host:              cfg.Host,
+		Port:              cfg.Port,
+		UseSSL:            cfg.UseSSL,
+		StartTLS:          cfg.StartTLS,
+		SkipVerify:        cfg.SkipVerify,
+		TimeoutSeconds:    cfg.TimeoutSeconds,
+		BindDN:            cfg.BindDN,
+		BindPassword:      cfg.BindPassword,
+		UserBaseDN:        cfg.UserBaseDN,
+		UserBaseDNs:       cfg.UserBaseDNs,
+		UserFilter:        cfg.UserFilter,
+		UsernameAttribute: cfg.UsernameAttribute,
+	}, username, password) == nil
 }
 
 func (s *Server) issueTokenForUser(w http.ResponseWriter, r *http.Request, user *models.User) {
@@ -750,7 +789,7 @@ func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	username, err := auth.AzureExchangeCode(ctx, auth.AzureADConfig{
+	identity, err := auth.AzureExchangeCode(ctx, auth.AzureADConfig{
 		Enabled:      cfg.Enabled,
 		TenantID:     cfg.TenantID,
 		ClientID:     cfg.ClientID,
@@ -762,7 +801,26 @@ func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	username := identity.Username
+	linkedBy := ""
 	user, err := s.store.GetUserByUsername(r.Context(), username)
+	if errors.Is(err, sql.ErrNoRows) {
+		// An admin may have pre-created the account under the person's
+		// e-mail or UPN (or in another letter case). Only Azure AD accounts
+		// nobody has signed in to yet can be claimed this way, so this can
+		// never take over a local, LDAP or already used account.
+		for _, candidate := range []struct{ name, via string }{
+			{username, "username_case"}, {identity.Email, "email"}, {identity.UPN, "upn"},
+		} {
+			if candidate.name == "" {
+				continue
+			}
+			if found, findErr := s.store.FindUnclaimedAzureAccount(r.Context(), candidate.name); findErr == nil {
+				user, err, linkedBy = found, nil, candidate.via
+				break
+			}
+		}
+	}
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusInternalServerError, "failed to load user")
@@ -793,6 +851,7 @@ func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 	if user.AuthSource != models.AuthSourceAzure {
 		_ = s.store.SetUserAuthSource(r.Context(), user.ID, models.AuthSourceAzure)
 	}
+	_ = s.store.MarkLogin(r.Context(), user.ID)
 
 	session, err := s.store.GetSessionSettings(r.Context())
 	if err != nil {
@@ -819,7 +878,7 @@ func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 		Action:       "login.azure",
 		Namespace:    "-",
 		ResourceType: "auth",
-		ResourceName: "azure_ad",
+		ResourceName: azureLoginDetail(linkedBy, username),
 	})
 
 	// The global securityHeaders middleware blocks inline scripts with CSP
@@ -1431,6 +1490,10 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		Username string `json:"username"`
 		Password string `json:"password"`
 		IsAdmin  bool   `json:"isAdmin"`
+		// Source "azure" pre-creates an Azure AD account (no password; the
+		// first Microsoft sign-in uses it). Empty or "local" is a local user.
+		Source   string `json:"source"`
+		GroupIDs []int  `json:"groupIds"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -1441,11 +1504,26 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "username is required")
 		return
 	}
-	if err := auth.CheckPasswordPolicy(request.Password); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	source := strings.ToLower(strings.TrimSpace(request.Source))
+	if source == "" {
+		source = models.AuthSourceLocal
+	}
+	var password string
+	switch source {
+	case models.AuthSourceLocal:
+		if err := auth.CheckPasswordPolicy(request.Password); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		password = request.Password
+	case models.AuthSourceAzure:
+		// Never usable: Azure AD accounts don't sign in with a password.
+		password = randomPassword()
+	default:
+		writeError(w, http.StatusBadRequest, "source must be local or azure (LDAP users are imported)")
 		return
 	}
-	hash, err := auth.HashPassword(request.Password)
+	hash, err := auth.HashPassword(password)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -1454,6 +1532,9 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusConflict, "a user with this name already exists")
 		return
+	}
+	if source != models.AuthSourceLocal {
+		_ = s.store.SetUserAuthSource(r.Context(), id, source)
 	}
 	user, err := s.store.GetUserByID(r.Context(), id)
 	if err != nil {
@@ -1465,7 +1546,13 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	s.recordAudit(r, "admin.create", "-", "users", user.Username)
+	if len(request.GroupIDs) > 0 {
+		if err := s.store.SetUserGroups(r.Context(), id, request.GroupIDs); err != nil {
+			writeError(w, http.StatusBadRequest, "user created, but the groups could not be set: "+err.Error())
+			return
+		}
+	}
+	s.recordAudit(r, "admin.create", "-", "users", user.Username+" (source="+source+")")
 	writeJSON(w, http.StatusCreated, user)
 }
 
@@ -1934,36 +2021,67 @@ func (s *Server) handleSearchLDAPUsers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"items": users})
+	type result struct {
+		auth.LDAPUser
+		// Exists: an OpenConsole account with this name is already there.
+		Exists bool `json:"exists"`
+	}
+	items := make([]result, 0, len(users))
+	for _, u := range users {
+		_, err := s.store.GetUserByUsername(r.Context(), u.Username)
+		items = append(items, result{LDAPUser: u, Exists: err == nil})
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"items": items})
 }
 
 func (s *Server) handleImportLDAPUsers(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Usernames []string `json:"usernames"`
+		// Optional groups every newly imported user is added to, so they
+		// can see something on their first sign-in.
+		GroupIDs []int `json:"groupIds"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
-	created := 0
+	var created, skipped []string
 	for _, username := range request.Usernames {
+		username = strings.TrimSpace(username)
 		if username == "" {
 			continue
 		}
 		if _, err := s.store.GetUserByUsername(r.Context(), username); err == nil {
+			skipped = append(skipped, username)
 			continue
 		}
 		randomHash, err := auth.HashPassword(randomPassword())
 		if err != nil {
 			continue
 		}
-		if id, err := s.store.CreateUser(r.Context(), username, randomHash); err == nil {
-			_ = s.store.SetUserAuthSource(r.Context(), id, models.AuthSourceLDAP)
-			created++
+		id, err := s.store.CreateUser(r.Context(), username, randomHash)
+		if err != nil {
+			continue
+		}
+		_ = s.store.SetUserAuthSource(r.Context(), id, models.AuthSourceLDAP)
+		if len(request.GroupIDs) > 0 {
+			_ = s.store.SetUserGroups(r.Context(), id, request.GroupIDs)
+		}
+		created = append(created, username)
+	}
+	detail := fmt.Sprintf("%d", len(created))
+	if len(created) > 0 {
+		detail += ": " + strings.Join(created, ", ")
+		if r := []rune(detail); len(r) > 500 {
+			detail = string(r[:500]) + "…"
 		}
 	}
-	s.recordAudit(r, "admin.import", "-", "ldap_users", fmt.Sprintf("%d", created))
-	writeJSON(w, http.StatusOK, map[string]interface{}{"created": created})
+	s.recordAudit(r, "admin.import", "-", "ldap_users", detail)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"created":         len(created),
+		"createdUsers":    created,
+		"skippedExisting": skipped,
+	})
 }
 
 func randomPassword() string {
@@ -2076,17 +2194,16 @@ func (s *Server) handleAuditLogs(w http.ResponseWriter, r *http.Request) {
 			offset = parsed
 		}
 	}
-	userFilter := r.URL.Query().Get("user")
-	actionFilter := r.URL.Query().Get("action")
-	namespaceFilter := r.URL.Query().Get("namespace")
-	startTime := parseTimeParam(r.URL.Query().Get("start"))
-	endTime := parseTimeParam(r.URL.Query().Get("end"))
-	logs, err := s.store.ListAuditLogs(r.Context(), limit, offset, userFilter, actionFilter, namespaceFilter, startTime, endTime)
+	filter, ok := auditFilterFrom(w, r)
+	if !ok {
+		return
+	}
+	logs, err := s.store.ListAuditLogsFiltered(r.Context(), limit, offset, filter)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	total, err := s.store.CountAuditLogs(r.Context(), userFilter, actionFilter, namespaceFilter, startTime, endTime)
+	total, err := s.store.CountAuditLogsFiltered(r.Context(), filter)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -2114,19 +2231,53 @@ func (s *Server) handleAuditLogs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// auditOutcomes are the values the outcome filter accepts.
+var auditOutcomes = map[string]bool{"success": true, "denied": true, "failed": true, "rate_limited": true}
+
+// auditFilterFrom reads the audit filter query parameters: user, action
+// (contains; "family.*" for a whole family), actionExact=1, outcome,
+// namespace, start, end.
+func auditFilterFrom(w http.ResponseWriter, r *http.Request) (store.AuditFilter, bool) {
+	q := r.URL.Query()
+	f := store.AuditFilter{
+		User:        q.Get("user"),
+		Action:      q.Get("action"),
+		ActionExact: q.Get("actionExact") == "1" || q.Get("actionExact") == "true",
+		Outcome:     q.Get("outcome"),
+		Namespace:   q.Get("namespace"),
+		Start:       parseTimeParam(q.Get("start")),
+		End:         parseTimeParam(q.Get("end")),
+	}
+	if f.Outcome != "" && !auditOutcomes[f.Outcome] {
+		writeError(w, http.StatusBadRequest, "outcome must be success, denied, failed or rate_limited")
+		return f, false
+	}
+	return f, true
+}
+
+// handleAuditFacets lists the actions, users and namespaces found in the
+// audit log, for the filter suggestions in Admin → Audit Logs.
+func (s *Server) handleAuditFacets(w http.ResponseWriter, r *http.Request) {
+	actions, users, namespaces, err := s.store.AuditFacets(r.Context(), 1000)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read audit facets")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string][]string{"actions": actions, "users": users, "namespaces": namespaces})
+}
+
 func (s *Server) handleAuditLogsExport(w http.ResponseWriter, r *http.Request) {
-	userFilter := r.URL.Query().Get("user")
-	actionFilter := r.URL.Query().Get("action")
-	namespaceFilter := r.URL.Query().Get("namespace")
-	startTime := parseTimeParam(r.URL.Query().Get("start"))
-	endTime := parseTimeParam(r.URL.Query().Get("end"))
+	filter, ok := auditFilterFrom(w, r)
+	if !ok {
+		return
+	}
 	limit := 1000
 	if value := r.URL.Query().Get("limit"); value != "" {
 		if parsed, err := strconv.Atoi(value); err == nil {
 			limit = parsed
 		}
 	}
-	logs, err := s.store.ListAuditLogs(r.Context(), limit, 0, userFilter, actionFilter, namespaceFilter, startTime, endTime)
+	logs, err := s.store.ListAuditLogsFiltered(r.Context(), limit, 0, filter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to fetch audit logs")
 		return

@@ -592,34 +592,74 @@ func (s *Store) AddAuditLog(ctx context.Context, entry models.AuditLog) error {
 	return err
 }
 
-func (s *Store) ListAuditLogs(ctx context.Context, limit, offset int, userFilter, actionFilter, namespaceFilter string, startTime, endTime *time.Time) ([]models.AuditLog, error) {
-	query := `SELECT id, timestamp, user, action, namespace, resource_type, resource_name, cluster FROM audit_logs`
-	args := []interface{}{}
-	conditions := []string{}
-	if userFilter != "" {
-		conditions = append(conditions, "user LIKE ?")
-		args = append(args, "%"+userFilter+"%")
+// AuditFilter selects audit entries. Text filters match anywhere in the
+// field, except Action: "family.*" matches every action starting with
+// "family.", and ActionExact matches the action exactly. Outcome matches the
+// action's last segment (success, denied, failed, rate_limited, …).
+type AuditFilter struct {
+	User        string
+	Action      string
+	ActionExact bool
+	Outcome     string
+	Namespace   string
+	Start, End  *time.Time
+}
+
+// likeEscape makes s a literal inside a LIKE pattern (ESCAPE '\').
+func likeEscape(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
+}
+
+func (f AuditFilter) where() (string, []interface{}) {
+	var conditions []string
+	var args []interface{}
+	contains := func(column, value string) {
+		conditions = append(conditions, column+` LIKE ? ESCAPE '\'`)
+		args = append(args, "%"+likeEscape(value)+"%")
 	}
-	if actionFilter != "" {
-		conditions = append(conditions, "action LIKE ?")
-		args = append(args, "%"+actionFilter+"%")
+	if f.User != "" {
+		contains("user", f.User)
 	}
-	if namespaceFilter != "" {
-		conditions = append(conditions, "namespace LIKE ?")
-		args = append(args, "%"+namespaceFilter+"%")
+	switch {
+	case f.Action == "":
+	case strings.HasSuffix(f.Action, ".*"):
+		conditions = append(conditions, `action LIKE ? ESCAPE '\'`)
+		args = append(args, likeEscape(strings.TrimSuffix(f.Action, "*"))+"%")
+	case f.ActionExact:
+		conditions = append(conditions, "action = ?")
+		args = append(args, f.Action)
+	default:
+		contains("action", f.Action)
 	}
-	if startTime != nil {
+	if f.Outcome != "" {
+		conditions = append(conditions, `action LIKE ? ESCAPE '\'`)
+		args = append(args, "%."+likeEscape(f.Outcome))
+	}
+	if f.Namespace != "" {
+		contains("namespace", f.Namespace)
+	}
+	if f.Start != nil {
 		conditions = append(conditions, "timestamp >= ?")
-		args = append(args, *startTime)
+		args = append(args, *f.Start)
 	}
-	if endTime != nil {
+	if f.End != nil {
 		conditions = append(conditions, "timestamp <= ?")
-		args = append(args, *endTime)
+		args = append(args, *f.End)
 	}
-	if len(conditions) > 0 {
-		query += " WHERE " + strings.Join(conditions, " AND ")
+	if len(conditions) == 0 {
+		return "", nil
 	}
-	query += ` ORDER BY timestamp DESC LIMIT ? OFFSET ?`
+	return " WHERE " + strings.Join(conditions, " AND "), args
+}
+
+func (s *Store) ListAuditLogs(ctx context.Context, limit, offset int, userFilter, actionFilter, namespaceFilter string, startTime, endTime *time.Time) ([]models.AuditLog, error) {
+	return s.ListAuditLogsFiltered(ctx, limit, offset, AuditFilter{User: userFilter, Action: actionFilter, Namespace: namespaceFilter, Start: startTime, End: endTime})
+}
+
+func (s *Store) ListAuditLogsFiltered(ctx context.Context, limit, offset int, f AuditFilter) ([]models.AuditLog, error) {
+	where, args := f.where()
+	query := `SELECT id, timestamp, user, action, namespace, resource_type, resource_name, cluster FROM audit_logs` +
+		where + ` ORDER BY timestamp DESC LIMIT ? OFFSET ?`
 	args = append(args, limit, offset)
 	rows, err := s.conn.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -634,41 +674,50 @@ func (s *Store) ListAuditLogs(ctx context.Context, limit, offset int, userFilter
 		}
 		logs = append(logs, entry)
 	}
-	return logs, nil
+	return logs, rows.Err()
 }
 
 func (s *Store) CountAuditLogs(ctx context.Context, userFilter, actionFilter, namespaceFilter string, startTime, endTime *time.Time) (int, error) {
-	query := `SELECT COUNT(1) FROM audit_logs`
-	args := []interface{}{}
-	conditions := []string{}
-	if userFilter != "" {
-		conditions = append(conditions, "user LIKE ?")
-		args = append(args, "%"+userFilter+"%")
-	}
-	if actionFilter != "" {
-		conditions = append(conditions, "action LIKE ?")
-		args = append(args, "%"+actionFilter+"%")
-	}
-	if namespaceFilter != "" {
-		conditions = append(conditions, "namespace LIKE ?")
-		args = append(args, "%"+namespaceFilter+"%")
-	}
-	if startTime != nil {
-		conditions = append(conditions, "timestamp >= ?")
-		args = append(args, *startTime)
-	}
-	if endTime != nil {
-		conditions = append(conditions, "timestamp <= ?")
-		args = append(args, *endTime)
-	}
-	if len(conditions) > 0 {
-		query += " WHERE " + strings.Join(conditions, " AND ")
-	}
+	return s.CountAuditLogsFiltered(ctx, AuditFilter{User: userFilter, Action: actionFilter, Namespace: namespaceFilter, Start: startTime, End: endTime})
+}
+
+func (s *Store) CountAuditLogsFiltered(ctx context.Context, f AuditFilter) (int, error) {
+	where, args := f.where()
 	var count int
-	if err := s.conn.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
+	if err := s.conn.QueryRowContext(ctx, `SELECT COUNT(1) FROM audit_logs`+where, args...).Scan(&count); err != nil {
 		return 0, err
 	}
 	return count, nil
+}
+
+// AuditFacets returns the distinct actions, users and namespaces present in
+// the audit log (up to limit each), for the filter suggestions.
+func (s *Store) AuditFacets(ctx context.Context, limit int) (actions, users, namespaces []string, err error) {
+	distinct := func(column string) ([]string, error) {
+		rows, err := s.conn.QueryContext(ctx,
+			`SELECT DISTINCT `+column+` FROM audit_logs WHERE `+column+` NOT IN ('', '-') ORDER BY `+column+` LIMIT ?`, limit)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		out := []string{}
+		for rows.Next() {
+			var v string
+			if err := rows.Scan(&v); err != nil {
+				return nil, err
+			}
+			out = append(out, v)
+		}
+		return out, rows.Err()
+	}
+	if actions, err = distinct("action"); err != nil {
+		return
+	}
+	if users, err = distinct("user"); err != nil {
+		return
+	}
+	namespaces, err = distinct("namespace")
+	return
 }
 
 func (s *Store) PurgeAuditLogs(ctx context.Context, olderThan time.Time) error {
@@ -709,6 +758,25 @@ func (s *Store) SetUserActiveCluster(ctx context.Context, userID, clusterID int)
 	}
 	_, err := s.conn.ExecContext(ctx, `UPDATE users SET active_cluster_id = ? WHERE id = ?`, v, userID)
 	return err
+}
+
+// MarkLogin records a successful sign-in.
+func (s *Store) MarkLogin(ctx context.Context, userID int) error {
+	_, err := s.conn.ExecContext(ctx, `UPDATE users SET last_login_at = ? WHERE id = ?`, time.Now().UTC(), userID)
+	return err
+}
+
+// FindUnclaimedAzureAccount returns the Azure AD account named name (any
+// case) that an admin pre-created and nobody has signed in to yet.
+func (s *Store) FindUnclaimedAzureAccount(ctx context.Context, name string) (*models.User, error) {
+	var id int
+	err := s.conn.QueryRowContext(ctx,
+		`SELECT id FROM users WHERE lower(username) = lower(?) AND auth_source = 'azure' AND last_login_at IS NULL`,
+		name).Scan(&id)
+	if err != nil {
+		return nil, err
+	}
+	return s.GetUserByID(ctx, id)
 }
 
 // SetUserAuthSource records where a user signs in (local / ldap / azure).

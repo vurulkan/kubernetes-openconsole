@@ -14,7 +14,7 @@ const users: User[] = [
 
 afterEach(() => vi.unstubAllGlobals());
 
-function renderSection() {
+function renderSection(extra: Partial<React.ComponentProps<typeof UsersSection>> = {}) {
   return render(
     <UsersSection
       users={users}
@@ -25,6 +25,7 @@ function renderSection() {
       onNew={() => {}}
       onEdit={() => {}}
       onDelete={() => {}}
+      {...extra}
     />,
   );
 }
@@ -60,5 +61,54 @@ describe('UsersSection', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Reset password' }));
     expect(await screen.findByText(/was reset/)).toBeInTheDocument();
     expect(calls[0].body).toEqual({ password: 'Long-enough-1', mustChange: true });
+  });
+
+  it('New user is a plain button when only local accounts exist', () => {
+    const onNew = vi.fn();
+    renderSection({ onNew });
+    fireEvent.click(screen.getByRole('button', { name: 'New user' }));
+    expect(onNew).toHaveBeenCalledWith('local');
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+
+  it('New user opens a menu with LDAP import and Azure AD when enabled', async () => {
+    const onNew = vi.fn();
+    const onImportLdap = vi.fn();
+    renderSection({ onNew, onImportLdap, azureEnabled: true });
+    // Main part of the split button: straight to a local user.
+    fireEvent.click(screen.getByRole('button', { name: 'New user' }));
+    expect(onNew).toHaveBeenLastCalledWith('local');
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+
+    const more = screen.getByRole('button', { name: 'More ways to add a user' });
+    fireEvent.click(more);
+    const menu = screen.getByRole('menu');
+    const items = within(menu).getAllByRole('menuitem');
+    expect(items.map((i) => i.textContent)).toEqual([
+      expect.stringContaining('Local user'),
+      expect.stringContaining('Import from LDAP'),
+      expect.stringContaining('Azure AD user'),
+    ]);
+    expect(document.activeElement).toBe(items[0]);
+    await expectNoA11yViolations(document.body);
+
+    fireEvent.click(items[1]);
+    expect(onImportLdap).toHaveBeenCalled();
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+
+    fireEvent.click(more);
+    fireEvent.click(within(screen.getByRole('menu')).getByText('Azure AD user'));
+    expect(onNew).toHaveBeenCalledWith('azure');
+
+    fireEvent.click(more);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+
+  it('lists and highlights users that were just added', () => {
+    renderSection({ newUsernames: ['jane@example.com'] });
+    const rows = screen.getAllByRole('row').slice(1);
+    expect(rows[0]).toHaveTextContent('jane@example.com');
+    expect(within(rows[0]).getByText('New')).toBeInTheDocument();
   });
 });
