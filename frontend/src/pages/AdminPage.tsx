@@ -249,6 +249,8 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     userFilter: '',
     usernameAttribute: 'sAMAccountName',
     passwordConfigured: false,
+    autoProvision: false,
+    autoProvisionGroupIds: [] as number[],
   });
   const [azureAdConfig, setAzureAdConfig] = useState({
     enabled: false,
@@ -537,6 +539,8 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
         userFilter: ldapResult.value.userFilter ?? '',
         usernameAttribute: ldapResult.value.usernameAttribute ?? 'sAMAccountName',
         passwordConfigured: ldapResult.value.passwordConfigured ?? false,
+        autoProvision: ldapResult.value.autoProvision ?? false,
+        autoProvisionGroupIds: ldapResult.value.autoProvisionGroupIds ?? [],
       });
       setLdapUpdatePassword(false);
     }
@@ -1452,12 +1456,40 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                     }
                   />
                 </div>
+                <div className="mt-5 rounded-xl border border-slate-200 p-4 dark:border-slate-800">
+                  <Checkbox
+                    checked={ldapConfig.autoProvision}
+                    onChange={(v) => setLdapConfig({ ...ldapConfig, autoProvision: v })}
+                    label={tr('admin.ldap.autoProvision')}
+                  />
+                  <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{tr('admin.ldap.autoProvisionHelp')}</p>
+                  {ldapConfig.autoProvision && (
+                    <>
+                      <MultiSelect
+                        label={tr('admin.ldap.autoProvisionGroups')}
+                        className="mt-3"
+                        options={groups.map((g) => ({ id: g.id, label: g.name }))}
+                        value={groups
+                          .filter((g) => ldapConfig.autoProvisionGroupIds.includes(g.id))
+                          .map((g) => ({ id: g.id, label: g.name }))}
+                        onChange={(value: MultiSelectOption[]) =>
+                          setLdapConfig({ ...ldapConfig, autoProvisionGroupIds: value.map((v) => Number(v.id)) })
+                        }
+                        noOptionsText={tr('ldapImport.noGroups')}
+                        placeholder={tr('ldapImport.groupsPlaceholder')}
+                      />
+                      <Alert severity="warning" className="mt-3">
+                        {tr('admin.ldap.autoProvisionWarning')}
+                      </Alert>
+                    </>
+                  )}
+                </div>
                 <div className="mt-4 flex gap-2">
                   <Button variant="primary" size="sm" onClick={handleSaveLDAP}>
                     {tr("admin.ldap.save")}
                   </Button>
                   <Button variant="outline" size="sm" onClick={handleTestLDAP}>
-                    Test Connection
+                    {tr('admin.ldap.test')}
                   </Button>
                 </div>
                 {ldapTestStatus && (

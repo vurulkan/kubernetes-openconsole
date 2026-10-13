@@ -66,6 +66,10 @@ type LDAPConfig struct {
 	UserFilter     string   `json:"userFilter"`
 	UsernameAttribute string `json:"usernameAttribute"`
 	PasswordConfigured bool  `json:"passwordConfigured"`
+	// AutoProvision creates an LDAP account the first time a directory user
+	// signs in (off by default), adding it to AutoProvisionGroupIDs.
+	AutoProvision         bool  `json:"autoProvision"`
+	AutoProvisionGroupIDs []int `json:"autoProvisionGroupIds"`
 }
 
 type AzureADConfig struct {

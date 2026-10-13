@@ -67,14 +67,14 @@ docker build -t kubernetes-openconsole:local .
 ### Option B — prebuilt image (GHCR)
 
 ```yaml
-image: ghcr.io/vurulkan/kubernetes-openconsole:2.15.0   # pin a release
+image: ghcr.io/vurulkan/kubernetes-openconsole:2.16.0   # pin a release
 ```
 
 Images are multi-arch (**linux/amd64** and **linux/arm64**: Graviton, Ampere, Apple silicon); the runtime picks the right one. CI is the only publisher, and there are just two kinds of tags:
 
 | Tag | Points to | Moves? |
 |---|---|---|
-| `X.Y.Z` (e.g. `2.15.0`) | that release | no — use this in production |
+| `X.Y.Z` (e.g. `2.16.0`) | that release | no — use this in production |
 | `latest` | the newest release, same image (same digest) as its `X.Y.Z` | yes, on each release |
 
 Releasing = push the `vX.Y.Z` git tag; CI builds once and pushes `:X.Y.Z` and `:latest`. Pushes to `main` are built and tested but not published.
@@ -85,12 +85,12 @@ Every release image has a signed SLSA **build provenance** and an SPDX **SBOM** 
 
 ```bash
 # Provenance: built by this repository's CI from a release tag
-gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.15.0 \
+gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.16.0 \
   --repo vurulkan/kubernetes-openconsole \
   --signer-workflow vurulkan/kubernetes-openconsole/.github/workflows/ci.yml
 
 # SBOM (packages in the image)
-gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.15.0 \
+gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.16.0 \
   --repo vurulkan/kubernetes-openconsole \
   --predicate-type https://spdx.dev/Document/v2.3 --format json \
   --jq '.[0].verificationResult.statement.predicate.packages | length'
@@ -118,7 +118,7 @@ cd frontend && npx tsc --noEmit -p . && npm test && npm run build
 docker run --rm -p 8080:8080 \
   -e TIMEZONE=Europe/Istanbul \
   -v kubernetes-openconsole-data:/data \
-  ghcr.io/vurulkan/kubernetes-openconsole:2.15.0
+  ghcr.io/vurulkan/kubernetes-openconsole:2.16.0
 ```
 
 The image defaults to `DATA_PATH=/data/app.db` and `STATIC_DIR=/app/public`; the SQLite DB and session recordings live under `/data`. Drop the `-v` for a throwaway instance. Then open http://localhost:8080 and add a cluster ([Connecting clusters](#connecting-clusters)).
@@ -144,7 +144,7 @@ Then:
 1. Open the UI and log in as `admin` / `admin` ([First login](#first-login)).
 2. Add the cluster in **Admin → Clusters** ([Connecting clusters](#connecting-clusters)). The backend never picks up a cluster on its own.
 
-To upgrade, run `kubectl -n kubernetes-openconsole rollout restart deploy/kubernetes-openconsole`. The pod pulls `:latest`, i.e. the newest release. To stay on a fixed version, set a release tag (e.g. `2.15.0`) in `deployment.yaml` or through the `images:` override in `kustomization.yaml`, then re-apply.
+To upgrade, run `kubectl -n kubernetes-openconsole rollout restart deploy/kubernetes-openconsole`. The pod pulls `:latest`, i.e. the newest release. To stay on a fixed version, set a release tag (e.g. `2.16.0`) in `deployment.yaml` or through the `images:` override in `kustomization.yaml`, then re-apply.
 
 ## Environment variables
 
@@ -610,7 +610,7 @@ On the very first start a default admin is created: **`admin` / `admin`**. You m
 
 ## LDAP / Active Directory
 
-LDAP works alongside local accounts. Users must exist in OpenConsole before they can sign in, so you **import** them; there is no auto-provisioning on first login.
+LDAP works alongside local accounts. By default users must exist in OpenConsole before they can sign in, so you **import** them. Alternatively, turn on **Create an account on a user's first sign-in** ([below](#accounts-on-first-sign-in)) and skip importing.
 
 **1. Configure** (Admin → LDAP):
 
@@ -633,6 +633,16 @@ LDAP works alongside local accounts. Users must exist in OpenConsole before they
 **3. Give them access**: if you didn't pick groups during the import, add the users to groups (Admin → Users → edit, or Admin → Groups). Until then they can sign in but see no namespaces.
 
 **4. Sign-in**: users type their directory username and password on the normal login form. OpenConsole finds their DN with the user filter and binds as them. A wildcard filter (`%s*`) is safe here: at login, OpenConsole additionally requires an exact match on the username attribute, so `jo` can never resolve to `john`. Turning **Enabled** off stops all LDAP sign-ins immediately.
+
+### Accounts on first sign-in
+
+Off by default. In **Admin → LDAP**, tick **Create an account on a user's first sign-in**, optionally pick **groups for new accounts**, and save. From then on:
+
+- Someone without an account who signs in with valid directory credentials gets an LDAP account on the spot, under the name the directory uses (typing `John` signs in to `john`). The account is added to the chosen groups, so it can see something right away.
+- Anyone the **user filter** finds under the base DNs can sign in. To allow only one directory group, put it in the filter, e.g. `(&(sAMAccountName=%s)(memberOf=CN=OpenConsole Users,OU=Groups,DC=example,DC=corp))`.
+- New accounts are never admins. Each one is audited as `user.auto_provision.success`.
+- **To lock someone out, disable their account; don't delete it.** A deleted account is created again on the next sign-in, while a disabled one stays disabled.
+- Unknown users with a wrong password are rejected as before; nothing is created.
 
 > Example (anonymized) Active Directory setup: Host `10.10.20.15`, Port `389`, Bind DN `CN=svc-openconsole,OU=ServiceAccounts,OU=IT,DC=example,DC=corp`, User base DN `OU=Engineering,OU=Users,DC=example,DC=corp`, User filter `(sAMAccountName=%s)`, Username attribute `sAMAccountName`.
 

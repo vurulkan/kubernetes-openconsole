@@ -232,6 +232,9 @@ func migrate(ctx context.Context, conn *sql.DB) error {
 		`ALTER TABLE users ADD COLUMN active_cluster_id INTEGER NULL`,
 		`ALTER TABLE users ADD COLUMN auth_source TEXT NOT NULL DEFAULT 'local'`,
 		`ALTER TABLE audit_logs ADD COLUMN cluster TEXT NOT NULL DEFAULT ''`,
+		// 2.16.0: optional LDAP account creation on first sign-in.
+		`ALTER TABLE ldap_config ADD COLUMN auto_provision INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE ldap_config ADD COLUMN auto_provision_groups TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, stmt := range alterStatements {
 		if _, err := conn.ExecContext(ctx, stmt); err != nil {

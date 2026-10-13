@@ -574,6 +574,15 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user, err := s.store.GetUserByUsername(r.Context(), request.Username)
+	// No account yet: with LDAP auto-provisioning on, a directory user gets
+	// one on their first sign-in. (A disabled account is found above and is
+	// never re-created.)
+	directoryChecked := false
+	if errors.Is(err, sql.ErrNoRows) {
+		if provisioned, ok := s.ldapAutoProvision(r, request.Username, request.Password); ok {
+			user, err, directoryChecked = provisioned, nil, true
+		}
+	}
 	if err != nil || !user.IsActive {
 		LoginGate().recordFailure(gateKey)
 		go s.audit.Record(s.auditCtx(r), models.AuditLog{
@@ -594,7 +603,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// tagged local until their first directory sign-in tags them.
 	method := ""
 	failReason := "bad_password"
-	switch user.AuthSource {
+	if directoryChecked {
+		method = models.AuthSourceLDAP
+	} else {
+		switch user.AuthSource {
 	case models.AuthSourceAzure:
 		failReason = "azure_account"
 	case models.AuthSourceLDAP:
@@ -608,6 +620,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			method = models.AuthSourceLDAP
 			_ = s.store.SetUserAuthSource(r.Context(), user.ID, models.AuthSourceLDAP)
 		}
+	}
 	}
 
 	if method == "" {
@@ -635,6 +648,99 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 	LoginGate().recordSuccess(gateKey)
 	s.issueTokenForUser(w, r, user)
+}
+
+// ldapAutoProvision handles a sign-in by someone who has no account yet.
+// With "create accounts on first sign-in" enabled in the LDAP settings, the
+// password is checked against the directory and, if it is right, an LDAP
+// account is created under the name the directory uses, in the configured
+// groups. If an LDAP account already exists under that name (the user typed
+// "John" for "john") it is returned instead. ok is false when the setting is
+// off or the directory refuses the credentials.
+func (s *Server) ldapAutoProvision(r *http.Request, typed, password string) (*models.User, bool) {
+	ctx := r.Context()
+	cfg, err := s.store.GetLDAPConfig(ctx)
+	if err != nil || !cfg.Enabled || !cfg.AutoProvision || strings.TrimSpace(typed) == "" {
+		return nil, false
+	}
+	name, err := auth.LDAPAuthenticateUser(auth.LDAPConfig{
+		Enabled:           cfg.Enabled,
+		URL:               cfg.URL,
+		Host:              cfg.Host,
+		Port:              cfg.Port,
+		UseSSL:            cfg.UseSSL,
+		StartTLS:          cfg.StartTLS,
+		SkipVerify:        cfg.SkipVerify,
+		TimeoutSeconds:    cfg.TimeoutSeconds,
+		BindDN:            cfg.BindDN,
+		BindPassword:      cfg.BindPassword,
+		UserBaseDN:        cfg.UserBaseDN,
+		UserBaseDNs:       cfg.UserBaseDNs,
+		UserFilter:        cfg.UserFilter,
+		UsernameAttribute: cfg.UsernameAttribute,
+	}, typed, password)
+	if err != nil {
+		return nil, false
+	}
+	name = strings.TrimSpace(name)
+	if existing, err := s.store.GetUserByUsername(ctx, name); err == nil {
+		if existing.AuthSource == models.AuthSourceLDAP && existing.IsActive {
+			return existing, true
+		}
+		return nil, false
+	}
+	hash, err := auth.HashPassword(randomPassword())
+	if err != nil {
+		return nil, false
+	}
+	id, err := s.store.CreateUser(ctx, name, hash)
+	if err != nil {
+		// Lost a race with a parallel first sign-in: use that account.
+		if existing, getErr := s.store.GetUserByUsername(ctx, name); getErr == nil && existing.AuthSource == models.AuthSourceLDAP {
+			return existing, true
+		}
+		return nil, false
+	}
+	_ = s.store.SetUserAuthSource(ctx, id, models.AuthSourceLDAP)
+	groups := s.existingGroupIDs(ctx, cfg.AutoProvisionGroupIDs)
+	if len(groups) > 0 {
+		_ = s.store.SetUserGroups(ctx, id, groups)
+	}
+	user, err := s.store.GetUserByID(ctx, id)
+	if err != nil {
+		return nil, false
+	}
+	go s.audit.Record(s.auditCtx(r), models.AuditLog{
+		User:         name,
+		Action:       "user.auto_provision.success",
+		Namespace:    "-",
+		ResourceType: "users",
+		ResourceName: fmt.Sprintf("%s (source=ldap, groups=%d)", name, len(groups)),
+	})
+	slog.Info("user.auto_provision", slog.String("user", name), slog.Int("groups", len(groups)))
+	return user, true
+}
+
+// existingGroupIDs drops ids of groups that no longer exist.
+func (s *Server) existingGroupIDs(ctx context.Context, ids []int) []int {
+	if len(ids) == 0 {
+		return nil
+	}
+	groups, err := s.store.ListGroups(ctx)
+	if err != nil {
+		return nil
+	}
+	known := map[int]bool{}
+	for _, g := range groups {
+		known[g.ID] = true
+	}
+	out := []int{}
+	for _, id := range ids {
+		if known[id] {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // azureLoginDetail describes how a Microsoft sign-in found its account.
