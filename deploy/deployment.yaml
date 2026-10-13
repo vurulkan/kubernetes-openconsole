@@ -62,11 +62,16 @@ spec:
               value: Europe/Istanbul
 
             # ── Logging (slog → stdout) ──────────────────────────────────────────
-            # LOG_FORMAT: json for log shippers (Filebeat / Fluent-bit / Vector
-            # → Elastic / Loki) so each line is a parseable object; text for
-            # eyes-on-stdout. Default text.
+            # LOG_FORMAT: one JSON object per line (no grok needed):
+            #   ecs  — Elastic Common Schema field names (@timestamp, log.level,
+            #          message, user.name, http.response.status_code, …) for
+            #          Elastic Agent / Filebeat / Logstash. See README
+            #          "Shipping logs to Elastic".
+            #   json — short field names (time, level, msg, user, …) for Loki,
+            #          Vector or your own parsing.
+            #   text — for reading kubectl logs by eye. Default text.
             - name: LOG_FORMAT
-              value: json
+              value: ecs
 
             # LOG_LEVEL: debug | info | warn | error. Default info. "debug"
             # includes request bodies and informer sync details — noisy; use
@@ -86,8 +91,8 @@ spec:
               value: "false"
 
             # LOG_INCLUDE_AUDIT: when "true" every DB audit entry is also
-            # mirrored to stdout as msg=audit with event / user / namespace /
-            # resource_type / resource_name / request_id / ts. Lets a log
+            # mirrored to stdout as a record with message "audit" (action,
+            # user, namespace, resource, cluster, request id). Lets a log
             # pipeline consume audit events without reading the SQLite file.
             # Default "true". Set "false" only if you plan to tail the DB
             # yourself.

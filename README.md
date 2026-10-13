@@ -67,14 +67,14 @@ docker build -t kubernetes-openconsole:local .
 ### Option B — prebuilt image (GHCR)
 
 ```yaml
-image: ghcr.io/vurulkan/kubernetes-openconsole:2.16.0   # pin a release
+image: ghcr.io/vurulkan/kubernetes-openconsole:2.16.1   # pin a release
 ```
 
 Images are multi-arch (**linux/amd64** and **linux/arm64**: Graviton, Ampere, Apple silicon); the runtime picks the right one. CI is the only publisher, and there are just two kinds of tags:
 
 | Tag | Points to | Moves? |
 |---|---|---|
-| `X.Y.Z` (e.g. `2.16.0`) | that release | no — use this in production |
+| `X.Y.Z` (e.g. `2.16.1`) | that release | no — use this in production |
 | `latest` | the newest release, same image (same digest) as its `X.Y.Z` | yes, on each release |
 
 Releasing = push the `vX.Y.Z` git tag; CI builds once and pushes `:X.Y.Z` and `:latest`. Pushes to `main` are built and tested but not published.
@@ -85,12 +85,12 @@ Every release image has a signed SLSA **build provenance** and an SPDX **SBOM** 
 
 ```bash
 # Provenance: built by this repository's CI from a release tag
-gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.16.0 \
+gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.16.1 \
   --repo vurulkan/kubernetes-openconsole \
   --signer-workflow vurulkan/kubernetes-openconsole/.github/workflows/ci.yml
 
 # SBOM (packages in the image)
-gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.16.0 \
+gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.16.1 \
   --repo vurulkan/kubernetes-openconsole \
   --predicate-type https://spdx.dev/Document/v2.3 --format json \
   --jq '.[0].verificationResult.statement.predicate.packages | length'
@@ -118,7 +118,7 @@ cd frontend && npx tsc --noEmit -p . && npm test && npm run build
 docker run --rm -p 8080:8080 \
   -e TIMEZONE=Europe/Istanbul \
   -v kubernetes-openconsole-data:/data \
-  ghcr.io/vurulkan/kubernetes-openconsole:2.16.0
+  ghcr.io/vurulkan/kubernetes-openconsole:2.16.1
 ```
 
 The image defaults to `DATA_PATH=/data/app.db` and `STATIC_DIR=/app/public`; the SQLite DB and session recordings live under `/data`. Drop the `-v` for a throwaway instance. Then open http://localhost:8080 and add a cluster ([Connecting clusters](#connecting-clusters)).
@@ -137,6 +137,7 @@ This installs, in namespace `kubernetes-openconsole`:
 | `rbac.yaml` | ServiceAccount `openconsole-reader`, its long-lived token Secret, ClusterRole `openconsole-readonly` + binding. It produces the token you paste into the UI; see [Connecting clusters](#connecting-clusters). `rbac-readonly.yaml` is the [read-only](#read-only-mode) alternative. Not needed if you connect with your own kubeconfig identity |
 | `pvc.yaml` | 5 Gi PVC for `/data` (SQLite + session recordings); a commented second PVC for recordings |
 | `service.yaml` | ClusterIP Service on port 80 → container 8080 (put your Ingress / Gateway in front) |
+| `elk/` | Optional, not applied by kustomize: Elasticsearch ingest pipeline, mappings and installer for the logs ([deploy/elk/README.md](deploy/elk/README.md)) |
 | `deployment.yaml` | 1 replica (SQLite on a RWO volume — do not scale out), `:latest` image with `imagePullPolicy: Always`, every env var documented inline, requests / limits, `/livez` + `/readyz` probes, non-root, `seccompProfile: RuntimeDefault`, and **no ServiceAccount token mounted** (`automountServiceAccountToken: false`). The app never uses the pod's own identity |
 
 Then:
@@ -144,7 +145,7 @@ Then:
 1. Open the UI and log in as `admin` / `admin` ([First login](#first-login)).
 2. Add the cluster in **Admin → Clusters** ([Connecting clusters](#connecting-clusters)). The backend never picks up a cluster on its own.
 
-To upgrade, run `kubectl -n kubernetes-openconsole rollout restart deploy/kubernetes-openconsole`. The pod pulls `:latest`, i.e. the newest release. To stay on a fixed version, set a release tag (e.g. `2.16.0`) in `deployment.yaml` or through the `images:` override in `kustomization.yaml`, then re-apply.
+To upgrade, run `kubectl -n kubernetes-openconsole rollout restart deploy/kubernetes-openconsole`. The pod pulls `:latest`, i.e. the newest release. To stay on a fixed version, set a release tag (e.g. `2.16.1`) in `deployment.yaml` or through the `images:` override in `kustomization.yaml`, then re-apply.
 
 ## Environment variables
 
@@ -209,26 +210,99 @@ Each API request is one span named after its route (`GET /api/namespaces/{namesp
 | `openconsole_audit_events_total` | audit entries written |
 
 ### Structured logging (slog)
-Logs go to stdout via Go's `log/slog`. In production set `LOG_FORMAT=json` so Filebeat / Fluent Bit / Vector can ship them directly to Elastic / Kibana / Loki.
+Logs go to stdout, one record per line. With `json` or `ecs` every line, including client-go's own messages, is a single JSON object, so Elastic Agent, Filebeat, Logstash, Fluent Bit or Vector can read it without grok. See [Shipping logs to Elastic](#shipping-logs-to-elastic).
 
+- `LOG_FORMAT` (default `text`):
+  - `ecs` — JSON with [Elastic Common Schema](https://www.elastic.co/guide/en/ecs/current/index.html) field names. Use this for Elastic. `deploy/deployment.yaml` sets it.
+  - `json` — JSON with short field names (`time`, `level`, `msg`, `user`, …), for Loki / Vector or your own parsing.
+  - `text` — for reading `kubectl logs` by eye.
 - `LOG_LEVEL` (default `info`) — `debug` | `info` | `warn` | `error`.
-- `LOG_FORMAT` (default `text`) — `text` for humans, `json` for log shippers.
 - `LOG_OUTPUT` (default `stdout`) — `stdout` | `stderr`.
-- `LOG_ADD_SOURCE` (default `false`) — include `file:line` in every record.
-- `LOG_INCLUDE_AUDIT` (default `true`) — mirror DB audit entries to stdout with event name `audit`. Each audit line carries `request_id` so you can join it to the matching `http.request` entry in Elastic.
-- `APP_ENV`, `APP_VERSION` — static labels attached to every log record. Release images already carry their version (shown to signed-in users at the bottom of the nav rail and in logs / traces); set `APP_VERSION` only to override it, e.g. for a canary.
+- `LOG_ADD_SOURCE` (default `false`) — include the source file and line (`log.origin.*` in ECS).
+- `LOG_INCLUDE_AUDIT` (default `true`) — mirror every audit entry to stdout as a record with message `audit`. It carries the same request id as the matching `http.request` record.
+- `APP_ENV`, `APP_VERSION` — static labels on every record (`service.environment`, `service.version`). Release images already carry their version; set `APP_VERSION` only to override it, e.g. for a canary.
 
-Example JSON record (`LOG_FORMAT=json`):
+The same audit record in both JSON formats:
 
 ```json
-{"time":"2026-10-05T08:14:05Z","level":"INFO","msg":"audit",
- "service":"openconsole","event":"deployment.scale.success",
- "user":"mustafav","namespace":"payments","resource_type":"deployment",
- "resource_name":"nginx (from=3 to=5)",
- "request_id":"qXpB6yXONDiuXKX2"}
+// LOG_FORMAT=ecs
+{"@timestamp":"2026-10-05T08:14:05.123456Z","log.level":"info","message":"audit","ecs.version":"8.11.0",
+ "service.name":"openconsole","service.version":"2.16.1","service.environment":"prod",
+ "event.action":"deployment.scale.success","user.name":"mustafav","http.request.id":"qXpB6yXONDiuXKX2",
+ "openconsole.namespace":"payments","openconsole.resource_type":"deployment",
+ "openconsole.resource_name":"nginx (from=3 to=5)","openconsole.cluster":"prod-aks"}
+
+// LOG_FORMAT=json
+{"time":"2026-10-05T11:14:05.123+03:00","level":"INFO","msg":"audit","service":"openconsole",
+ "event":"deployment.scale.success","user":"mustafav","request_id":"qXpB6yXONDiuXKX2",
+ "namespace":"payments","resource_type":"deployment","resource_name":"nginx (from=3 to=5)","cluster":"prod-aks"}
 ```
 
-Every HTTP response also carries an `X-Request-Id` header matching the `request_id` field.
+ECS field names:
+
+| `json` | `ecs` |
+|---|---|
+| `time`, `level`, `msg` | `@timestamp` (UTC), `log.level`, `message` |
+| `service`, `version`, `env` | `service.name`, `service.version`, `service.environment` |
+| `user`, `user_agent`, `remote_ip` | `user.name`, `user_agent.original`, `client.ip` |
+| `method`, `path`, `status`, `request_id` | `http.request.method`, `url.path`, `http.response.status_code`, `http.request.id` |
+| `duration_ms` | `event.duration` (nanoseconds, as ECS defines it) |
+| `event` (audit action), `error`, `trace_id` | `event.action`, `error.message`, `trace.id` |
+| everything else (`namespace`, `pod`, `container`, `cluster`, `resource_name`, `exit_code`, …) | `openconsole.<name>` |
+
+`namespace` / `pod` / `container` describe the resource the action was performed on, so they live under `openconsole.*`. The shipper's own `kubernetes.*` and `container.*` fields describe the OpenConsole pod that wrote the line. The two never mix.
+
+Every HTTP response also carries an `X-Request-Id` header matching the request id.
+
+#### Shipping logs to Elastic
+
+Pick the variant that matches your setup. All of them read the container's stdout and need no grok.
+
+**Elastic Agent managed by Fleet, with the Kubernetes integration already collecting container logs (recommended).** Leave the integration as it is and run [`deploy/elk/install.sh`](deploy/elk/README.md) once against Elasticsearch:
+
+```bash
+ES_URL=https://elasticsearch.example:9200 ES_API_KEY=<base64 id:key> deploy/elk/install.sh
+```
+
+It installs an ingest pipeline that the Kubernetes integration calls for every container log line (through `logs-kubernetes.container_logs@custom`). The pipeline:
+- decodes only OpenConsole's lines, so other pods' lines stay as they are;
+- keeps Agent's `kubernetes.*` / `container.*` / `log.file.path` fields;
+- sets `event.outcome` on audit events;
+- routes the records to two data streams with proper mappings: `logs-openconsole.audit-*` (audit events) and `logs-openconsole.app-*` (everything else).
+
+Tested on Elasticsearch 8.15.3 with real OpenConsole lines; see [deploy/elk/README.md](deploy/elk/README.md) for the details, KQL examples and how to remove it.
+
+**Elastic Agent standalone, or Filebeat.** Add a filestream input for the OpenConsole pods' log files. The `container` parser strips the CRI prefix and `ndjson` decodes the record into the root:
+
+```yaml
+- type: filestream
+  id: openconsole
+  paths:
+    - /var/log/containers/kubernetes-openconsole-*_kubernetes-openconsole_*.log
+  parsers:
+    - container: {}
+    - ndjson:
+        target: ""
+        overwrite_keys: true   # @timestamp and message come from the record
+        expand_keys: true      # "user.name" → {"user": {"name": …}}
+        add_error_key: true
+  processors:
+    - add_kubernetes_metadata: {}
+```
+
+In Elastic Agent standalone this goes under `inputs:` with a `data_stream: {dataset: openconsole}`; in Filebeat under `filebeat.inputs:`. Exclude these files from your generic container input so lines aren't shipped twice.
+
+**Logstash.** The `json` filter puts the keys at the root and takes `@timestamp` from the record:
+
+```ruby
+filter {
+  if [kubernetes][labels][app] == "kubernetes-openconsole" {
+    json { source => "message" skip_on_invalid_json => true }
+  }
+}
+```
+
+With `LOG_FORMAT=json` instead of `ecs`, decode into a sub-object so the short names can't collide with ECS fields: `ndjson` with `target: "openconsole"`, or `json { source => "message" target => "openconsole" }`, plus a date mapping for `openconsole.time`.
 
 ### Azure AD OAuth (only if used)
 Configured through **Admin → Azure AD** at runtime. The only env var is for national clouds:

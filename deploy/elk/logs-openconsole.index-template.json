@@ -1,0 +1,11 @@
+{
+  "index_patterns": ["logs-openconsole.audit-*", "logs-openconsole.app-*"],
+  "data_stream": {},
+  "priority": 300,
+  "composed_of": ["logs@mappings", "logs@settings", "logs@custom", "ecs@mappings", "openconsole@mappings"],
+  "ignore_missing_component_templates": ["logs@mappings", "logs@settings", "logs@custom", "ecs@mappings"],
+  "_meta": {
+    "managed_by": "kubernetes-openconsole deploy/elk",
+    "description": "Data streams for OpenConsole audit events and application logs."
+  }
+}
