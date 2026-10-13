@@ -500,6 +500,10 @@ const en = {
     speed: 'Playback speed',
     skipIdle: 'Skip idle time',
   },
+  about: {
+    github: 'OpenConsole {{version}} · source on GitHub',
+    loginFooter: 'Kubernetes OpenConsole · GitHub',
+  },
   combobox: {
     clear: 'Clear {{label}}',
     allInFamily: 'all in this family',
@@ -1204,6 +1208,10 @@ const tr = {
     playerTitle: 'Kayıt · {{target}}',
     speed: 'Oynatma hızı',
     skipIdle: 'Boşta geçen süreyi atla',
+  },
+  about: {
+    github: 'OpenConsole {{version}} · GitHub\'da kaynak kodu',
+    loginFooter: 'Kubernetes OpenConsole · GitHub',
   },
   combobox: {
     clear: '{{label}} filtresini temizle',

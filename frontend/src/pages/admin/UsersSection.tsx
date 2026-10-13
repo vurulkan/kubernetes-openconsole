@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ChevronDown, Cloud, Download, FolderTree, KeyRound, Pencil, Plus, Search as SearchIcon, Trash2, UserRound } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { confirm } from '../../components/ConfirmDialog';
@@ -289,14 +290,38 @@ const NewUserMenu: React.FC<{ onLocal: () => void; onLdap?: () => void; onAzure?
 }) => {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const firstItemRef = useRef<HTMLButtonElement>(null);
+
+  // The menu is portalled to <body> with fixed positioning, so a card with
+  // overflow: hidden can't clip it.
+  useEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const r = rootRef.current?.getBoundingClientRect();
+      if (r) setPos({ top: r.bottom + 4, right: window.innerWidth - r.right });
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || !pos) return;
+    firstItemRef.current?.focus();
+  }, [open, pos]);
 
   useEffect(() => {
     if (!open) return;
-    firstItemRef.current?.focus();
     const onDown = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -344,11 +369,13 @@ const NewUserMenu: React.FC<{ onLocal: () => void; onLdap?: () => void; onAzure?
         {t('admin.users.new')}
         <ChevronDown size={14} />
       </Button>
-      {open && (
+      {open && pos && createPortal(
         <div
+          ref={menuRef}
           role="menu"
           aria-label={t('admin.users.new')}
-          className="absolute right-0 z-30 mt-1 w-72 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-elevated dark:border-slate-800 dark:bg-slate-900"
+          style={{ position: 'fixed', top: pos.top, right: pos.right }}
+          className="z-50 w-72 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-elevated dark:border-slate-800 dark:bg-slate-900"
           onKeyDown={(e) => {
             if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
             e.preventDefault();
@@ -377,7 +404,8 @@ const NewUserMenu: React.FC<{ onLocal: () => void; onLdap?: () => void; onAzure?
               </span>
             </button>
           ))}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

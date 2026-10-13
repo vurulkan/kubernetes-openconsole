@@ -629,6 +629,20 @@ export const listAuditLogs = (limit = 50, offset = 0, q: AuditQuery = {}) => {
   );
 };
 
+export const PROJECT_URL = 'https://github.com/vurulkan/kubernetes-openconsole';
+
+let versionPromise: Promise<string> | null = null;
+/** The server's build version (signed-in users only); fetched once. */
+export const getVersion = () => {
+  versionPromise ??= apiRequest<{ version: string }>('/api/version')
+    .then((r) => r.version)
+    .catch(() => {
+      versionPromise = null;
+      return '';
+    });
+  return versionPromise;
+};
+
 export const getAuditFacets = () =>
   apiRequest<{ actions: string[]; users: string[]; namespaces: string[] }>('/api/admin/audit-logs/facets');
 

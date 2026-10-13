@@ -127,3 +127,12 @@ func TestLDAPImportIntoGroups(t *testing.T) {
 	}
 	e.waitAudit("admin.import", "1: john")
 }
+
+func TestVersionEndpointNeedsLogin(t *testing.T) {
+	e := newTestEnv(t)
+	_, bob := e.user("bob", false)
+	e.expect("GET", "/api/version", "", nil, http.StatusUnauthorized)
+	if out := e.expect("GET", "/api/version", bob, nil, http.StatusOK); !strings.Contains(out, `"version":"dev"`) {
+		t.Fatalf("version = %s", out)
+	}
+}

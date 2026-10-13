@@ -39,6 +39,7 @@ import (
 	"k8s-dashboard/backend/internal/rbac"
 	"k8s-dashboard/backend/internal/recording"
 	"k8s-dashboard/backend/internal/store"
+	"k8s-dashboard/backend/internal/version"
 )
 
 type Server struct {
@@ -180,6 +181,10 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/cluster/active", s.handleGetActiveCluster)
 		r.Post("/api/cluster/select", s.handleSelectCluster)
 		r.Get("/api/features", s.handleFeatures)
+		// Signed-in users only: the version isn't shown before login.
+		r.Get("/api/version", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]string{"version": version.Version})
+		})
 		r.Get("/api/views", s.handleListViews)
 		r.Post("/api/views", s.handleSaveView)
 		r.Put("/api/views/{id}", s.handleShareView)

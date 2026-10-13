@@ -12,11 +12,15 @@ RUN npm run build
 FROM --platform=$BUILDPLATFORM golang:1.21-alpine AS backend-build
 ARG TARGETOS
 ARG TARGETARCH
+# Release builds pass the tag's version (CI: build-args VERSION=X.Y.Z).
+ARG VERSION=dev
 WORKDIR /app
 COPY backend/go.mod ./
 COPY backend ./
 ENV CGO_ENABLED=0
-RUN GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /app/server ./cmd/server
+RUN GOOS=$TARGETOS GOARCH=$TARGETARCH go build \
+      -ldflags "-X k8s-dashboard/backend/internal/version.Version=${VERSION}" \
+      -o /app/server ./cmd/server
 
 FROM alpine:3.19 AS runtime
 RUN apk add --no-cache ca-certificates iputils bind-tools busybox-extras \
