@@ -48,7 +48,16 @@ func AzureAuthorizeURL(ctx context.Context, cfg AzureADConfig, state string) (st
 	return oauthCfg.AuthCodeURL(state), nil
 }
 
-func AzureExchangeCode(ctx context.Context, cfg AzureADConfig, code string) (string, error) {
+// AzureIdentity is who signed in: Username is the account name
+// (preferred_username, else email, else upn); Email and UPN are the raw
+// claims, used to find an account an admin pre-created under another name.
+type AzureIdentity struct {
+	Username string
+	Email    string
+	UPN      string
+}
+
+func AzureExchangeCode(ctx context.Context, cfg AzureADConfig, code string) (AzureIdentity, error) {
 	oauthCfg := oauth2.Config{
 		ClientID:     cfg.ClientID,
 		ClientSecret: cfg.ClientSecret,
@@ -58,33 +67,33 @@ func AzureExchangeCode(ctx context.Context, cfg AzureADConfig, code string) (str
 	}
 	token, err := oauthCfg.Exchange(ctx, code)
 	if err != nil {
-		return "", err
+		return AzureIdentity{}, err
 	}
 	rawIDToken, ok := token.Extra("id_token").(string)
 	if !ok || rawIDToken == "" {
-		return "", fmt.Errorf("missing id_token")
+		return AzureIdentity{}, fmt.Errorf("missing id_token")
 	}
 	claims := jwt.MapClaims{}
 	parser := jwt.NewParser()
 	_, _, err = parser.ParseUnverified(rawIDToken, claims)
 	if err != nil {
-		return "", err
+		return AzureIdentity{}, err
 	}
 	issuer, _ := claims["iss"].(string)
 	if issuer != azureIssuer(cfg.TenantID) {
-		return "", fmt.Errorf("invalid issuer")
+		return AzureIdentity{}, fmt.Errorf("invalid issuer")
 	}
 	// The token comes straight from the token endpoint over TLS (OIDC Core
 	// 3.1.3.7 lets that stand in for the signature check), but it still
 	// must not be expired.
 	if exp, err := claims.GetExpirationTime(); err != nil || exp == nil || time.Now().After(exp.Time) {
-		return "", fmt.Errorf("id_token expired or without exp")
+		return AzureIdentity{}, fmt.Errorf("id_token expired or without exp")
 	}
 	audience := claims["aud"]
 	switch aud := audience.(type) {
 	case string:
 		if aud != cfg.ClientID {
-			return "", fmt.Errorf("invalid audience")
+			return AzureIdentity{}, fmt.Errorf("invalid audience")
 		}
 	case []any:
 		found := false
@@ -95,7 +104,7 @@ func AzureExchangeCode(ctx context.Context, cfg AzureADConfig, code string) (str
 			}
 		}
 		if !found {
-			return "", fmt.Errorf("invalid audience")
+			return AzureIdentity{}, fmt.Errorf("invalid audience")
 		}
 	case []string:
 		found := false
@@ -106,10 +115,10 @@ func AzureExchangeCode(ctx context.Context, cfg AzureADConfig, code string) (str
 			}
 		}
 		if !found {
-			return "", fmt.Errorf("invalid audience")
+			return AzureIdentity{}, fmt.Errorf("invalid audience")
 		}
 	default:
-		return "", fmt.Errorf("invalid audience")
+		return AzureIdentity{}, fmt.Errorf("invalid audience")
 	}
 	preferredUsername, _ := claims["preferred_username"].(string)
 	email, _ := claims["email"].(string)
@@ -122,9 +131,9 @@ func AzureExchangeCode(ctx context.Context, cfg AzureADConfig, code string) (str
 		username = strings.TrimSpace(upn)
 	}
 	if username == "" {
-		return "", fmt.Errorf("no suitable username claim found")
+		return AzureIdentity{}, fmt.Errorf("no suitable username claim found")
 	}
-	return username, nil
+	return AzureIdentity{Username: username, Email: strings.TrimSpace(email), UPN: strings.TrimSpace(upn)}, nil
 }
 
 func TestAzureConnection(ctx context.Context, cfg AzureADConfig) error {
@@ -142,4 +151,3 @@ func TestAzureConnection(ctx context.Context, cfg AzureADConfig) error {
 	}
 	return err
 }
-

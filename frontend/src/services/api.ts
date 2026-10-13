@@ -553,7 +553,7 @@ export const testAzureAdConnection = () =>
   });
 
 export const searchLdapUsers = (query: string) =>
-  apiRequest<{ items: Array<{ username: string; dn: string }> }>('/api/admin/ldap/users/search', {
+  apiRequest<{ items: Array<{ username: string; dn: string; exists?: boolean }> }>('/api/admin/ldap/users/search', {
     method: 'POST',
     body: JSON.stringify({ query })
   });

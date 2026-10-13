@@ -350,6 +350,18 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
   }>({ username: '', password: '', isAdmin: false, source: 'local', groupIds: [] });
   const [showLdapImport, setShowLdapImport] = useState(false);
   const [createUserError, setCreateUserError] = useState<string | null>(null);
+  // Users just added (created or imported): listed first and highlighted
+  // for a while so the admin sees where they landed.
+  const [newUsernames, setNewUsernames] = useState<string[]>([]);
+  useEffect(() => {
+    if (newUsernames.length === 0) return;
+    const timer = window.setTimeout(() => setNewUsernames([]), 15000);
+    return () => window.clearTimeout(timer);
+  }, [newUsernames]);
+  const afterUsersAdded = async (names: string[]) => {
+    await refresh();
+    if (names.length > 0) setNewUsernames(names);
+  };
   const [showCreateUser, setShowCreateUser] = useState(false);
   const [showCreateGroup, setShowCreateGroup] = useState(false);
   const [showCreateRole, setShowCreateRole] = useState(false);
@@ -628,9 +640,9 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
 
   const handleCreateUser = async () => {
     if (!newUser.username || (newUser.source === 'local' && !newUser.password)) return;
-    await createUser(newUser.source === 'azure' ? { ...newUser, password: undefined } : newUser);
+    const created = await createUser(newUser.source === 'azure' ? { ...newUser, password: undefined } : newUser);
     setNewUser({ username: '', password: '', isAdmin: false, source: 'local', groupIds: [] });
-    await refresh();
+    await afterUsersAdded([created.username]);
   };
 
   const handleCreateGroup = async () => {
@@ -1027,6 +1039,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                 setShowCreateUser(true);
               }}
               onImportLdap={ldapConfig.enabled ? () => setShowLdapImport(true) : undefined}
+              newUsernames={newUsernames}
               azureEnabled={azureAdConfig.enabled}
               onEdit={(u) =>
                 setEditingUser({
@@ -1455,7 +1468,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
               </SectionCard>
 
               <SectionCard title={tr('admin.cards.importLdapUsers')}>
-                <LdapImportPanel groups={groups} onImported={refresh} />
+                <LdapImportPanel groups={groups} onImported={afterUsersAdded} />
               </SectionCard>
             </div>
           )}
@@ -2267,7 +2280,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
           </Button>
         }
       >
-        {showLdapImport && <LdapImportPanel groups={groups} onImported={refresh} />}
+        {showLdapImport && <LdapImportPanel groups={groups} onImported={afterUsersAdded} />}
       </Modal>
 
       {/* ── Edit User modal ───────────────────────────────────────── */}

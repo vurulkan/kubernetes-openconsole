@@ -5,8 +5,8 @@ import { importLdapUsers, searchLdapUsers } from '../services/api';
 
 type Props = {
   groups: Array<{ id: number; name: string }>;
-  /** Called after a successful import (e.g. to reload the user list). */
-  onImported: () => void | Promise<void>;
+  /** Called after a successful import with the new usernames (e.g. to reload and highlight them). */
+  onImported: (created: string[]) => void | Promise<void>;
 };
 
 /**
@@ -17,7 +17,7 @@ type Props = {
 const LdapImportPanel: React.FC<Props> = ({ groups, onImported }) => {
   const { t } = useTranslation();
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<Array<{ username: string; dn: string }>>([]);
+  const [results, setResults] = useState<Array<{ username: string; dn: string; exists?: boolean }>>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [groupIds, setGroupIds] = useState<number[]>([]);
   const [searching, setSearching] = useState(false);
@@ -59,7 +59,7 @@ const LdapImportPanel: React.FC<Props> = ({ groups, onImported }) => {
       setResults([]);
       setQuery('');
       setSearched(false);
-      await onImported();
+      await onImported(result.createdUsers ?? []);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -68,6 +68,9 @@ const LdapImportPanel: React.FC<Props> = ({ groups, onImported }) => {
   };
 
   const option = (u: { username: string; dn: string }) => ({ id: u.username, label: `${u.username} (${u.dn})` });
+  // Accounts already in OpenConsole are listed but can't be picked again.
+  const importable = results.filter((u) => !u.exists);
+  const existing = results.filter((u) => u.exists);
 
   return (
     <div className="flex flex-col gap-3">
@@ -102,12 +105,19 @@ const LdapImportPanel: React.FC<Props> = ({ groups, onImported }) => {
         <p className="text-sm text-slate-500 dark:text-slate-400">{t('ldapImport.noResults')}</p>
       )}
 
-      {results.length > 0 && (
+      {existing.length > 0 && (
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          {t('ldapImport.alreadyIn', { count: existing.length })}{' '}
+          <span className="font-mono text-slate-700 dark:text-slate-300">{existing.map((u) => u.username).join(', ')}</span>
+        </p>
+      )}
+
+      {importable.length > 0 && (
         <>
           <MultiSelect
             label={t('common.ldapUsers')}
-            options={results.map(option)}
-            value={results.filter((u) => selected.includes(u.username)).map(option)}
+            options={importable.map(option)}
+            value={importable.filter((u) => selected.includes(u.username)).map(option)}
             onChange={(value: MultiSelectOption[]) => setSelected(value.map((v) => String(v.id)))}
             noOptionsText={t('ldapImport.noResults')}
             placeholder={t('common.selectToImport')}

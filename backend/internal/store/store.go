@@ -760,6 +760,25 @@ func (s *Store) SetUserActiveCluster(ctx context.Context, userID, clusterID int)
 	return err
 }
 
+// MarkLogin records a successful sign-in.
+func (s *Store) MarkLogin(ctx context.Context, userID int) error {
+	_, err := s.conn.ExecContext(ctx, `UPDATE users SET last_login_at = ? WHERE id = ?`, time.Now().UTC(), userID)
+	return err
+}
+
+// FindUnclaimedAzureAccount returns the Azure AD account named name (any
+// case) that an admin pre-created and nobody has signed in to yet.
+func (s *Store) FindUnclaimedAzureAccount(ctx context.Context, name string) (*models.User, error) {
+	var id int
+	err := s.conn.QueryRowContext(ctx,
+		`SELECT id FROM users WHERE lower(username) = lower(?) AND auth_source = 'azure' AND last_login_at IS NULL`,
+		name).Scan(&id)
+	if err != nil {
+		return nil, err
+	}
+	return s.GetUserByID(ctx, id)
+}
+
 // SetUserAuthSource records where a user signs in (local / ldap / azure).
 func (s *Store) SetUserAuthSource(ctx context.Context, userID int, source string) error {
 	_, err := s.conn.ExecContext(ctx, `UPDATE users SET auth_source = ? WHERE id = ?`, source, userID)

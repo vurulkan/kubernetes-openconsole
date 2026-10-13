@@ -20,6 +20,8 @@ type Props = {
   /** Set when LDAP is enabled: opens the directory import dialog. */
   onImportLdap?: () => void;
   azureEnabled?: boolean;
+  /** Just created or imported: shown first and highlighted. */
+  newUsernames?: string[];
   onEdit: (u: User) => void;
   onDelete: (u: User) => void;
 };
@@ -32,23 +34,25 @@ export const UsersSection: React.FC<Props> = ({
   onNew,
   onImportLdap,
   azureEnabled,
+  newUsernames = [],
   onEdit,
   onDelete,
 }) => {
   const { t } = useTranslation();
   const [resetTarget, setResetTarget] = useState<User | null>(null);
   const q = filter.trim().toLowerCase();
-  const rows = q
-    ? users.filter((u) => u.username.toLowerCase().includes(q))
-    : users;
+  const isNew = (u: User) => newUsernames.includes(u.username);
+  const filtered = q ? users.filter((u) => u.username.toLowerCase().includes(q)) : users;
+  const rows = newUsernames.length > 0 ? [...filtered.filter(isNew), ...filtered.filter((u) => !isNew(u))] : filtered;
 
   const columns: Column<User>[] = [
     {
       key: 'username',
       header: t('admin.users.col.username'),
       cell: (u) => (
-        <span className="font-mono text-[13px] font-medium text-slate-900 dark:text-slate-100">
-          {u.username}
+        <span className="inline-flex items-center gap-2">
+          <span className="font-mono text-[13px] font-medium text-slate-900 dark:text-slate-100">{u.username}</span>
+          {isNew(u) && <Badge variant="success">{t('admin.users.newBadge')}</Badge>}
         </span>
       ),
     },
@@ -166,6 +170,7 @@ export const UsersSection: React.FC<Props> = ({
       </div>
       <DataTable
         keyboardNav
+        rowClassName={(u) => (isNew(u) ? 'bg-emerald-50/70 dark:bg-emerald-500/10' : '')}
         rows={rows}
         columns={columns}
         rowKey={(u) => u.id}
@@ -357,16 +362,23 @@ const NewUserMenu: React.FC<{ onLocal: () => void; onLdap?: () => void; onAzure?
   ];
 
   return (
-    <div ref={rootRef} className="relative">
+    <div ref={rootRef} className="relative inline-flex">
+      {/* Split button: the main part opens the local-user form, the arrow
+          opens the menu with the other sources. */}
+      <Button variant="primary" size="sm" onClick={onLocal} className="rounded-r-none">
+        <Plus size={14} />
+        {t('admin.users.new')}
+      </Button>
       <Button
         variant="primary"
         size="sm"
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-label={t('admin.users.moreWays')}
+        title={t('admin.users.moreWays')}
         onClick={() => setOpen((v) => !v)}
+        className="rounded-l-none border-l border-l-white/30 px-2"
       >
-        <Plus size={14} />
-        {t('admin.users.new')}
         <ChevronDown size={14} />
       </Button>
       {open && pos && createPortal(

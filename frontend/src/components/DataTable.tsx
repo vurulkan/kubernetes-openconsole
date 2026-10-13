@@ -28,6 +28,8 @@ type Props<T> = {
    * most one table per screen.
    */
   keyboardNav?: boolean;
+  /** Extra classes for a row, e.g. to highlight newly added rows. */
+  rowClassName?: (row: T) => string;
   emptyMessage?: string;
   /**
    * localStorage key for persisting the sort state between visits. If omitted,
@@ -59,6 +61,7 @@ export function DataTable<T>({
   emptyMessage = 'No data.',
   sortStorageKey,
   keyboardNav = false,
+  rowClassName,
 }: Props<T>) {
   const { t } = useTranslation();
   const [page, setPage] = useState(0);
@@ -305,7 +308,9 @@ export function DataTable<T>({
                     onRowClick
                       ? 'cursor-pointer hover:bg-brand-50/40 dark:hover:bg-brand-500/10'
                       : ''
-                  } ${selected ? 'bg-brand-50/60 outline outline-2 -outline-offset-2 outline-brand-400/70 dark:bg-brand-500/10' : ''}`}
+                  } ${selected ? 'bg-brand-50/60 outline outline-2 -outline-offset-2 outline-brand-400/70 dark:bg-brand-500/10' : ''} ${
+                    rowClassName?.(row) ?? ''
+                  }`}
                 >
                   {columns.map((c) => (
                     <td

@@ -625,6 +625,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	_ = s.store.MarkLogin(r.Context(), user.ID)
 	go s.audit.Record(s.auditCtx(r), models.AuditLog{
 		User:         user.Username,
 		Action:       "login.success",
@@ -634,6 +635,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 	LoginGate().recordSuccess(gateKey)
 	s.issueTokenForUser(w, r, user)
+}
+
+// azureLoginDetail describes how a Microsoft sign-in found its account.
+func azureLoginDetail(linkedBy, signedInAs string) string {
+	if linkedBy == "" {
+		return "azure_ad"
+	}
+	return "azure_ad (pre-created account claimed by " + linkedBy + "; signed in as " + signedInAs + ")"
 }
 
 // ldapAuthenticate binds as the user against the configured directory; false
@@ -780,7 +789,7 @@ func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	username, err := auth.AzureExchangeCode(ctx, auth.AzureADConfig{
+	identity, err := auth.AzureExchangeCode(ctx, auth.AzureADConfig{
 		Enabled:      cfg.Enabled,
 		TenantID:     cfg.TenantID,
 		ClientID:     cfg.ClientID,
@@ -792,7 +801,26 @@ func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	username := identity.Username
+	linkedBy := ""
 	user, err := s.store.GetUserByUsername(r.Context(), username)
+	if errors.Is(err, sql.ErrNoRows) {
+		// An admin may have pre-created the account under the person's
+		// e-mail or UPN (or in another letter case). Only Azure AD accounts
+		// nobody has signed in to yet can be claimed this way, so this can
+		// never take over a local, LDAP or already used account.
+		for _, candidate := range []struct{ name, via string }{
+			{username, "username_case"}, {identity.Email, "email"}, {identity.UPN, "upn"},
+		} {
+			if candidate.name == "" {
+				continue
+			}
+			if found, findErr := s.store.FindUnclaimedAzureAccount(r.Context(), candidate.name); findErr == nil {
+				user, err, linkedBy = found, nil, candidate.via
+				break
+			}
+		}
+	}
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusInternalServerError, "failed to load user")
@@ -823,6 +851,7 @@ func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 	if user.AuthSource != models.AuthSourceAzure {
 		_ = s.store.SetUserAuthSource(r.Context(), user.ID, models.AuthSourceAzure)
 	}
+	_ = s.store.MarkLogin(r.Context(), user.ID)
 
 	session, err := s.store.GetSessionSettings(r.Context())
 	if err != nil {
@@ -849,7 +878,7 @@ func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 		Action:       "login.azure",
 		Namespace:    "-",
 		ResourceType: "auth",
-		ResourceName: "azure_ad",
+		ResourceName: azureLoginDetail(linkedBy, username),
 	})
 
 	// The global securityHeaders middleware blocks inline scripts with CSP
@@ -1992,7 +2021,17 @@ func (s *Server) handleSearchLDAPUsers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"items": users})
+	type result struct {
+		auth.LDAPUser
+		// Exists: an OpenConsole account with this name is already there.
+		Exists bool `json:"exists"`
+	}
+	items := make([]result, 0, len(users))
+	for _, u := range users {
+		_, err := s.store.GetUserByUsername(r.Context(), u.Username)
+		items = append(items, result{LDAPUser: u, Exists: err == nil})
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"items": items})
 }
 
 func (s *Server) handleImportLDAPUsers(w http.ResponseWriter, r *http.Request) {

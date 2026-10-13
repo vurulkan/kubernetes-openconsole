@@ -75,7 +75,13 @@ describe('UsersSection', () => {
     const onNew = vi.fn();
     const onImportLdap = vi.fn();
     renderSection({ onNew, onImportLdap, azureEnabled: true });
+    // Main part of the split button: straight to a local user.
     fireEvent.click(screen.getByRole('button', { name: 'New user' }));
+    expect(onNew).toHaveBeenLastCalledWith('local');
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+
+    const more = screen.getByRole('button', { name: 'More ways to add a user' });
+    fireEvent.click(more);
     const menu = screen.getByRole('menu');
     const items = within(menu).getAllByRole('menuitem');
     expect(items.map((i) => i.textContent)).toEqual([
@@ -90,12 +96,19 @@ describe('UsersSection', () => {
     expect(onImportLdap).toHaveBeenCalled();
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'New user' }));
+    fireEvent.click(more);
     fireEvent.click(within(screen.getByRole('menu')).getByText('Azure AD user'));
     expect(onNew).toHaveBeenCalledWith('azure');
 
-    fireEvent.click(screen.getByRole('button', { name: 'New user' }));
+    fireEvent.click(more);
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+
+  it('lists and highlights users that were just added', () => {
+    renderSection({ newUsernames: ['jane@example.com'] });
+    const rows = screen.getAllByRole('row').slice(1);
+    expect(rows[0]).toHaveTextContent('jane@example.com');
+    expect(within(rows[0]).getByText('New')).toBeInTheDocument();
   });
 });

@@ -577,9 +577,9 @@ On the very first start a default admin is created: **`admin` / `admin`**. You m
 - **New user** creates an account. When LDAP or Azure AD is enabled it opens a menu:
   - **Local user**: the admin sets the first password.
   - **Import from LDAP…**: the same search-and-import panel as Admin → LDAP ([below](#ldap--active-directory)).
-  - **Azure AD user**: pre-creates a Microsoft account by its username (usually the UPN, e.g. `jane@example.com`), with no password. The person's first "Sign in with Microsoft" uses it.
+  - **Azure AD user**: pre-creates a Microsoft account with no password, by the person's UPN or e-mail address (e.g. `jane@example.com`). Their first "Sign in with Microsoft" uses it.
 
-  Pick **Groups** right away, and tick **Admin** for full access. Non-admins see nothing until they are in a group with a role ([below](#groups-roles-and-permissions)).
+  The main part of the button opens the local-user form directly; the arrow opens the menu. Pick **Groups** right away, and tick **Admin** for full access. New accounts are listed first and highlighted for a moment. Non-admins see nothing until they are in a group with a role ([below](#groups-roles-and-permissions)).
 - **The source decides how a password is checked.** Local accounts use their OpenConsole password. LDAP accounts are checked against the directory only, and Azure AD accounts never accept a password (they use the Microsoft button), so a stray local password can't bypass the directory. A failed sign-in always gets the same answer, so the login form doesn't reveal whether an account exists or where it signs in; the `login.failed` audit entry records the reason.
 - **Edit** (pencil): admin flag, active / disabled, group membership. A disabled user is signed out on the next request.
 - **Reset password** (key icon, **local users only**): sets a new password (min. 8 characters, see `PASSWORD_MIN_LENGTH`) and by default forces a change at next login. All of that user's sessions are signed out, and the reset is audited as `user.password_reset.*`. LDAP and Azure AD users have no reset here: their password lives in the directory, and a local one would let them bypass it.
@@ -628,7 +628,7 @@ LDAP works alongside local accounts. Users must exist in OpenConsole before they
 
 **Save LDAP settings**, then **Test connection**. The test binds with the service account and runs a search in each base DN.
 
-**2. Import users**: from **Admin → Users → New user → Import from LDAP…**, or under the settings on Admin → LDAP. Type part of a name and search; the user filter is applied with `%s` replaced by what you typed, and results are capped at 100 per base DN. Pick the users, optionally pick **groups** to add them to, and import. Imported accounts get source **LDAP** and no usable local password. Users who already exist are skipped and reported. The `admin.import` audit entry names the imported users.
+**2. Import users**: from **Admin → Users → New user → Import from LDAP…**, or under the settings on Admin → LDAP. Type part of a name and search; the user filter is applied with `%s` replaced by what you typed, and results are capped at 100 per base DN. Users who already have an account are listed separately and can't be picked again. Pick the users, optionally pick **groups** to add them to, and import. Imported accounts get source **LDAP** and no usable local password. Users who already exist are skipped and reported. The `admin.import` audit entry names the imported users.
 
 **3. Give them access**: if you didn't pick groups during the import, add the users to groups (Admin → Users → edit, or Admin → Groups). Until then they can sign in but see no namespaces.
 
@@ -650,7 +650,12 @@ Single-tenant sign-in that works alongside local / LDAP accounts.
 
 **3. Sign-in**: the login page shows **Sign in with Microsoft**. On a user's first successful sign-in, the account is created automatically with source **Azure AD**. The username is the token's `preferred_username`, or `email` / `upn` if that is missing.
 
-**4. Give them access**: add the new user to groups after their first sign-in. Or, better, set them up in advance: **Admin → Users → New user → Azure AD user**, enter exactly the username Microsoft will send (usually the UPN, e.g. `jane@example.com`) and pick the groups. The first Microsoft sign-in then uses that account.
+**4. Give them access**: add the new user to groups after their first sign-in. Or, better, set them up in advance: **Admin → Users → New user → Azure AD user**, enter their UPN or e-mail address (e.g. `jane@example.com`) and pick the groups. The first Microsoft sign-in then uses that account.
+
+How the account is found on sign-in:
+- First by `preferred_username`, which is usually the UPN.
+- If there's no exact match, OpenConsole looks for a **pre-created Azure AD account that nobody has signed in to yet** whose name matches `preferred_username` in another letter case, or the token's `email` or `upn` claim. That covers a pre-created `jane.doe@corp.com` when the UPN is `jdoe@corp.onmicrosoft.com`.
+- Local, LDAP and already used accounts are never claimed this way. The `login.azure` audit entry notes when an account was claimed.
 
 Signing out of OpenConsole does not sign the user out of Microsoft.
 

@@ -322,3 +322,48 @@ func TestAuditFilterModesAndFacets(t *testing.T) {
 		t.Fatalf("namespaces = %v", namespaces)
 	}
 }
+
+// last_login_at: existing accounts are backfilled once, when the column is
+// added; accounts pre-created afterwards stay "never signed in" across
+// restarts until their first sign-in.
+func TestLastLoginBackfillAndUnclaimedAzure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	legacy, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE,
+			password_hash TEXT NOT NULL, must_change_password INTEGER NOT NULL DEFAULT 1,
+			is_active INTEGER NOT NULL DEFAULT 1, is_admin INTEGER NOT NULL DEFAULT 0, created_at DATETIME NOT NULL)`,
+		`INSERT INTO users (username, password_hash, created_at) VALUES ('old@corp.com', 'h', '2025-01-01 00:00:00')`,
+	} {
+		if _, err := legacy.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	legacy.Close()
+
+	ctx := context.Background()
+	conn, st := open(t, path)
+	old, _ := st.GetUserByUsername(ctx, "old@corp.com")
+	_ = st.SetUserAuthSource(ctx, old.ID, models.AuthSourceAzure)
+	if _, err := st.FindUnclaimedAzureAccount(ctx, "old@corp.com"); err == nil {
+		t.Fatal("an account from before the upgrade must not count as unclaimed")
+	}
+	newID, _ := st.CreateUser(ctx, "new@corp.com", "h")
+	_ = st.SetUserAuthSource(ctx, newID, models.AuthSourceAzure)
+	conn.Close()
+
+	conn, st = open(t, path) // migrations run again: no second backfill
+	defer conn.Close()
+	if u, err := st.FindUnclaimedAzureAccount(ctx, "NEW@corp.com"); err != nil || u.ID != newID {
+		t.Fatalf("unclaimed = %+v, %v", u, err)
+	}
+	if err := st.MarkLogin(ctx, newID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.FindUnclaimedAzureAccount(ctx, "new@corp.com"); err == nil {
+		t.Fatal("still unclaimed after a sign-in")
+	}
+}
