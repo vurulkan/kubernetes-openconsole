@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync/atomic"
 
 	"k8s.io/klog/v2"
 )
@@ -42,10 +43,9 @@ func New(cfg Config) *slog.Logger {
 	case "json":
 		handler = slog.NewJSONHandler(writer, handlerOpts)
 	case "ecs":
-		// JSON with Elastic Common Schema field names (see ecs.go).
-		handlerOpts.ReplaceAttr = ecsReplaceAttr
-		handler = slog.NewJSONHandler(writer, handlerOpts)
-		attrs = append(attrs, slog.String("ecs.version", ECSVersion))
+		// Nested JSON with Elastic Common Schema fields (see ecs.go).
+		handler = newECSHandler(writer, handlerOpts)
+		ecsEnabled.Store(true)
 	default:
 		handler = slog.NewTextHandler(writer, handlerOpts)
 	}
@@ -65,6 +65,13 @@ func New(cfg Config) *slog.Logger {
 
 	return slog.New(handler)
 }
+
+// ecsEnabled is set when the ecs format is chosen, so call sites can add
+// fields only that format uses (e.g. request duration in nanoseconds).
+var ecsEnabled atomic.Bool
+
+// ECS reports whether LOG_FORMAT=ecs is in effect.
+func ECS() bool { return ecsEnabled.Load() }
 
 // SetDefault wires the logger into the slog default so bare slog.Info etc.
 // work, and routes client-go's klog output through it too: otherwise klog

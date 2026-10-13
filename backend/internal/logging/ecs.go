@@ -1,8 +1,15 @@
 package logging
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 	"log/slog"
+	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -13,63 +20,298 @@ const ECSVersion = "8.11.0"
 // ECS field. Keys not listed here go under "openconsole.<key>", so they can
 // never collide with ECS objects or with the kubernetes.* / container.*
 // metadata a shipper adds (the namespace / pod / container in our records
-// are the ones acted on, not the pod that wrote the log line).
+// are the ones acted on, not the pod that wrote the log line). Keys that
+// already contain a dot are taken as deliberate ECS paths.
 var ecsFieldNames = map[string]string{
-	"service":    "service.name",
-	"version":    "service.version",
-	"env":        "service.environment",
-	"user":       "user.name",
-	"user_agent": "user_agent.original",
-	"error":      "error.message",
-	"err":        "error.message", // klog / logr
-	"event":      "event.action",
-	"method":     "http.request.method",
-	"status":     "http.response.status_code",
-	"path":       "url.path",
-	"remote_ip":  "client.ip",
-	"request_id": "http.request.id",
-	"trace_id":   "trace.id",
+	"service":        "service.name",
+	"version":        "service.version",
+	"env":            "service.environment",
+	"user":           "user.name",
+	"user_agent":     "user_agent.original",
+	"error":          "error.message",
+	"err":            "error.message", // klog / logr
+	"event":          "event.action",
+	"method":         "http.request.method",
+	"status":         "http.response.status_code",
+	"path":           "url.path",
+	"remote_ip":      "source.ip",
+	"request_id":     "http.request.id",
+	"trace_id":       "trace.id",
+	"duration_ns":    "event.duration",
+	"response_bytes": "http.response.body.bytes",
 }
 
-// ecsReplaceAttr renames slog's built-in and our own top-level keys to ECS.
-// Keys that already contain a dot are taken as deliberate ECS / namespaced
-// names and kept.
-func ecsReplaceAttr(groups []string, a slog.Attr) slog.Attr {
-	if len(groups) > 0 {
-		return a
-	}
-	switch a.Key {
-	case slog.TimeKey:
-		if t, ok := a.Value.Any().(time.Time); ok {
-			return slog.String("@timestamp", t.UTC().Format("2006-01-02T15:04:05.000000Z"))
+// ecsHandler writes one JSON object per record with nested ECS objects, in a
+// stable order: @timestamp, log, message, service, ecs, event, then the rest.
+// HTTP request and audit records also get event.* (kind, category, type,
+// outcome, dataset) and a readable message, like other ECS-logging services.
+type ecsHandler struct {
+	mu        *sync.Mutex
+	w         io.Writer
+	level     slog.Leveler
+	addSource bool
+	attrs     []slog.Attr // from WithAttrs, applied before the record's own
+	prefix    string      // from WithGroup
+}
+
+func newECSHandler(w io.Writer, opts *slog.HandlerOptions) *ecsHandler {
+	h := &ecsHandler{mu: &sync.Mutex{}, w: w, level: slog.LevelInfo}
+	if opts != nil {
+		if opts.Level != nil {
+			h.level = opts.Level
 		}
-		return slog.Attr{Key: "@timestamp", Value: a.Value}
-	case slog.LevelKey:
-		if l, ok := a.Value.Any().(slog.Level); ok {
-			return slog.String("log.level", strings.ToLower(l.String()))
+		h.addSource = opts.AddSource
+	}
+	return h
+}
+
+func (h *ecsHandler) Enabled(_ context.Context, l slog.Level) bool { return l >= h.level.Level() }
+
+func (h *ecsHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	c := *h
+	c.attrs = append(append([]slog.Attr{}, h.attrs...), prefixed(h.prefix, attrs)...)
+	return &c
+}
+
+func (h *ecsHandler) WithGroup(name string) slog.Handler {
+	if name == "" {
+		return h
+	}
+	c := *h
+	c.prefix = h.prefix + name + "."
+	return &c
+}
+
+func prefixed(prefix string, attrs []slog.Attr) []slog.Attr {
+	if prefix == "" {
+		return attrs
+	}
+	out := make([]slog.Attr, len(attrs))
+	for i, a := range attrs {
+		out[i] = slog.Attr{Key: prefix + a.Key, Value: a.Value}
+	}
+	return out
+}
+
+func (h *ecsHandler) Handle(_ context.Context, r slog.Record) error {
+	doc := newObject()
+	doc.set("@timestamp", r.Time.UTC().Format("2006-01-02T15:04:05.000000Z"))
+	doc.set("log.level", strings.ToLower(r.Level.String()))
+	doc.set("message", r.Message)
+	if h.addSource && r.PC != 0 {
+		frame, _ := runtime.CallersFrames([]uintptr{r.PC}).Next()
+		doc.set("log.origin.function", frame.Function)
+		doc.set("log.origin.file.name", frame.File)
+		doc.set("log.origin.file.line", frame.Line)
+	}
+
+	raw := map[string]any{} // the record's own attributes by original key
+	add := func(a slog.Attr) {
+		v := plain(a.Value)
+		if a.Key == "" || v == nil {
+			return
 		}
-		return slog.String("log.level", strings.ToLower(a.Value.String()))
-	case slog.MessageKey:
-		return slog.Attr{Key: "message", Value: a.Value}
-	case slog.SourceKey:
-		if src, ok := a.Value.Any().(*slog.Source); ok && src != nil {
-			return slog.Group("log.origin",
-				slog.String("function", src.Function),
-				slog.Group("file", slog.String("name", src.File), slog.Int("line", src.Line)),
-			)
-		}
-		return slog.Attr{Key: "log.origin", Value: a.Value}
-	case "duration_ms":
-		// ECS event.duration is in nanoseconds.
-		if a.Value.Kind() == slog.KindInt64 {
-			return slog.Int64("event.duration", a.Value.Int64()*int64(time.Millisecond))
+		path := ecsPath(a.Key)
+		if !doc.set(path, v) {
+			doc.set("openconsole."+strings.ReplaceAll(a.Key, ".", "_"), v)
 		}
 	}
-	if strings.Contains(a.Key, ".") {
-		return a
+	for _, a := range h.attrs {
+		add(a)
 	}
-	if name, ok := ecsFieldNames[a.Key]; ok {
-		return slog.Attr{Key: name, Value: a.Value}
+	doc.set("ecs.version", ECSVersion)
+	r.Attrs(func(a slog.Attr) bool {
+		a = slog.Attr{Key: h.prefix + a.Key, Value: a.Value}
+		raw[a.Key] = plain(a.Value)
+		add(a)
+		return true
+	})
+	enrich(doc, r.Message, raw)
+
+	var buf bytes.Buffer
+	doc.encode(&buf)
+	buf.WriteByte('\n')
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	_, err := h.w.Write(buf.Bytes())
+	return err
+}
+
+func ecsPath(key string) string {
+	if name, ok := ecsFieldNames[key]; ok {
+		return name
 	}
-	return slog.Attr{Key: "openconsole." + a.Key, Value: a.Value}
+	if strings.Contains(key, ".") {
+		return key
+	}
+	return "openconsole." + key
+}
+
+// enrich adds the event.* fields and the readable message for the two record
+// kinds dashboards care about.
+func enrich(doc *object, msg string, raw map[string]any) {
+	switch msg {
+	case "http.request":
+		status, _ := raw["status"].(int64)
+		doc.set("message", fmt.Sprintf("%v %v %d", raw["method"], raw["path"], status))
+		doc.set("log.logger", "http")
+		doc.set("event.kind", "event")
+		doc.set("event.category", []string{"web"})
+		doc.set("event.type", []string{"access"})
+		if status >= 400 {
+			doc.set("event.outcome", "failure")
+		} else {
+			doc.set("event.outcome", "success")
+		}
+		doc.set("event.dataset", "openconsole.app")
+	case "audit":
+		action, _ := raw["event"].(string)
+		doc.set("message", auditMessage(raw))
+		doc.set("log.logger", "audit")
+		doc.set("event.kind", "event")
+		switch {
+		case strings.HasPrefix(action, "login."):
+			doc.set("event.category", []string{"authentication"})
+		case strings.HasPrefix(action, "pod.exec."):
+			doc.set("event.category", []string{"process"})
+		}
+		if outcome := auditOutcome(action); outcome != "" {
+			doc.set("event.outcome", outcome)
+		}
+		doc.set("event.dataset", "openconsole.audit")
+	default:
+		doc.set("event.dataset", "openconsole.app")
+	}
+}
+
+// auditOutcome maps an action's last segment to ECS event.outcome.
+func auditOutcome(action string) string {
+	switch {
+	case strings.HasSuffix(action, ".success"):
+		return "success"
+	case strings.HasSuffix(action, ".failed"), strings.HasSuffix(action, ".denied"),
+		strings.HasSuffix(action, ".rate_limited"), strings.HasSuffix(action, ".locked"):
+		return "failure"
+	}
+	return ""
+}
+
+// auditMessage reads like "admin: pod.exec.end pod default/shellpod (…)".
+func auditMessage(raw map[string]any) string {
+	str := func(k string) string { s, _ := raw[k].(string); return s }
+	target := str("resource_name")
+	if ns := str("namespace"); ns != "" && ns != "-" {
+		target = ns + "/" + target
+	}
+	parts := []string{str("event")}
+	if t := str("resource_type"); t != "" {
+		parts = append(parts, t)
+	}
+	if target != "" {
+		parts = append(parts, target)
+	}
+	if c := str("cluster"); c != "" {
+		parts = append(parts, "on "+c)
+	}
+	return str("user") + ": " + strings.Join(parts, " ")
+}
+
+// plain converts a slog value to something encoding/json writes as ECS
+// expects: durations in nanoseconds, times in RFC 3339, errors as text.
+func plain(v slog.Value) any {
+	v = v.Resolve()
+	switch v.Kind() {
+	case slog.KindString:
+		return v.String()
+	case slog.KindInt64:
+		return v.Int64()
+	case slog.KindUint64:
+		return v.Uint64()
+	case slog.KindFloat64:
+		return v.Float64()
+	case slog.KindBool:
+		return v.Bool()
+	case slog.KindDuration:
+		return v.Duration().Nanoseconds()
+	case slog.KindTime:
+		return v.Time().UTC().Format(time.RFC3339Nano)
+	case slog.KindGroup:
+		o := newObject()
+		for _, a := range v.Group() {
+			if pv := plain(a.Value); pv != nil {
+				o.set(a.Key, pv)
+			}
+		}
+		return o
+	}
+	switch x := v.Any().(type) {
+	case nil:
+		return nil
+	case error:
+		return x.Error()
+	case fmt.Stringer:
+		return x.String()
+	default:
+		return x
+	}
+}
+
+// object is a JSON object that keeps insertion order.
+type object struct {
+	keys []string
+	vals map[string]any
+}
+
+func newObject() *object { return &object{vals: map[string]any{}} }
+
+// set stores v at a dotted path, creating nested objects. It returns false
+// when the path runs into an existing non-object value.
+func (o *object) set(path string, v any) bool {
+	head, rest, nested := strings.Cut(path, ".")
+	if !nested {
+		if _, exists := o.vals[head]; !exists {
+			o.keys = append(o.keys, head)
+		} else if _, isObj := o.vals[head].(*object); isObj {
+			if _, newObj := v.(*object); !newObj {
+				return false
+			}
+		}
+		o.vals[head] = v
+		return true
+	}
+	child, exists := o.vals[head]
+	if !exists {
+		c := newObject()
+		o.keys = append(o.keys, head)
+		o.vals[head] = c
+		return c.set(rest, v)
+	}
+	c, ok := child.(*object)
+	if !ok {
+		return false
+	}
+	return c.set(rest, v)
+}
+
+func (o *object) encode(buf *bytes.Buffer) {
+	buf.WriteByte('{')
+	for i, k := range o.keys {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		kb, _ := json.Marshal(k)
+		buf.Write(kb)
+		buf.WriteByte(':')
+		switch v := o.vals[k].(type) {
+		case *object:
+			v.encode(buf)
+		default:
+			b, err := json.Marshal(v)
+			if err != nil {
+				b, _ = json.Marshal(fmt.Sprint(v))
+			}
+			buf.Write(b)
+		}
+	}
+	buf.WriteByte('}')
 }

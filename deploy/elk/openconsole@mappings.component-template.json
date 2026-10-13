@@ -2,75 +2,233 @@
   "template": {
     "mappings": {
       "properties": {
-        "@timestamp": { "type": "date" },
-        "message": { "type": "match_only_text" },
+        "@timestamp": {
+          "type": "date"
+        },
+        "message": {
+          "type": "match_only_text"
+        },
         "log": {
           "properties": {
-            "level": { "type": "keyword" },
+            "level": {
+              "type": "keyword"
+            },
             "origin": {
               "properties": {
-                "function": { "type": "keyword" },
-                "file": { "properties": { "name": { "type": "keyword" }, "line": { "type": "long" } } }
+                "function": {
+                  "type": "keyword"
+                },
+                "file": {
+                  "properties": {
+                    "name": {
+                      "type": "keyword"
+                    },
+                    "line": {
+                      "type": "long"
+                    }
+                  }
+                }
               }
+            },
+            "logger": {
+              "type": "keyword"
             }
           }
         },
         "event": {
           "properties": {
-            "action": { "type": "keyword" },
-            "outcome": { "type": "keyword" },
-            "kind": { "type": "keyword" },
-            "dataset": { "type": "keyword" },
-            "duration": { "type": "long" }
+            "action": {
+              "type": "keyword"
+            },
+            "outcome": {
+              "type": "keyword"
+            },
+            "kind": {
+              "type": "keyword"
+            },
+            "dataset": {
+              "type": "keyword"
+            },
+            "duration": {
+              "type": "long"
+            },
+            "category": {
+              "type": "keyword"
+            },
+            "type": {
+              "type": "keyword"
+            }
           }
         },
-        "user": { "properties": { "name": { "type": "keyword" } } },
-        "client": { "properties": { "ip": { "type": "ip" } } },
-        "user_agent": { "properties": { "original": { "type": "keyword", "ignore_above": 1024 } } },
+        "user": {
+          "properties": {
+            "name": {
+              "type": "keyword"
+            }
+          }
+        },
+        "client": {
+          "properties": {
+            "ip": {
+              "type": "ip"
+            }
+          }
+        },
+        "user_agent": {
+          "properties": {
+            "original": {
+              "type": "keyword",
+              "ignore_above": 1024
+            }
+          }
+        },
         "http": {
           "properties": {
-            "request": { "properties": { "id": { "type": "keyword" }, "method": { "type": "keyword" } } },
-            "response": { "properties": { "status_code": { "type": "long" } } }
+            "request": {
+              "properties": {
+                "id": {
+                  "type": "keyword"
+                },
+                "method": {
+                  "type": "keyword"
+                }
+              }
+            },
+            "response": {
+              "properties": {
+                "status_code": {
+                  "type": "long"
+                },
+                "body": {
+                  "properties": {
+                    "bytes": {
+                      "type": "long"
+                    }
+                  }
+                }
+              }
+            }
           }
         },
-        "url": { "properties": { "path": { "type": "keyword" } } },
-        "trace": { "properties": { "id": { "type": "keyword" } } },
+        "url": {
+          "properties": {
+            "path": {
+              "type": "keyword"
+            }
+          }
+        },
+        "trace": {
+          "properties": {
+            "id": {
+              "type": "keyword"
+            }
+          }
+        },
         "service": {
           "properties": {
-            "name": { "type": "keyword" },
-            "version": { "type": "keyword" },
-            "environment": { "type": "keyword" }
+            "name": {
+              "type": "keyword"
+            },
+            "version": {
+              "type": "keyword"
+            },
+            "environment": {
+              "type": "keyword"
+            }
           }
         },
-        "ecs": { "properties": { "version": { "type": "keyword" } } },
-        "error": { "properties": { "message": { "type": "match_only_text" } } },
+        "ecs": {
+          "properties": {
+            "version": {
+              "type": "keyword"
+            }
+          }
+        },
+        "error": {
+          "properties": {
+            "message": {
+              "type": "match_only_text"
+            }
+          }
+        },
         "openconsole": {
           "properties": {
-            "cluster": { "type": "keyword" },
-            "namespace": { "type": "keyword" },
-            "pod": { "type": "keyword" },
-            "container": { "type": "keyword" },
-            "deployment": { "type": "keyword" },
-            "statefulset": { "type": "keyword" },
-            "job": { "type": "keyword" },
-            "secret": { "type": "keyword" },
-            "key": { "type": "keyword" },
-            "command": { "type": "keyword" },
-            "session_id": { "type": "keyword" },
-            "resource": { "type": "keyword" },
-            "resource_type": { "type": "keyword" },
+            "cluster": {
+              "type": "keyword"
+            },
+            "namespace": {
+              "type": "keyword"
+            },
+            "pod": {
+              "type": "keyword"
+            },
+            "container": {
+              "type": "keyword"
+            },
+            "deployment": {
+              "type": "keyword"
+            },
+            "statefulset": {
+              "type": "keyword"
+            },
+            "job": {
+              "type": "keyword"
+            },
+            "secret": {
+              "type": "keyword"
+            },
+            "key": {
+              "type": "keyword"
+            },
+            "command": {
+              "type": "keyword"
+            },
+            "session_id": {
+              "type": "keyword"
+            },
+            "resource": {
+              "type": "keyword"
+            },
+            "resource_type": {
+              "type": "keyword"
+            },
             "resource_name": {
               "type": "keyword",
               "ignore_above": 1024,
-              "fields": { "text": { "type": "match_only_text" } }
+              "fields": {
+                "text": {
+                  "type": "match_only_text"
+                }
+              }
             },
-            "details": { "type": "match_only_text" },
-            "outcome": { "type": "keyword" },
-            "reason": { "type": "keyword" },
-            "exit_code": { "type": "long" },
-            "bytes_in": { "type": "long" },
-            "bytes_out": { "type": "long" },
-            "ts": { "type": "date" }
+            "details": {
+              "type": "match_only_text"
+            },
+            "outcome": {
+              "type": "keyword"
+            },
+            "reason": {
+              "type": "keyword"
+            },
+            "exit_code": {
+              "type": "long"
+            },
+            "bytes_in": {
+              "type": "long"
+            },
+            "bytes_out": {
+              "type": "long"
+            },
+            "ts": {
+              "type": "date"
+            }
+          }
+        },
+        "source": {
+          "properties": {
+            "ip": {
+              "type": "ip"
+            }
           }
         }
       }

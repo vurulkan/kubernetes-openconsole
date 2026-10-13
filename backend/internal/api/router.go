@@ -359,6 +359,13 @@ func corsMiddleware(next http.Handler) http.Handler {
 type statusRecorder struct {
 	http.ResponseWriter
 	status int
+	bytes  int64
+}
+
+func (r *statusRecorder) Write(b []byte) (int, error) {
+	n, err := r.ResponseWriter.Write(b)
+	r.bytes += int64(n)
+	return n, err
 }
 
 func (r *statusRecorder) WriteHeader(code int) {
@@ -434,6 +441,9 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
+// quietPaths are logged at debug level when they succeed.
+var quietPaths = map[string]bool{"/healthz": true, "/livez": true, "/readyz": true, "/metrics": true}
+
 func requestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
@@ -446,6 +456,10 @@ func requestLogger(next http.Handler) http.Handler {
 			level = slog.LevelError
 		} else if recorder.status >= 400 {
 			level = slog.LevelWarn
+		} else if quietPaths[r.URL.Path] {
+			// Kubelet probes and Prometheus scrapes arrive every few seconds;
+			// successful ones are only logged at debug level.
+			level = slog.LevelDebug
 		}
 
 		attrs := []slog.Attr{
@@ -456,6 +470,12 @@ func requestLogger(next http.Handler) http.Handler {
 			slog.String("remote_ip", clientIP(r)),
 			slog.String("request_id", logpkg.RequestIDFrom(r.Context())),
 			slog.String("user_agent", r.UserAgent()),
+		}
+		if logpkg.ECS() {
+			// ECS event.duration is in nanoseconds; milliseconds would turn
+			// every fast request into 0.
+			attrs[3] = slog.Int64("duration_ns", duration.Nanoseconds())
+			attrs = append(attrs, slog.Int64("response_bytes", recorder.bytes))
 		}
 		// Name the request's span after the route pattern (low cardinality)
 		// and link the log line to the trace.

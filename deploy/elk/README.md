@@ -1,6 +1,6 @@
 # OpenConsole logs in Elasticsearch
 
-With `LOG_FORMAT=ecs` (set in `deploy/deployment.yaml`) OpenConsole writes every log line to stdout as one JSON object with [Elastic Common Schema](https://www.elastic.co/guide/en/ecs/current/index.html) names. That includes client-go's own messages. Ingesting it needs **no grok**: the line only has to be decoded as JSON. This folder holds an ingest pipeline that does that, routes the two kinds of record to their own data streams, and the mappings for them.
+With `LOG_FORMAT=ecs` (set in `deploy/deployment.yaml`) OpenConsole writes every log line to stdout as one nested JSON object following the [Elastic Common Schema](https://www.elastic.co/guide/en/ecs/current/index.html), with `event.dataset`, `event.kind` / `category` / `type` / `outcome` already filled in. That includes client-go's own messages. Ingesting it needs **no grok**: the line only has to be decoded as JSON. This folder holds an ingest pipeline that does that, routes the two kinds of record to their own data streams, and the mappings for them.
 
 | Data stream | Contents |
 |---|---|
@@ -13,8 +13,8 @@ Field reference: README → [Structured logging](../../README.md#structured-logg
 
 | File | What it is |
 |---|---|
-| `openconsole-logs.pipeline.json` | Ingest pipeline `openconsole-logs`. It runs only on OpenConsole lines (JSON with `"service.name":"openconsole"`); other containers' lines pass through unchanged. Steps:<br>1. A `json` processor decodes the line into the document. It merges with what Elastic Agent added, so `kubernetes.*`, `container.*` and `log.file.path` stay.<br>2. `dot_expander` turns `user.name` into `user: {name}`.<br>3. A script sets `event.dataset` and, for audit events, `event.kind` and `event.outcome` (`success` for `*.success`; `failure` for `*.failed`, `*.denied`, `*.rate_limited`, `*.locked`).<br>4. `reroute` sends the record to `logs-openconsole.audit` or `logs-openconsole.app`. |
-| `openconsole@mappings.component-template.json` | Mappings for the fields OpenConsole writes: keywords for names, `client.ip` as `ip`, `event.duration` and `http.response.status_code` as `long`, `openconsole.ts` as `date`, `openconsole.*` (the resource an action ran against) as keywords. |
+| `openconsole-logs.pipeline.json` | Ingest pipeline `openconsole-logs`. It runs only on OpenConsole lines (JSON whose `service.name` is `openconsole`); other containers' lines pass through unchanged. Steps:<br>1. A `json` processor decodes the line into the document. It merges with what Elastic Agent added, so `kubernetes.*`, `container.*` and `log.file.path` stay.<br>2. `dot_expander` handles the dotted keys written by 2.16.1, so lines from both versions end up the same during an upgrade.<br>3. A script fills `event.dataset` / `event.kind` / `event.outcome` only where the line lacks them (2.16.1 lines).<br>4. `reroute` sends the record to `logs-openconsole.audit` or `logs-openconsole.app`. |
+| `openconsole@mappings.component-template.json` | Mappings for the fields OpenConsole writes: keywords for names, `source.ip` (and `client.ip` from 2.16.1) as `ip`, `event.duration`, `http.response.status_code` and `http.response.body.bytes` as `long`, `openconsole.ts` as `date`, `openconsole.*` (the resource an action ran against) as keywords. |
 | `logs-openconsole.index-template.json` | Index template for the two data streams. It combines the stack's `logs@*` / `ecs@mappings` templates with the mappings above. |
 | `install.sh` | Installs the three and hooks the pipeline into the Kubernetes integration (below). Safe to re-run. |
 
@@ -105,10 +105,14 @@ http.request.id : "4rvxiU2EG9Lmx4OB"
 KQL examples (application, `logs-openconsole.app-*`):
 
 ```text
-http.response.status_code >= 400
+event.category : "web" and event.outcome : "failure"
+http.response.status_code >= 500
 log.level : "error"
-url.path : "/api/auth/login"
+url.path : "/api/auth/login" and source.ip : "10.31.0.0/16"
+event.duration > 1000000000          (requests slower than 1 s)
 ```
+
+The same `service.environment`, `log.level`, `event.outcome` and `source.ip` queries work across services that log ECS the same way, e.g. `service.environment : "prod" and event.outcome : "failure"`.
 
 The request id is the same in an audit event and in the `http.request` record that caused it, and in the `X-Request-Id` response header.
 
@@ -125,12 +129,12 @@ DELETE _component_template/openconsole@mappings
 
 ## Verified
 
-Tested on Elasticsearch 8.15.3 and 9.1.0 with the image built from this version, using lines captured while it worked against a k3d cluster: sign-ins, user creation, a denied and an allowed restart, a pod shell with exit code 3, then the cluster stopped to produce client-go errors. The lines were sent the way the Kubernetes integration sends them, and:
-- `_bulk` reported no errors, and the records landed in their data streams (14 audit, 119 application);
-- `@timestamp` is the event time;
-- Agent's `kubernetes.*`, `container.*` and `log.file.path` are kept;
-- the fields have the types above, and the KQL examples match;
-- other containers' lines, plain text or JSON, are not changed;
+Tested on Elasticsearch 8.15.3 and 9.1.0 with images built from this version (2.16.2) and from 2.16.1, using lines captured while each worked against a k3d cluster: sign-ins, user creation, a denied and an allowed restart, a pod shell with exit code 3, then the cluster stopped to produce client-go errors. Lines from both versions were sent together, the way the Kubernetes integration sends them, as during an upgrade. Results:
+- `_bulk` reported no errors, and every record landed in its data stream;
+- the nested 2.16.2 lines and the dotted 2.16.1 lines end up with the same fields (2.16.1 lines get `event.dataset` / `event.outcome` from the pipeline);
+- `@timestamp` is the event time, and Agent's `kubernetes.*`, `container.*` and `log.file.path` are kept;
+- the fields have the types above (`source.ip` matches CIDR queries), and the KQL examples match;
+- other containers' lines are not changed, including a JSON line from another service with `user.name: openconsole`;
 - a broken line is tagged and stays where it was.
 
 `install.sh` was run twice; the second run changed nothing it shouldn't.
