@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -11,7 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	logpkg "k8s-dashboard/backend/internal/logging"
+	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/models"
 	"k8s-dashboard/backend/internal/recording"
 )
@@ -72,13 +71,12 @@ func (s *Server) handleRecordingCast(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	action := "recording.view"
+	verb := audit.VerbView
 	if r.URL.Query().Get("download") == "1" {
-		action = "recording.download"
+		verb = audit.VerbDownload
 		w.Header().Set("Content-Disposition", `attachment; filename="`+recordingFilename(rec)+`"`)
 	}
-	user, _ := s.userForRequest(r)
-	s.recordRecordingAudit(r, userName(user), action, rec, "")
+	s.recordRecordingAudit(r, verb, audit.Success, "", rec, nil)
 
 	w.Header().Set("Content-Type", "application/x-asciicast")
 	w.Header().Set("Cache-Control", "no-store")
@@ -96,9 +94,9 @@ func (s *Server) handleDeleteRecording(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	stub := &models.SessionRecording{ID: id, Namespace: "-", Pod: "id:" + strconv.Itoa(id)}
+	stub := &models.SessionRecording{ID: id}
 	if !user.IsAdmin || user.MustChangePassword {
-		s.recordRecordingAudit(r, user.Username, "recording.delete.denied", stub, "")
+		s.recordRecordingAudit(r, audit.VerbDelete, audit.Denied, reasonAdminOnly, stub, nil)
 		writeError(w, http.StatusForbidden, "admin only")
 		return
 	}
@@ -108,20 +106,20 @@ func (s *Server) handleDeleteRecording(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "recording not found")
 		return
 	case errors.Is(err, recording.ErrActive):
-		s.recordRecordingAudit(r, user.Username, "recording.delete.failed", rec, "in_progress;"+recordingSummary(rec))
+		s.recordRecordingAudit(r, audit.VerbDelete, audit.Failed, "in_progress", rec, nil)
 		writeError(w, http.StatusConflict, "recording is still in progress")
 		return
 	case err != nil:
 		if rec == nil {
 			rec = stub
 		}
-		s.recordRecordingAudit(r, user.Username, "recording.delete.failed", rec, err.Error()+";"+recordingSummary(rec))
+		s.recordRecordingAudit(r, audit.VerbDelete, audit.Failed, "error", rec, failDetails(err, nil))
 		writeError(w, http.StatusInternalServerError, "failed to delete recording")
 		return
 	}
 	// The row and file are gone after this, so the audit entry is the only
 	// remaining trace of whose session it was.
-	s.recordRecordingAudit(r, user.Username, "recording.delete.success", rec, recordingSummary(rec))
+	s.recordRecordingAudit(r, audit.VerbDelete, audit.Success, "", rec, nil)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -141,7 +139,7 @@ func (s *Server) handleUpdateRecordingSettings(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if !user.IsAdmin || user.MustChangePassword {
-		s.recordSettingsAudit(user.Username, "denied", "", r)
+		s.recordSettingsAudit(r, audit.Denied, reasonAdminOnly, nil)
 		writeError(w, http.StatusForbidden, "admin only")
 		return
 	}
@@ -154,15 +152,15 @@ func (s *Server) handleUpdateRecordingSettings(w http.ResponseWriter, r *http.Re
 	if err != nil {
 		var verr recording.ValidationError
 		if errors.As(err, &verr) {
-			s.recordSettingsAudit(user.Username, "failed", verr.Error(), r)
+			s.recordSettingsAudit(r, audit.Failed, "invalid", failDetails(verr, nil))
 			writeError(w, http.StatusBadRequest, verr.Error())
 			return
 		}
-		s.recordSettingsAudit(user.Username, "failed", err.Error(), r)
+		s.recordSettingsAudit(r, audit.Failed, "error", failDetails(err, nil))
 		writeError(w, http.StatusInternalServerError, "failed to save recording settings")
 		return
 	}
-	s.recordSettingsAudit(user.Username, "success", settingsSummary(saved), r)
+	s.recordSettingsAudit(r, audit.Success, "", audit.D{"summary": settingsSummary(saved)})
 	writeJSON(w, http.StatusOK, map[string]any{"settings": saved})
 }
 
@@ -184,83 +182,54 @@ func (s *Server) recordingFromURL(w http.ResponseWriter, r *http.Request) (*mode
 	return rec, true
 }
 
-func (s *Server) recordRecordingAudit(r *http.Request, user, action string, rec *models.SessionRecording, detail string) {
-	name := rec.Pod
-	if rec.SessionID != "" {
-		name += " (session_id=" + rec.SessionID
-		if detail != "" {
-			name += ";" + detail
-		}
-		name += ")"
-	} else if detail != "" {
-		name += " (" + detail + ")"
+// recordRecordingAudit records an action on a recording. The resource is
+// the session id; the details say whose session it was, when, where and how
+// big, since after a delete the audit entry is all that is left of it. The
+// cluster is the one the session ran on.
+func (s *Server) recordRecordingAudit(r *http.Request, verb, outcome, reason string, rec *models.SessionRecording, details audit.D) {
+	if details == nil {
+		details = audit.D{}
 	}
-	go s.audit.Record(s.auditCtx(r), models.AuditLog{
-		User:         user,
-		Action:       action,
+	name := rec.SessionID
+	if name == "" {
+		details["id"] = rec.ID
+	} else {
+		details["pod"] = rec.Pod
+		details["container"] = rec.Container
+		details["owner"] = rec.User
+		details["started_at"] = rec.StartedAt
+		details["size_bytes"] = rec.SizeBytes
+	}
+	s.auditEvent(r, models.AuditLog{
+		Verb:         verb,
+		Outcome:      outcome,
+		Reason:       reason,
+		ResourceType: audit.KindRecording,
 		Namespace:    rec.Namespace,
-		ResourceType: "recording",
 		ResourceName: name,
+		Cluster:      rec.Cluster,
+		Details:      details,
 	})
-	// Own console line, independent of LOG_INCLUDE_AUDIT, like the
-	// deployment / settings actions.
-	slog.Info("recording.action",
-		slog.String("event", action),
-		slog.String("user", user),
-		slog.String("namespace", rec.Namespace),
-		slog.String("pod", rec.Pod),
-		slog.String("session_id", rec.SessionID),
-		slog.String("details", detail),
-		slog.String("request_id", logpkg.RequestIDFrom(r.Context())),
-	)
 }
 
-// recordingSummary describes a recording for audit details: whose session it
-// was, when, where and how big.
-func recordingSummary(rec *models.SessionRecording) string {
-	if rec == nil || rec.SessionID == "" {
-		return ""
-	}
-	out := "owner=" + rec.User +
-		";started=" + rec.StartedAt.UTC().Format(time.RFC3339) +
-		";size=" + strconv.FormatInt(rec.SizeBytes, 10)
-	if rec.Cluster != "" {
-		out += ";cluster=" + rec.Cluster
-	}
-	if rec.Container != "" {
-		out += ";container=" + rec.Container
-	}
-	return out
-}
-
-func (s *Server) recordSettingsAudit(user, outcome, detail string, r *http.Request) {
-	requestID := requestIDOf(r)
-	name := "settings"
-	if detail != "" {
-		name += " (" + detail + ")"
-	}
-	go s.audit.Record(s.auditCtx(r), models.AuditLog{
-		User:         user,
-		Action:       "recording.settings.update." + outcome,
-		Namespace:    "-",
-		ResourceType: "recording",
-		ResourceName: name,
+func (s *Server) recordSettingsAudit(r *http.Request, outcome, reason string, details audit.D) {
+	s.auditEvent(r, models.AuditLog{
+		Verb:         audit.VerbUpdate,
+		Outcome:      outcome,
+		Reason:       reason,
+		ResourceType: audit.KindSettings,
+		ResourceName: "recording",
+		Details:      details,
 	})
-	slog.Info("recording.settings.update",
-		slog.String("outcome", outcome),
-		slog.String("user", user),
-		slog.String("details", detail),
-		slog.String("request_id", requestID),
-	)
 }
 
 func settingsSummary(st models.RecordingSettings) string {
 	return "enabled=" + strconv.FormatBool(st.Enabled) +
-		";retention_days=" + strconv.Itoa(st.RetentionDays) +
-		";max_session_mb=" + strconv.Itoa(st.MaxSessionMB) +
-		";max_total_mb=" + strconv.Itoa(st.MaxTotalMB) +
-		";min_free_mb=" + strconv.Itoa(st.MinFreeMB) +
-		";disk_policy=" + st.DiskPolicy
+		" retention_days=" + strconv.Itoa(st.RetentionDays) +
+		" max_session_mb=" + strconv.Itoa(st.MaxSessionMB) +
+		" max_total_mb=" + strconv.Itoa(st.MaxTotalMB) +
+		" min_free_mb=" + strconv.Itoa(st.MinFreeMB) +
+		" disk_policy=" + st.DiskPolicy
 }
 
 // recordingFilename builds a readable download name; pod names are DNS-1123

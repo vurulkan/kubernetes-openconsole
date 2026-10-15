@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/csv"
+	"k8s-dashboard/backend/internal/audit"
+	"k8s-dashboard/backend/internal/models"
 	"net/http"
 	"sort"
 	"strconv"
@@ -42,7 +44,7 @@ func (s *Server) handleExportUsers(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	cw.Flush()
-	s.recordAudit(r, "admin.export", "-", "users", strconv.Itoa(len(users)))
+	s.auditEvent(r, models.AuditLog{Verb: audit.VerbExport, ResourceType: audit.KindUser, ResourceName: "*", Details: audit.D{"count": len(users)}})
 }
 
 func (s *Server) handleExportGroups(w http.ResponseWriter, r *http.Request) {
@@ -84,7 +86,7 @@ func (s *Server) handleExportGroups(w http.ResponseWriter, r *http.Request) {
 		_ = cw.Write([]string{g.Name, strings.Join(m, "; "), joinNames(roleIDs, roleNames)})
 	}
 	cw.Flush()
-	s.recordAudit(r, "admin.export", "-", "groups", strconv.Itoa(len(groups)))
+	s.auditEvent(r, models.AuditLog{Verb: audit.VerbExport, ResourceType: audit.KindGroup, ResourceName: "*", Details: audit.D{"count": len(groups)}})
 }
 
 func (s *Server) groupNames(r *http.Request) (map[int]string, error) {

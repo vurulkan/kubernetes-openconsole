@@ -214,16 +214,22 @@ export const changePassword = (currentPassword: string, newPassword: string) =>
     body: JSON.stringify({ currentPassword, newPassword })
   });
 
-export const listNamespaces = () => apiRequest<{ namespaces: string[] }>('/api/namespaces');
+// Lists the UI fetches on its own (the dashboard's periodic refresh, the
+// namespace list behind the command palette and the role editor) carry this
+// header so the server doesn't audit each one; the lists the user opens are.
+const autoRefresh = (auto?: boolean): RequestInit => (auto ? { headers: { 'X-OpenConsole-Refresh': 'auto' } } : {});
+
+export const listNamespaces = (auto?: boolean) => apiRequest<{ namespaces: string[] }>('/api/namespaces', autoRefresh(auto));
 
 export const getNamespacePermissions = (namespace: string) =>
   apiRequest<{ resources: Record<string, string[]> }>(`/api/namespaces/${namespace}/permissions`);
 
-export const listPods = (namespace: string) =>
-  apiRequest<{ items: Array<Record<string, unknown>> }>(`/api/namespaces/${namespace}/pods`);
 
-export const listDeployments = (namespace: string) =>
-  apiRequest<{ items: Array<Record<string, unknown>> }>(`/api/namespaces/${namespace}/deployments`);
+export const listPods = (namespace: string, auto?: boolean) =>
+  apiRequest<{ items: Array<Record<string, unknown>> }>(`/api/namespaces/${namespace}/pods`, autoRefresh(auto));
+
+export const listDeployments = (namespace: string, auto?: boolean) =>
+  apiRequest<{ items: Array<Record<string, unknown>> }>(`/api/namespaces/${namespace}/deployments`, autoRefresh(auto));
 
 export const listServices = (namespace: string) =>
   apiRequest<{ items: Array<Record<string, unknown>> }>(`/api/namespaces/${namespace}/services`);
@@ -608,15 +614,49 @@ export type AuditQuery = {
   user?: string;
   action?: string;
   actionExact?: boolean;
-  outcome?: '' | 'success' | 'denied' | 'failed' | 'rate_limited';
+  verb?: string;
+  outcome?: '' | 'success' | 'denied' | 'failed' | 'rate_limited' | 'locked';
+  resourceType?: string;
+  cluster?: string;
   namespace?: string;
   start?: string;
   end?: string;
 };
 
+/** One audit event. action is "<resourceType>.<verb>"; the result is in outcome. */
+export type AuditEntry = {
+  id: number;
+  timestamp: string;
+  timestampFormatted?: string;
+  user: string;
+  action: string;
+  verb: string;
+  outcome: string;
+  reason?: string;
+  namespace: string;
+  resourceType: string;
+  resourceName: string;
+  cluster: string;
+  clusterId?: number;
+  details?: Record<string, unknown>;
+  requestId?: string;
+  sourceIp?: string;
+  userAgent?: string;
+  authSource?: string;
+};
+
+export type AuditFacets = {
+  actions: string[];
+  users: string[];
+  namespaces: string[];
+  verbs: string[];
+  resourceTypes: string[];
+  clusters: string[];
+};
+
 const auditParams = (q: AuditQuery) => {
   const p = new URLSearchParams();
-  for (const key of ['user', 'action', 'outcome', 'namespace', 'start', 'end'] as const) {
+  for (const key of ['user', 'action', 'verb', 'outcome', 'resourceType', 'cluster', 'namespace', 'start', 'end'] as const) {
     if (q[key]) p.set(key, q[key] as string);
   }
   if (q.action && q.actionExact) p.set('actionExact', '1');
@@ -627,7 +667,7 @@ export const listAuditLogs = (limit = 50, offset = 0, q: AuditQuery = {}) => {
   const p = auditParams(q);
   p.set('limit', String(limit));
   p.set('offset', String(offset));
-  return apiRequest<{ items: Array<Record<string, unknown>>; total: number; limit: number; offset: number }>(
+  return apiRequest<{ items: AuditEntry[]; total: number; limit: number; offset: number }>(
     `/api/admin/audit-logs?${p.toString()}`
   );
 };
@@ -646,8 +686,7 @@ export const getVersion = () => {
   return versionPromise;
 };
 
-export const getAuditFacets = () =>
-  apiRequest<{ actions: string[]; users: string[]; namespaces: string[] }>('/api/admin/audit-logs/facets');
+export const getAuditFacets = () => apiRequest<AuditFacets>('/api/admin/audit-logs/facets');
 
 // Downloads a file from an authenticated endpoint. The bearer token can't
 // ride on a plain link, so the file is fetched and handed to the browser as

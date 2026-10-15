@@ -207,31 +207,41 @@ func (e *testEnv) expect(method, path, token string, body any, want int) string 
 	return out
 }
 
-// waitAudit polls for an audit entry; Record runs in a goroutine.
-func (e *testEnv) waitAudit(action, resourceContains string) models.AuditLog {
+// waitAudit polls for an audit entry; Record runs in a goroutine. key is
+// "<action>" or "<action>.<outcome>" (deployment.restart.success); contains
+// must appear in the resource name, the reason or the details (as JSON).
+func (e *testEnv) waitAudit(key, contains string) models.AuditLog {
 	e.t.Helper()
+	action, outcome := audit.SplitLegacyAction(key)
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		logs, _ := e.store.ListAuditLogs(context.Background(), 100, 0, "", action, "", nil, nil)
+		logs, _ := e.store.ListAuditLogsFiltered(context.Background(), 100, 0,
+			store.AuditFilter{Action: action, ActionExact: true, Outcome: outcome})
 		for _, l := range logs {
-			if l.Action == action && strings.Contains(l.ResourceName, resourceContains) {
+			if strings.Contains(auditText(l), contains) {
 				return l
 			}
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	e.t.Fatalf("audit %q (%q) not recorded", action, resourceContains)
+	logs, _ := e.store.ListAuditLogsFiltered(context.Background(), 20, 0, store.AuditFilter{})
+	e.t.Fatalf("audit %q (%q) not recorded; latest: %+v", key, contains, logs)
 	return models.AuditLog{}
 }
 
-func (e *testEnv) noAudit(action string) {
+func auditText(l models.AuditLog) string {
+	d, _ := json.Marshal(l.Details)
+	return l.ResourceName + " " + l.Reason + " " + string(d)
+}
+
+func (e *testEnv) noAudit(key string) {
 	e.t.Helper()
 	time.Sleep(150 * time.Millisecond)
-	logs, _ := e.store.ListAuditLogs(context.Background(), 100, 0, "", action, "", nil, nil)
-	for _, l := range logs {
-		if l.Action == action {
-			e.t.Fatalf("unexpected audit %q: %+v", action, l)
-		}
+	action, outcome := audit.SplitLegacyAction(key)
+	logs, _ := e.store.ListAuditLogsFiltered(context.Background(), 100, 0,
+		store.AuditFilter{Action: action, ActionExact: true, Outcome: outcome})
+	if len(logs) > 0 {
+		e.t.Fatalf("unexpected audit %q: %+v", key, logs[0])
 	}
 }
 
@@ -279,7 +289,7 @@ func TestLoginLockout(t *testing.T) {
 	}
 	// Locked even with the right password.
 	e.expect("POST", "/api/auth/login", "", map[string]string{"username": "dave", "password": "Correct-horse-1"}, http.StatusTooManyRequests)
-	e.waitAudit("login.locked", "")
+	e.waitAudit("user.login.locked", "")
 }
 
 // ─── Admin-only surface ─────────────────────────────────────────────────────
@@ -315,9 +325,9 @@ func TestRecordingWritesAuditDenials(t *testing.T) {
 	e := newTestEnv(t)
 	_, bob := e.user("bob", false)
 	e.expect("DELETE", "/api/admin/recordings/7", bob, nil, http.StatusForbidden)
-	e.waitAudit("recording.delete.denied", "id:7")
+	e.waitAudit("recording.delete.denied", `"id":7`)
 	e.expect("PUT", "/api/admin/recordings/settings", bob, models.RecordingSettings{Enabled: false, MaxSessionMB: 1, MaxTotalMB: 1}, http.StatusForbidden)
-	e.waitAudit("recording.settings.update.denied", "")
+	e.waitAudit("settings.update.denied", "")
 }
 
 // ─── Namespace permissions ──────────────────────────────────────────────────
@@ -379,7 +389,7 @@ func TestWriteActionsDeniedAndAudited(t *testing.T) {
 	e.expect("POST", "/api/namespaces/team-a/deployments/api/scale", bob, map[string]int{"replicas": 3}, http.StatusForbidden)
 	e.waitAudit("deployment.scale.denied", "api")
 	e.expect("POST", "/api/namespaces/team-a/deployments/api/apply", bob, map[string]any{"yaml": "x", "dryRun": true}, http.StatusForbidden)
-	e.waitAudit("deployments.apply.denied", "api")
+	e.waitAudit("deployment.apply.denied", "api")
 
 	// Granting restart lets it through.
 	e.grant(bobID, [4]any{0, "team-a", "deployments", "restart"})
@@ -427,7 +437,7 @@ func TestSecretRevealRequiresRevealAction(t *testing.T) {
 	if strings.Contains(out, secretValue) {
 		t.Fatal("denied reveal leaked the value")
 	}
-	e.waitAudit("secret.reveal.denied", "db (key=password)")
+	e.waitAudit("secret.reveal.denied", `"key":"password"`)
 	e.noAudit("secret.reveal.success")
 
 	e.grant(bobID, [4]any{0, "team-a", "secrets", "reveal"})
@@ -435,7 +445,7 @@ func TestSecretRevealRequiresRevealAction(t *testing.T) {
 	if !strings.Contains(out, `"value":"`+secretValue+`"`) || !strings.Contains(out, `"encoding":"text"`) {
 		t.Fatalf("reveal = %s", out)
 	}
-	e.waitAudit("secret.reveal.success", "db (key=password)")
+	e.waitAudit("secret.reveal.success", `"key":"password"`)
 
 	// Binary values come back base64-encoded and flagged.
 	out = e.expect("POST", "/api/namespaces/team-a/secrets/db/reveal", bob, map[string]string{"key": "keystore"}, http.StatusOK)
@@ -459,7 +469,7 @@ func TestAdminCanRevealSecrets(t *testing.T) {
 		t.Fatalf("admin permissions = %s", out)
 	}
 	e.expect("POST", "/api/namespaces/team-a/secrets/db/reveal", admin, map[string]string{"key": "password"}, http.StatusOK)
-	e.waitAudit("secret.reveal.success", "db (key=password)")
+	e.waitAudit("secret.reveal.success", `"key":"password"`)
 }
 
 func TestSecretYAMLAndApplyRequireEdit(t *testing.T) {
@@ -472,16 +482,16 @@ func TestSecretYAMLAndApplyRequireEdit(t *testing.T) {
 	if strings.Contains(out, secretValue) {
 		t.Fatal("denied YAML leaked the value")
 	}
-	e.waitAudit("secret.yaml.view.denied", "db")
+	e.waitAudit("secret.view_yaml.denied", "db")
 	e.expect("POST", "/api/namespaces/team-a/secrets/db/apply", bob, map[string]any{"yaml": "x", "dryRun": true}, http.StatusForbidden)
-	e.waitAudit("secrets.apply.denied", "db")
+	e.waitAudit("secret.apply.denied", "db")
 
 	e.grant(bobID, [4]any{0, "team-a", "secrets", "edit"})
 	out = e.expect("GET", "/api/namespaces/team-a/secrets/db/yaml", bob, nil, http.StatusOK)
 	if !strings.Contains(out, "stringData") || !strings.Contains(out, "password: "+secretValue) {
 		t.Fatalf("editable YAML should carry plain-text values: %s", out)
 	}
-	e.waitAudit("secret.yaml.view.success", "db")
+	e.waitAudit("secret.view_yaml.success", "db")
 	// Edit in team-a does not carry over to team-b.
 	e.expect("GET", "/api/namespaces/team-b/secrets/db/yaml", bob, nil, http.StatusForbidden)
 }

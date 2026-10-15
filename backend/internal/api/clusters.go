@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/kube"
 	"k8s-dashboard/backend/internal/models"
 )
@@ -150,11 +151,7 @@ func (s *Server) handleCreateCluster(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to save cluster")
 		return
 	}
-	user, _ := s.userForRequest(r)
-	go s.audit.Record(s.auditCtx(r), models.AuditLog{
-		User: userName(user), Action: "cluster.create", Namespace: "-",
-		ResourceType: "cluster", ResourceName: p.Name, Cluster: p.Name,
-	})
+	s.recordClusterAudit(r, audit.VerbCreate, p.Name, id)
 	writeJSON(w, http.StatusOK, map[string]any{"id": id})
 }
 
@@ -189,11 +186,7 @@ func (s *Server) handleUpdateClusterByID(w http.ResponseWriter, r *http.Request)
 	if p.ReplaceSecrets {
 		s.clusters.Invalidate(id)
 	}
-	user, _ := s.userForRequest(r)
-	go s.audit.Record(s.auditCtx(r), models.AuditLog{
-		User: userName(user), Action: "cluster.update", Namespace: "-",
-		ResourceType: "cluster", ResourceName: p.Name, Cluster: p.Name,
-	})
+	s.recordClusterAudit(r, audit.VerbUpdate, p.Name, id)
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
@@ -211,11 +204,7 @@ func (s *Server) handleDeleteCluster(w http.ResponseWriter, r *http.Request) {
 	s.clusters.Invalidate(id)
 	// Users who had picked it fall back to the default cluster.
 	_ = s.store.ClearClusterSelections(r.Context(), id)
-	user, _ := s.userForRequest(r)
-	go s.audit.Record(s.auditCtx(r), models.AuditLog{
-		User: userName(user), Action: "cluster.delete", Namespace: "-",
-		ResourceType: "cluster", ResourceName: strconv.Itoa(id), Cluster: name,
-	})
+	s.recordClusterAudit(r, audit.VerbDelete, name, id)
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
@@ -233,11 +222,7 @@ func (s *Server) handleDeactivateCluster(w http.ResponseWriter, r *http.Request)
 	// keep working on it.
 	s.defaultClusterID.Store(0)
 	name, _ := s.store.GetClusterName(r.Context(), id)
-	user, _ := s.userForRequest(r)
-	go s.audit.Record(s.auditCtx(r), models.AuditLog{
-		User: userName(user), Action: "cluster.deactivate", Namespace: "-",
-		ResourceType: "cluster", ResourceName: strconv.Itoa(id), Cluster: name,
-	})
+	s.recordClusterAudit(r, audit.VerbDeactivate, name, id)
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
@@ -263,11 +248,7 @@ func (s *Server) handleActivateCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.defaultClusterID.Store(int64(id))
-	user, _ := s.userForRequest(r)
-	go s.audit.Record(s.auditCtx(r), models.AuditLog{
-		User: userName(user), Action: "cluster.activate", Namespace: "-",
-		ResourceType: "cluster", ResourceName: name, Cluster: name,
-	})
+	s.recordClusterAudit(r, audit.VerbActivate, name, id)
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "name": name})
 }
 
@@ -276,4 +257,16 @@ func userName(u *models.User) string {
 		return ""
 	}
 	return u.Username
+}
+
+// recordClusterAudit records an admin action on a cluster; the cluster is
+// the target, so it is recorded as the event's cluster too.
+func (s *Server) recordClusterAudit(r *http.Request, verb, name string, id int) {
+	s.auditEvent(r, models.AuditLog{
+		Verb:         verb,
+		ResourceType: audit.KindCluster,
+		ResourceName: name,
+		Cluster:      name,
+		ClusterID:    id,
+	})
 }

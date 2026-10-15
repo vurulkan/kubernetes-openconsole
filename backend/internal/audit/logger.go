@@ -21,16 +21,25 @@ func New(store *store.Store) *Logger {
 }
 
 // SetConsoleMirror toggles mirroring audit events to the default slog logger.
-// When enabled, every Record() call emits an "audit" event with the same fields
-// so Elastic/Kibana can consume them directly from stdout.
+// When enabled, every Record() call emits one "audit" line with the event's
+// fields, so Elastic / Kibana can filter on them directly from stdout. It is
+// the only console line an audited action writes.
 func (l *Logger) SetConsoleMirror(enabled bool) {
 	l.consoleMirror.Store(enabled)
 }
 
+// Record stores one audit event and mirrors it to the console. Action,
+// Outcome and the request id are filled in when empty; Cluster is not:
+// callers set it to the cluster the action targeted, or leave it empty for
+// cluster-independent actions.
 func (l *Logger) Record(ctx context.Context, entry models.AuditLog) {
 	entry.Timestamp = time.Now().UTC()
-	if entry.Cluster == "" {
-		entry.Cluster = logging.ClusterFrom(ctx)
+	if entry.RequestID == "" {
+		entry.RequestID = logging.RequestIDFrom(ctx)
+	}
+	normalize(&entry)
+	if entry.Cluster != "" && entry.ClusterID == 0 {
+		entry.ClusterID = l.store.ClusterIDByName(ctx, entry.Cluster)
 	}
 	_ = l.store.AddAuditLog(ctx, entry)
 	if hook := auditMetricHook; hook != nil {
@@ -38,21 +47,42 @@ func (l *Logger) Record(ctx context.Context, entry models.AuditLog) {
 	}
 
 	if l.consoleMirror.Load() {
-		// request_id lets an operator correlate an audit entry back to the
-		// HTTP request log that produced it (same middleware already emits
-		// method/path/status/duration under the same id). Falls back to "" so
-		// background goroutines without a request context still log cleanly.
-		slog.LogAttrs(ctx, slog.LevelInfo, "audit",
-			slog.String("event", entry.Action),
-			slog.String("user", entry.User),
-			slog.String("namespace", entry.Namespace),
-			slog.String("resource_type", entry.ResourceType),
-			slog.String("resource_name", entry.ResourceName),
-			slog.String("cluster", entry.Cluster),
-			slog.String("request_id", logging.RequestIDFrom(ctx)),
-			slog.Time("ts", entry.Timestamp),
-		)
+		slog.LogAttrs(ctx, slog.LevelInfo, "audit", consoleAttrs(entry)...)
 	}
+}
+
+// consoleAttrs are the console fields of an event. Empty values are left out
+// so a filter like "has openconsole.cluster" means something. Keys follow
+// the ECS mapping in logging/ecs.go: event → event.action, user →
+// user.name, remote_ip → source.ip, user_agent → user_agent.original,
+// request_id → http.request.id, error → error.message; the rest go under
+// openconsole.*.
+func consoleAttrs(e models.AuditLog) []slog.Attr {
+	attrs := []slog.Attr{
+		slog.String("event", e.Action),
+		slog.String("verb", e.Verb),
+		slog.String("outcome", e.Outcome),
+	}
+	add := func(k, v string) {
+		if v != "" {
+			attrs = append(attrs, slog.String(k, v))
+		}
+	}
+	add("reason", e.Reason)
+	add("user", e.User)
+	add("auth_source", e.AuthSource)
+	add("cluster", e.Cluster)
+	if e.ClusterID > 0 {
+		attrs = append(attrs, slog.Int("cluster_id", e.ClusterID))
+	}
+	add("namespace", e.Namespace)
+	add("resource_type", e.ResourceType)
+	add("resource_name", e.ResourceName)
+	add("request_id", e.RequestID)
+	add("remote_ip", e.SourceIP)
+	add("user_agent", e.UserAgent)
+	attrs = append(attrs, detailAttrs(e.Details)...)
+	return attrs
 }
 
 // auditMetricHook, if set, is invoked on every Record() so an outer package

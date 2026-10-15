@@ -40,7 +40,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (!user) return;
-    listNamespaces()
+    listNamespaces(true)
       .then((r) => setNamespaces(r.namespaces ?? []))
       .catch(() => setNamespaces([]));
   }, [user]);

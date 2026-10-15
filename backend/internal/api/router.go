@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,13 +24,13 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/gorilla/websocket"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-	"github.com/gorilla/websocket"
 	"golang.org/x/time/rate"
-	"sigs.k8s.io/yaml"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/yaml"
 
 	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/auth"
@@ -43,18 +44,18 @@ import (
 )
 
 type Server struct {
-	store      *store.Store
-	audit      *audit.Logger
+	store *store.Store
+	audit *audit.Logger
 	// clusters holds one connection per cluster; each request uses the
 	// caller's selected cluster (see cluster_ctx.go).
-	clusters   *kube.Registry
-	resources  *kube.ResourceClient
-	jwtKey     []byte
-	logLimiters map[int]*rate.Limiter
+	clusters     *kube.Registry
+	resources    *kube.ResourceClient
+	jwtKey       []byte
+	logLimiters  map[int]*rate.Limiter
 	logLimiterMu sync.Mutex
-	staticDir  string
-	dataDir    string
-	timezone   *time.Location
+	staticDir    string
+	dataDir      string
+	timezone     *time.Location
 	// Default cluster id — cached from the clusters.is_active row and
 	// refreshed on activate/deactivate. Users who haven't picked a cluster
 	// work on this one. 0 = no default.
@@ -258,7 +259,7 @@ func (s *Server) Router() http.Handler {
 		r.Delete("/api/admin/users/{id}", s.handleDeleteUser)
 		r.Put("/api/admin/users/{id}/groups", s.handleSetUserGroups)
 		r.Get("/api/admin/users/{id}/groups", s.handleGetUserGroups)
-		
+
 		r.Get("/api/admin/groups", s.handleListGroups)
 		r.Post("/api/admin/groups", s.handleCreateGroup)
 		r.Put("/api/admin/groups/{id}", s.handleUpdateGroup)
@@ -324,7 +325,6 @@ func (s *Server) Router() http.Handler {
 		r.NotFound(s.serveSPA)
 		r.MethodNotAllowed(s.serveSPA)
 	}
-
 
 	// Tracing: one server span per request, named after the chi route
 	// pattern (set in requestLogger); probes and metrics are not traced.
@@ -531,44 +531,6 @@ func (s *Server) requireAdmin(next http.Handler) http.Handler {
 	})
 }
 
-func (s *Server) recordAudit(r *http.Request, action, namespace, resourceType, resourceName string) {
-	claims, ok := auth.FromContext(r.Context())
-	if !ok {
-		return
-	}
-	entry := models.AuditLog{
-		User:         claims.Username,
-		Action:       action,
-		Namespace:    namespace,
-		ResourceType: resourceType,
-		ResourceName: resourceName,
-	}
-	go s.audit.Record(s.auditCtx(r), entry)
-}
-
-// auditCtx returns a background context carrying the current request_id so a
-// detached audit goroutine (which outlives r.Context()) still correlates with
-// the HTTP request log that triggered it when both land in Elasticsearch.
-func (s *Server) auditCtx(r *http.Request) context.Context {
-	if r == nil {
-		return context.Background()
-	}
-	ctx := s.auditCtxFromID(logpkg.RequestIDFrom(r.Context()))
-	if cluster := logpkg.ClusterFrom(r.Context()); cluster != "" {
-		ctx = context.WithValue(ctx, logpkg.ClusterKey, cluster)
-	}
-	return ctx
-}
-
-// auditCtxFromID is the string-ID variant used by helpers that already fished
-// the request_id out of the request context (recordDeployAudit etc.).
-func (s *Server) auditCtxFromID(id string) context.Context {
-	if id == "" {
-		return context.Background()
-	}
-	return context.WithValue(context.Background(), logpkg.RequestIDKey, id)
-}
-
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Username string `json:"username"`
@@ -582,13 +544,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	gateKey := clientIP(r) + "|" + strings.ToLower(strings.TrimSpace(request.Username))
 	if ok, retry := LoginGate().check(gateKey); !ok {
 		w.Header().Set("Retry-After", strconv.Itoa(retry))
-		go s.audit.Record(s.auditCtx(r), models.AuditLog{
-			User:         request.Username,
-			Action:       "login.locked",
-			Namespace:    "-",
-			ResourceType: "auth",
-			ResourceName: "local",
-		})
+		s.recordLoginAudit(r, request.Username, audit.Locked, "too_many_failures", nil)
 		w.WriteHeader(http.StatusTooManyRequests)
 		return
 	}
@@ -605,13 +561,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil || !user.IsActive {
 		LoginGate().recordFailure(gateKey)
-		go s.audit.Record(s.auditCtx(r), models.AuditLog{
-			User:         request.Username,
-			Action:       "login.failed",
-			Namespace:    "-",
-			ResourceType: "auth",
-			ResourceName: "unknown_user",
-		})
+		s.recordLoginAudit(r, request.Username, audit.Failed, "unknown_user", nil)
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
@@ -627,31 +577,25 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		method = models.AuthSourceLDAP
 	} else {
 		switch user.AuthSource {
-	case models.AuthSourceAzure:
-		failReason = "azure_account"
-	case models.AuthSourceLDAP:
-		if s.ldapAuthenticate(r.Context(), request.Username, request.Password) {
-			method = models.AuthSourceLDAP
+		case models.AuthSourceAzure:
+			failReason = "azure_account"
+		case models.AuthSourceLDAP:
+			if s.ldapAuthenticate(r.Context(), request.Username, request.Password) {
+				method = models.AuthSourceLDAP
+			}
+		default:
+			if auth.ComparePassword(user.PasswordHash, request.Password) == nil {
+				method = models.AuthSourceLocal
+			} else if s.ldapAuthenticate(r.Context(), request.Username, request.Password) {
+				method = models.AuthSourceLDAP
+				_ = s.store.SetUserAuthSource(r.Context(), user.ID, models.AuthSourceLDAP)
+			}
 		}
-	default:
-		if auth.ComparePassword(user.PasswordHash, request.Password) == nil {
-			method = models.AuthSourceLocal
-		} else if s.ldapAuthenticate(r.Context(), request.Username, request.Password) {
-			method = models.AuthSourceLDAP
-			_ = s.store.SetUserAuthSource(r.Context(), user.ID, models.AuthSourceLDAP)
-		}
-	}
 	}
 
 	if method == "" {
 		LoginGate().recordFailure(gateKey)
-		go s.audit.Record(s.auditCtx(r), models.AuditLog{
-			User:         request.Username,
-			Action:       "login.failed",
-			Namespace:    "-",
-			ResourceType: "auth",
-			ResourceName: failReason,
-		})
+		s.recordLoginAudit(r, request.Username, audit.Failed, failReason, audit.D{"account_source": user.AuthSource})
 		// Same answer for every failure, so the response doesn't reveal
 		// whether an account exists or where it signs in.
 		w.WriteHeader(http.StatusUnauthorized)
@@ -659,13 +603,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = s.store.MarkLogin(r.Context(), user.ID)
-	go s.audit.Record(s.auditCtx(r), models.AuditLog{
-		User:         user.Username,
-		Action:       "login.success",
-		Namespace:    "-",
-		ResourceType: "auth",
-		ResourceName: method,
-	})
+	s.recordLoginAudit(r, user.Username, audit.Success, "", audit.D{"login_method": method})
 	LoginGate().recordSuccess(gateKey)
 	s.issueTokenForUser(w, r, user)
 }
@@ -730,14 +668,14 @@ func (s *Server) ldapAutoProvision(r *http.Request, typed, password string) (*mo
 	if err != nil {
 		return nil, false
 	}
-	go s.audit.Record(s.auditCtx(r), models.AuditLog{
+	s.auditEvent(r, models.AuditLog{
 		User:         name,
-		Action:       "user.auto_provision.success",
-		Namespace:    "-",
-		ResourceType: "users",
-		ResourceName: fmt.Sprintf("%s (source=ldap, groups=%d)", name, len(groups)),
+		Verb:         audit.VerbCreate,
+		ResourceType: audit.KindUser,
+		ResourceName: name,
+		AuthSource:   models.AuthSourceLDAP,
+		Details:      audit.D{"account_source": models.AuthSourceLDAP, "groups": len(groups), "auto_provisioned": true},
 	})
-	slog.Info("user.auto_provision", slog.String("user", name), slog.Int("groups", len(groups)))
 	return user, true
 }
 
@@ -761,14 +699,6 @@ func (s *Server) existingGroupIDs(ctx context.Context, ids []int) []int {
 		}
 	}
 	return out
-}
-
-// azureLoginDetail describes how a Microsoft sign-in found its account.
-func azureLoginDetail(linkedBy, signedInAs string) string {
-	if linkedBy == "" {
-		return "azure_ad"
-	}
-	return "azure_ad (pre-created account claimed by " + linkedBy + "; signed in as " + signedInAs + ")"
 }
 
 // ldapAuthenticate binds as the user against the configured directory; false
@@ -999,13 +929,12 @@ func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.CreateSession(r.Context(), jti, user.ID, now, now.Add(ttl), clientIP(r), r.UserAgent()); err != nil {
 		slog.Warn("could not record azure session", "user", user.Username, "error", err.Error())
 	}
-	go s.audit.Record(s.auditCtx(r), models.AuditLog{
-		User:         user.Username,
-		Action:       "login.azure",
-		Namespace:    "-",
-		ResourceType: "auth",
-		ResourceName: azureLoginDetail(linkedBy, username),
-	})
+	login := audit.D{"login_method": models.AuthSourceAzure}
+	if linkedBy != "" {
+		login["linked_by"] = linkedBy
+		login["signed_in_as"] = username
+	}
+	s.recordLoginAudit(r, user.Username, audit.Success, "", login)
 
 	// The global securityHeaders middleware blocks inline scripts with CSP
 	// script-src 'self'. This bootstrap page writes the token into
@@ -1095,7 +1024,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.RevokeAllForUser(r.Context(), user.ID); err != nil {
 		slog.Warn("could not revoke sessions after password change", "user", user.Username, "error", err.Error())
 	}
-	s.recordAudit(r, "change_password", "-", "users", user.Username)
+	s.auditEvent(r, models.AuditLog{Verb: audit.VerbChangePassword, ResourceType: audit.KindUser, ResourceName: user.Username})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
@@ -1115,7 +1044,7 @@ func (s *Server) handleNamespaces(w http.ResponseWriter, r *http.Request) {
 		for _, ns := range existing {
 			all = append(all, ns.Name)
 		}
-		s.recordAudit(r, "list", "-", "namespaces", "*")
+		s.auditRead(r, audit.VerbList, "namespaces", "", "*")
 		writeJSON(w, http.StatusOK, map[string]interface{}{"namespaces": all})
 		return
 	}
@@ -1135,7 +1064,7 @@ func (s *Server) handleNamespaces(w http.ResponseWriter, r *http.Request) {
 			result = append(result, ns.Name)
 		}
 	}
-	s.recordAudit(r, "list", "-", "namespaces", "*")
+	s.auditRead(r, audit.VerbList, "namespaces", "", "*")
 	writeJSON(w, http.StatusOK, map[string]interface{}{"namespaces": result})
 }
 
@@ -1187,7 +1116,7 @@ func (s *Server) handlePods(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
-	s.recordAudit(r, "list", namespace, "pods", "*")
+	s.auditRead(r, audit.VerbList, "pods", namespace, "*")
 	writeJSON(w, http.StatusOK, map[string]interface{}{"items": pods})
 }
 
@@ -1201,7 +1130,7 @@ func (s *Server) handlePod(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	s.recordAudit(r, "get", namespace, "pods", pod.Name)
+	s.auditRead(r, audit.VerbGet, "pods", namespace, pod.Name)
 	writeJSON(w, http.StatusOK, pod)
 }
 
@@ -1215,7 +1144,7 @@ func (s *Server) handleDeployments(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
-	s.recordAudit(r, "list", namespace, "deployments", "*")
+	s.auditRead(r, audit.VerbList, "deployments", namespace, "*")
 	writeJSON(w, http.StatusOK, map[string]interface{}{"items": items})
 }
 
@@ -1229,7 +1158,7 @@ func (s *Server) handleDeployment(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	s.recordAudit(r, "get", namespace, "deployments", item.Name)
+	s.auditRead(r, audit.VerbGet, "deployments", namespace, item.Name)
 	writeJSON(w, http.StatusOK, item)
 }
 
@@ -1243,7 +1172,7 @@ func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
-	s.recordAudit(r, "list", namespace, "services", "*")
+	s.auditRead(r, audit.VerbList, "services", namespace, "*")
 	writeJSON(w, http.StatusOK, map[string]interface{}{"items": items})
 }
 
@@ -1257,7 +1186,7 @@ func (s *Server) handleService(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	s.recordAudit(r, "get", namespace, "services", item.Name)
+	s.auditRead(r, audit.VerbGet, "services", namespace, item.Name)
 	writeJSON(w, http.StatusOK, item)
 }
 
@@ -1271,7 +1200,7 @@ func (s *Server) handleConfigMaps(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
-	s.recordAudit(r, "list", namespace, "configmaps", "*")
+	s.auditRead(r, audit.VerbList, "configmaps", namespace, "*")
 	writeJSON(w, http.StatusOK, map[string]interface{}{"items": items})
 }
 
@@ -1285,7 +1214,7 @@ func (s *Server) handleConfigMap(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	s.recordAudit(r, "get", namespace, "configmaps", item.Name)
+	s.auditRead(r, audit.VerbGet, "configmaps", namespace, item.Name)
 	writeJSON(w, http.StatusOK, item)
 }
 
@@ -1297,18 +1226,27 @@ func (s *Server) handlePodLogsWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	namespace := chi.URLParam(r, "namespace")
+	podLogs := models.AuditLog{
+		Verb:         audit.VerbLogs,
+		ResourceType: "pod",
+		Namespace:    namespace,
+		ResourceName: chi.URLParam(r, "name"),
+		Details:      audit.D{"container": r.URL.Query().Get("container")},
+	}
 	if !s.can(r.Context(), claims.UserID, namespace, "pods", "logs") {
-		logWarnf("logs ws forbidden user=%s ns=%s", claims.Username, namespace)
+		podLogs.Outcome, podLogs.Reason = audit.Denied, reasonForbidden
+		s.auditEvent(r, podLogs)
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
 	if !s.allowLogStream(claims.UserID) {
-		logWarnf("logs ws rate limited user=%s", claims.Username)
+		podLogs.Outcome, podLogs.Reason = audit.RateLimited, reasonRateLimited
+		s.auditEvent(r, podLogs)
 		w.WriteHeader(http.StatusTooManyRequests)
 		return
 	}
 
-	s.recordAudit(r, "logs", namespace, "pods", chi.URLParam(r, "name"))
+	s.auditEvent(r, podLogs)
 
 	client, ok := kubeFor(r).Client()
 	if !ok {
@@ -1465,7 +1403,7 @@ func (s *Server) handleIngresses(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
-	s.recordAudit(r, "list", namespace, "ingresses", "*")
+	s.auditRead(r, audit.VerbList, "ingresses", namespace, "*")
 	writeJSON(w, http.StatusOK, map[string]interface{}{"items": items})
 }
 
@@ -1479,7 +1417,7 @@ func (s *Server) handleCronJobs(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
-	s.recordAudit(r, "list", namespace, "cronjobs", "*")
+	s.auditRead(r, audit.VerbList, "cronjobs", namespace, "*")
 	writeJSON(w, http.StatusOK, map[string]interface{}{"items": items})
 }
 
@@ -1500,7 +1438,7 @@ func (s *Server) handleCronJobYAML(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to render yaml")
 		return
 	}
-	s.recordAudit(r, "get", namespace, "cronjobs", item.Name)
+	s.auditRead(r, audit.VerbGet, "cronjobs", namespace, item.Name)
 	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(kube.PrettifyYAML(data))})
 }
 
@@ -1514,7 +1452,7 @@ func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
-	s.recordAudit(r, "list", namespace, "jobs", "*")
+	s.auditRead(r, audit.VerbList, "jobs", namespace, "*")
 	writeJSON(w, http.StatusOK, map[string]interface{}{"items": items})
 }
 
@@ -1535,7 +1473,7 @@ func (s *Server) handleJobYAML(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to render yaml")
 		return
 	}
-	s.recordAudit(r, "get", namespace, "jobs", item.Name)
+	s.auditRead(r, audit.VerbGet, "jobs", namespace, item.Name)
 	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(kube.PrettifyYAML(data))})
 }
 
@@ -1556,7 +1494,7 @@ func (s *Server) handleIngressYAML(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to render yaml")
 		return
 	}
-	s.recordAudit(r, "get", namespace, "ingresses", item.Name)
+	s.auditRead(r, audit.VerbGet, "ingresses", namespace, item.Name)
 	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(kube.PrettifyYAML(data))})
 }
 
@@ -1678,7 +1616,8 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.recordAudit(r, "admin.create", "-", "users", user.Username+" (source="+source+")")
+	s.auditEvent(r, models.AuditLog{Verb: audit.VerbCreate, ResourceType: audit.KindUser, ResourceName: user.Username,
+		Details: audit.D{"account_source": source, "is_admin": user.IsAdmin, "groups": len(request.GroupIDs)}})
 	writeJSON(w, http.StatusCreated, user)
 }
 
@@ -1718,6 +1657,7 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	before := *user
 	user.Username = request.Username
 	user.IsActive = request.IsActive
 	user.IsAdmin = request.IsAdmin
@@ -1725,7 +1665,18 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	s.recordAudit(r, "admin.update", "-", "users", user.Username)
+	changed := []string{}
+	if before.Username != user.Username {
+		changed = append(changed, "username")
+	}
+	if before.IsActive != user.IsActive {
+		changed = append(changed, "is_active")
+	}
+	if before.IsAdmin != user.IsAdmin {
+		changed = append(changed, "is_admin")
+	}
+	s.auditEvent(r, models.AuditLog{Verb: audit.VerbUpdate, ResourceType: audit.KindUser, ResourceName: user.Username,
+		Details: audit.D{"changed": changed, "is_admin": user.IsAdmin, "is_active": user.IsActive}})
 	writeJSON(w, http.StatusOK, user)
 }
 
@@ -1763,7 +1714,8 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	s.recordAudit(r, "admin.delete", "-", "users", target.Username)
+	s.auditEvent(r, models.AuditLog{Verb: audit.VerbDelete, ResourceType: audit.KindUser, ResourceName: target.Username,
+		Details: audit.D{"account_source": target.AuthSource, "is_admin": target.IsAdmin}})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -1784,7 +1736,8 @@ func (s *Server) handleSetUserGroups(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	s.recordAudit(r, "admin.update_groups", "-", "users", strconv.Itoa(id))
+	s.auditEvent(r, models.AuditLog{Verb: audit.VerbUpdate, ResourceType: audit.KindUser, ResourceName: s.userNameByID(r, id),
+		Details: audit.D{"changed": []string{"groups"}, "groups": len(request.GroupIDs)}})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
@@ -1824,7 +1777,7 @@ func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusConflict)
 		return
 	}
-	s.recordAudit(r, "admin.create", "-", "groups", request.Name)
+	s.auditEvent(r, models.AuditLog{Verb: audit.VerbCreate, ResourceType: audit.KindGroup, ResourceName: request.Name})
 	writeJSON(w, http.StatusCreated, models.Group{ID: id, Name: request.Name})
 }
 
@@ -1845,7 +1798,7 @@ func (s *Server) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	s.recordAudit(r, "admin.update", "-", "groups", request.Name)
+	s.auditEvent(r, models.AuditLog{Verb: audit.VerbUpdate, ResourceType: audit.KindGroup, ResourceName: request.Name, Details: audit.D{"changed": []string{"name"}}})
 	writeJSON(w, http.StatusOK, models.Group{ID: id, Name: request.Name})
 }
 
@@ -1855,11 +1808,12 @@ func (s *Server) handleDeleteGroup(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+	name := s.groupNameByID(r, id)
 	if err := s.store.DeleteGroup(r.Context(), id); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	s.recordAudit(r, "admin.delete", "-", "groups", strconv.Itoa(id))
+	s.auditEvent(r, models.AuditLog{Verb: audit.VerbDelete, ResourceType: audit.KindGroup, ResourceName: name, Details: audit.D{"id": id}})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -1880,7 +1834,8 @@ func (s *Server) handleSetGroupRoles(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	s.recordAudit(r, "admin.update_roles", "-", "groups", strconv.Itoa(id))
+	s.auditEvent(r, models.AuditLog{Verb: audit.VerbUpdate, ResourceType: audit.KindGroup, ResourceName: s.groupNameByID(r, id),
+		Details: audit.D{"changed": []string{"roles"}, "count": len(request.RoleIDs)}})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
@@ -1921,7 +1876,7 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusConflict)
 		return
 	}
-	s.recordAudit(r, "admin.create", "-", "roles", request.Name)
+	s.auditEvent(r, models.AuditLog{Verb: audit.VerbCreate, ResourceType: audit.KindRole, ResourceName: request.Name})
 	writeJSON(w, http.StatusCreated, models.Role{ID: id, Name: request.Name, Description: request.Description})
 }
 
@@ -1943,7 +1898,7 @@ func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	s.recordAudit(r, "admin.update", "-", "roles", request.Name)
+	s.auditEvent(r, models.AuditLog{Verb: audit.VerbUpdate, ResourceType: audit.KindRole, ResourceName: request.Name})
 	writeJSON(w, http.StatusOK, models.Role{ID: id, Name: request.Name, Description: request.Description})
 }
 
@@ -1953,11 +1908,12 @@ func (s *Server) handleDeleteRole(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+	name := s.roleNameByID(r, id)
 	if err := s.store.DeleteRole(r.Context(), id); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	s.recordAudit(r, "admin.delete", "-", "roles", strconv.Itoa(id))
+	s.auditEvent(r, models.AuditLog{Verb: audit.VerbDelete, ResourceType: audit.KindRole, ResourceName: name, Details: audit.D{"id": id}})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -1995,7 +1951,14 @@ func (s *Server) handleAddRolePermission(w http.ResponseWriter, r *http.Request)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	s.recordAudit(r, "admin.add_permission", request.Namespace, "roles", strconv.Itoa(roleID))
+	clusterName := ""
+	if request.ClusterID > 0 {
+		clusterName, _ = s.store.GetClusterName(r.Context(), request.ClusterID)
+	}
+	s.recordPermissionAudit(r, audit.VerbCreate, models.NamespacePermission{
+		RoleID: roleID, ClusterID: request.ClusterID, ClusterName: clusterName,
+		Namespace: request.Namespace, Resource: request.Resource, Action: request.Action,
+	})
 	writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
 }
 
@@ -2005,11 +1968,15 @@ func (s *Server) handleDeletePermission(w http.ResponseWriter, r *http.Request) 
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+	perm, err := s.store.GetNamespacePermission(r.Context(), id)
+	if err != nil {
+		perm = &models.NamespacePermission{ID: id}
+	}
 	if err := s.store.DeleteNamespacePermission(r.Context(), id); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	s.recordAudit(r, "admin.delete_permission", "-", "permissions", strconv.Itoa(id))
+	s.recordPermissionAudit(r, audit.VerbDelete, *perm)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -2043,7 +2010,7 @@ func (s *Server) handleUpdateLDAP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	s.recordAudit(r, "admin.update", "-", "ldap", "config")
+	s.recordSettingsUpdate(r, "ldap", nil)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
@@ -2057,7 +2024,7 @@ func (s *Server) handleUpdateAzureAD(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	s.recordAudit(r, "admin.update", "-", "azure_ad", "config")
+	s.recordSettingsUpdate(r, "azure_ad", nil)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
@@ -2195,14 +2162,12 @@ func (s *Server) handleImportLDAPUsers(w http.ResponseWriter, r *http.Request) {
 		}
 		created = append(created, username)
 	}
-	detail := fmt.Sprintf("%d", len(created))
-	if len(created) > 0 {
-		detail += ": " + strings.Join(created, ", ")
-		if r := []rune(detail); len(r) > 500 {
-			detail = string(r[:500]) + "…"
-		}
+	summary := strings.Join(created, ", ")
+	if r := []rune(summary); len(r) > 500 {
+		summary = string(r[:500]) + "…"
 	}
-	s.recordAudit(r, "admin.import", "-", "ldap_users", detail)
+	s.auditEvent(r, models.AuditLog{Verb: audit.VerbImport, ResourceType: audit.KindUser, ResourceName: "*",
+		Details: audit.D{"account_source": models.AuthSourceLDAP, "count": len(created), "groups": len(request.GroupIDs), "summary": summary}})
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"created":         len(created),
 		"createdUsers":    created,
@@ -2241,7 +2206,7 @@ func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	s.recordAudit(r, "admin.update", "-", "session", "settings")
+	s.recordSettingsUpdate(r, "session", audit.D{"summary": "session_minutes=" + strconv.Itoa(request.SessionMinutes)})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
@@ -2334,48 +2299,48 @@ func (s *Server) handleAuditLogs(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	formatted := make([]map[string]interface{}, 0, len(logs))
+	type auditItem struct {
+		models.AuditLog
+		TimestampFormatted string `json:"timestampFormatted"`
+	}
+	formatted := make([]auditItem, 0, len(logs))
 	for _, entry := range logs {
-		formatted = append(formatted, map[string]interface{}{
-			"id": entry.ID,
-			"timestamp": entry.Timestamp,
-			"timestampFormatted": entry.Timestamp.In(s.timezone).Format("2006-01-02 15:04:05"),
-			"user": entry.User,
-			"action": entry.Action,
-			"namespace": entry.Namespace,
-			"resourceType": entry.ResourceType,
-			"resourceName": entry.ResourceName,
-			"cluster": entry.Cluster,
-		})
+		formatted = append(formatted, auditItem{entry, entry.Timestamp.In(s.timezone).Format("2006-01-02 15:04:05")})
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"items": formatted,
-		"total": total,
-		"limit": limit,
-		"offset": offset,
+		"items":    formatted,
+		"total":    total,
+		"limit":    limit,
+		"offset":   offset,
 		"timezone": s.timezone.String(),
 	})
 }
 
-// auditOutcomes are the values the outcome filter accepts.
-var auditOutcomes = map[string]bool{"success": true, "denied": true, "failed": true, "rate_limited": true}
-
 // auditFilterFrom reads the audit filter query parameters: user, action
-// (contains; "family.*" for a whole family), actionExact=1, outcome,
-// namespace, start, end.
+// (contains; "family.*" for a whole family; a trailing outcome as in
+// deployment.restart.success is split off), actionExact=1, verb, outcome,
+// resourceType, resourceName, cluster, namespace, start, end.
 func auditFilterFrom(w http.ResponseWriter, r *http.Request) (store.AuditFilter, bool) {
 	q := r.URL.Query()
 	f := store.AuditFilter{
-		User:        q.Get("user"),
-		Action:      q.Get("action"),
-		ActionExact: q.Get("actionExact") == "1" || q.Get("actionExact") == "true",
-		Outcome:     q.Get("outcome"),
-		Namespace:   q.Get("namespace"),
-		Start:       parseTimeParam(q.Get("start")),
-		End:         parseTimeParam(q.Get("end")),
+		User:         q.Get("user"),
+		Action:       q.Get("action"),
+		ActionExact:  q.Get("actionExact") == "1" || q.Get("actionExact") == "true",
+		Verb:         q.Get("verb"),
+		Outcome:      q.Get("outcome"),
+		ResourceType: q.Get("resourceType"),
+		ResourceName: q.Get("resourceName"),
+		Cluster:      q.Get("cluster"),
+		Namespace:    q.Get("namespace"),
+		Start:        parseTimeParam(q.Get("start")),
+		End:          parseTimeParam(q.Get("end")),
 	}
-	if f.Outcome != "" && !auditOutcomes[f.Outcome] {
-		writeError(w, http.StatusBadRequest, "outcome must be success, denied, failed or rate_limited")
+	if f.Outcome != "" && !slices.Contains(audit.Outcomes, f.Outcome) {
+		writeError(w, http.StatusBadRequest, "outcome must be one of "+strings.Join(audit.Outcomes, ", "))
+		return f, false
+	}
+	if f.Verb != "" && !slices.Contains(audit.Verbs, f.Verb) {
+		writeError(w, http.StatusBadRequest, "unknown verb")
 		return f, false
 	}
 	return f, true
@@ -2384,12 +2349,12 @@ func auditFilterFrom(w http.ResponseWriter, r *http.Request) (store.AuditFilter,
 // handleAuditFacets lists the actions, users and namespaces found in the
 // audit log, for the filter suggestions in Admin → Audit Logs.
 func (s *Server) handleAuditFacets(w http.ResponseWriter, r *http.Request) {
-	actions, users, namespaces, err := s.store.AuditFacets(r.Context(), 1000)
+	facets, err := s.store.AuditFacets(r.Context(), 1000)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to read audit facets")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string][]string{"actions": actions, "users": users, "namespaces": namespaces})
+	writeJSON(w, http.StatusOK, facets)
 }
 
 func (s *Server) handleAuditLogsExport(w http.ResponseWriter, r *http.Request) {
@@ -2411,16 +2376,30 @@ func (s *Server) handleAuditLogsExport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/csv")
 	w.Header().Set("Content-Disposition", "attachment; filename=audit-logs.csv")
 	writer := csv.NewWriter(w)
-	_ = writer.Write([]string{"timestamp", "user", "action", "cluster", "namespace", "resource_type", "resource_name"})
+	_ = writer.Write([]string{"timestamp", "user", "action", "verb", "outcome", "reason", "cluster", "namespace",
+		"resource_type", "resource_name", "details", "source_ip", "user_agent", "auth_source", "request_id"})
 	for _, entry := range logs {
+		details := ""
+		if len(entry.Details) > 0 {
+			b, _ := json.Marshal(entry.Details)
+			details = string(b)
+		}
 		_ = writer.Write([]string{
 			entry.Timestamp.In(s.timezone).Format(time.RFC3339),
 			entry.User,
 			entry.Action,
+			entry.Verb,
+			entry.Outcome,
+			entry.Reason,
 			entry.Cluster,
 			entry.Namespace,
 			entry.ResourceType,
 			entry.ResourceName,
+			details,
+			entry.SourceIP,
+			entry.UserAgent,
+			entry.AuthSource,
+			entry.RequestID,
 		})
 	}
 	writer.Flush()
@@ -2493,14 +2472,14 @@ func (s *Server) handleUploadLogo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = os.WriteFile(s.logoMetaPath(), []byte(contentType), 0o600)
-	s.recordAudit(r, "admin.update", "-", "customization", "logo")
+	s.recordSettingsUpdate(r, "logo", audit.D{"size_bytes": len(data)})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
 func (s *Server) handleDeleteLogo(w http.ResponseWriter, r *http.Request) {
 	_ = os.Remove(s.logoPath())
 	_ = os.Remove(s.logoMetaPath())
-	s.recordAudit(r, "admin.update", "-", "customization", "logo_removed")
+	s.auditEvent(r, models.AuditLog{Verb: audit.VerbDelete, ResourceType: audit.KindSettings, ResourceName: "logo"})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -2544,6 +2523,7 @@ func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, resou
 	}
 	namespace := chi.URLParam(r, "namespace")
 	if !featureAllows(resource, action) {
+		s.auditReadDenied(r, resource, action, reasonFeatureDisabled)
 		writeError(w, http.StatusForbidden, "this feature is disabled by the operator")
 		return "", false
 	}
@@ -2556,6 +2536,7 @@ func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, resou
 		return "", false
 	}
 	if !engine.Can(clusterIDFrom(r.Context()), namespace, resource, action) {
+		s.auditReadDenied(r, resource, action, reasonForbidden)
 		w.WriteHeader(http.StatusForbidden)
 		return "", false
 	}

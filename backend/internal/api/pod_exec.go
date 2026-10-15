@@ -20,6 +20,7 @@ import (
 	"k8s.io/client-go/tools/remotecommand"
 	utilexec "k8s.io/client-go/util/exec"
 
+	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/auth"
 	"k8s-dashboard/backend/internal/logging"
 	"k8s-dashboard/backend/internal/models"
@@ -110,7 +111,7 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 	requestID := logging.RequestIDFrom(r.Context())
 
 	if !s.can(r.Context(), claims.UserID, namespace, "pods", "exec") {
-		s.recordExecAudit(claims.Username, namespace, pod, "denied", "", r)
+		s.recordExecAudit(r, namespace, pod, audit.Denied, reasonForbidden, nil)
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
@@ -119,8 +120,8 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 	// handshake from scripts, so a browser gets the socket, a readable error
 	// frame and close code 4429; any other client gets a plain 429.
 	if !s.execSessions.acquire(claims.UserID) {
-		s.recordExecAudit(claims.Username, namespace, pod, "rate_limited",
-			"max_sessions="+strconv.Itoa(maxExecSessionsPerUser), r)
+		s.recordExecAudit(r, namespace, pod, audit.RateLimited, "max_sessions",
+			audit.D{"max_sessions": maxExecSessionsPerUser})
 		msg := "too many open shells (limit " + strconv.Itoa(maxExecSessionsPerUser) + " per user); close one first"
 		if websocket.IsWebSocketUpgrade(r) {
 			upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
@@ -182,7 +183,7 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 	executor, err := remotecommand.NewSPDYExecutor(cfg, "POST", req.URL())
 	if err != nil {
 		writeExecError(conn, "spdy init failed: "+err.Error())
-		s.recordExecAudit(claims.Username, namespace, pod, "failed", "spdy_init:"+err.Error(), r)
+		s.recordExecAudit(r, namespace, pod, audit.Failed, "spdy_init", failDetails(err, audit.D{"container": container, "command": command}))
 		return
 	}
 
@@ -194,16 +195,8 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 	MetricsExecIncr()
-	s.recordExecAudit(claims.Username, namespace, pod, "start",
-		"container="+container+";cmd="+command, r)
-	slog.Info("pod.exec.start",
-		slog.String("user", claims.Username),
-		slog.String("namespace", namespace),
-		slog.String("pod", pod),
-		slog.String("container", container),
-		slog.String("command", command),
-		slog.String("request_id", requestID),
-	)
+	s.recordExecAudit(r, namespace, pod, audit.Success, "",
+		audit.D{"phase": "start", "container": container, "command": command})
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
@@ -222,9 +215,9 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 	// A shell that exits with a non-zero code (`exit 3`, last command
 	// failed) is a normal end, not a failure: record the code. Exit code -1
 	// = the session was cut (browser closed, idle timeout).
-	outcome := "end"
+	outcome := audit.Success
 	exitCode := -1
-	errDetail := ""
+	var streamErr error
 	var exitErr utilexec.ExitError
 	switch {
 	case err == nil:
@@ -233,39 +226,34 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 		exitCode = exitErr.ExitStatus()
 	case errors.Is(err, context.Canceled), errors.Is(err, io.EOF):
 	default:
-		outcome = "failed"
-		errDetail = err.Error() + ";"
+		outcome = audit.Failed
+		streamErr = err
 		bridge.writeError("exec ended: " + err.Error())
 	}
 	duration := time.Since(start)
 	bytesIn, bytesOut := bridge.bytesIn.Load(), bridge.bytesOut.Load()
-	s.recordExecAudit(claims.Username, namespace, pod, outcome,
-		errDetail+"container="+container+
-			";exit="+strconv.Itoa(exitCode)+
-			";bytes_in="+strconv.FormatInt(bytesIn, 10)+
-			";bytes_out="+strconv.FormatInt(bytesOut, 10)+
-			";dur_ms="+itoa(duration.Milliseconds()), r)
-	slog.Info("pod.exec.end",
-		slog.String("user", claims.Username),
-		slog.String("namespace", namespace),
-		slog.String("pod", pod),
-		slog.String("outcome", outcome),
-		slog.Int("exit_code", exitCode),
-		slog.Int64("bytes_in", bytesIn),
-		slog.Int64("bytes_out", bytesOut),
-		slog.Int64("duration_ms", duration.Milliseconds()),
-		slog.String("request_id", requestID),
-	)
+	end := audit.D{
+		"phase":       "end",
+		"container":   container,
+		"exit_code":   exitCode,
+		"bytes_in":    bytesIn,
+		"bytes_out":   bytesOut,
+		"duration_ms": duration.Milliseconds(),
+	}
+	s.recordExecAudit(r, namespace, pod, outcome, failReason(streamErr), failDetails(streamErr, end))
 
 	if rec != nil {
 		res := rec.Close()
-		detail := "session_id=" + res.SessionID +
-			";size=" + strconv.FormatInt(res.SizeBytes, 10) +
-			";dur_ms=" + itoa(res.Duration.Milliseconds())
-		if res.Truncated {
-			detail += ";truncated=" + res.TruncateReason
+		d := audit.D{
+			"pod":         pod,
+			"container":   container,
+			"size_bytes":  res.SizeBytes,
+			"duration_ms": res.Duration.Milliseconds(),
 		}
-		s.recordExecAudit(claims.Username, namespace, pod, "session.recorded", detail, r)
+		if res.Truncated {
+			d["truncate_reason"] = res.TruncateReason
+		}
+		s.recordRecordingCreateAudit(r, namespace, res.SessionID, audit.Success, "", d)
 	}
 }
 
@@ -297,13 +285,13 @@ func (s *Server) startExecRecording(r *http.Request, conn *websocket.Conn, user,
 		return rec
 	case errors.Is(err, recording.ErrDisabled):
 	case errors.Is(err, recording.ErrNoSpace):
-		s.recordExecAudit(user, namespace, pod, "session.record_skipped", "reason=disk_quota", r)
+		s.recordRecordingCreateAudit(r, namespace, "", audit.Failed, "disk_quota", audit.D{"pod": pod, "container": container})
 	default:
 		slog.Warn("exec recording failed to start",
 			slog.Any("error", err),
 			slog.String("request_id", requestID),
 		)
-		s.recordExecAudit(user, namespace, pod, "session.record_failed", err.Error(), r)
+		s.recordRecordingCreateAudit(r, namespace, "", audit.Failed, "error", failDetails(err, audit.D{"pod": pod, "container": container}))
 	}
 	return nil
 }
@@ -381,18 +369,34 @@ func formatInt(v int64) string {
 	return string(buf[i:])
 }
 
-// recordExecAudit writes an audit row and keeps the console log aligned.
-func (s *Server) recordExecAudit(user, namespace, pod, outcome, detail string, r *http.Request) {
-	resource := pod
-	if detail != "" {
-		resource = pod + " (" + detail + ")"
-	}
-	go s.audit.Record(s.auditCtx(r), models.AuditLog{
-		User:         user,
-		Action:       "pod.exec." + outcome,
-		Namespace:    namespace,
+// recordExecAudit records a pod shell event: denied / rate_limited before
+// it opens, then phase start and phase end (exit code, bytes, duration).
+func (s *Server) recordExecAudit(r *http.Request, namespace, pod, outcome, reason string, details audit.D) {
+	s.auditEvent(r, models.AuditLog{
+		Verb:         audit.VerbExec,
+		Outcome:      outcome,
+		Reason:       reason,
 		ResourceType: "pod",
-		ResourceName: resource,
+		Namespace:    namespace,
+		ResourceName: pod,
+		Details:      details,
+	})
+}
+
+// recordRecordingCreateAudit records the recording of a pod shell, on the
+// request's cluster (where the shell ran).
+func (s *Server) recordRecordingCreateAudit(r *http.Request, namespace, sessionID, outcome, reason string, details audit.D) {
+	ci := clusterFrom(r.Context())
+	s.auditEvent(r, models.AuditLog{
+		Verb:         audit.VerbCreate,
+		Outcome:      outcome,
+		Reason:       reason,
+		ResourceType: audit.KindRecording,
+		Namespace:    namespace,
+		ResourceName: sessionID,
+		Cluster:      ci.Name,
+		ClusterID:    ci.ID,
+		Details:      details,
 	})
 }
 

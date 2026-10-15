@@ -9,6 +9,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
+	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/auth"
 	"k8s-dashboard/backend/internal/kube"
 	logpkg "k8s-dashboard/backend/internal/logging"
@@ -140,13 +141,13 @@ func (s *Server) handleSelectCluster(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !s.canUseCluster(r.Context(), user, body.ClusterID) {
-			s.recordClusterSelectAudit(r, user.Username, n, "denied")
+			s.recordClusterSelectAudit(r, n, body.ClusterID, audit.Denied, reasonForbidden)
 			writeError(w, http.StatusForbidden, "you have no permissions on this cluster")
 			return
 		}
 		// Connect now so a broken cluster fails here, not on the next page.
 		if _, err := s.clusters.Get(r.Context(), body.ClusterID); err != nil {
-			s.recordClusterSelectAudit(r, user.Username, n, "failed")
+			s.recordClusterSelectAudit(r, n, body.ClusterID, audit.Failed, "unreachable")
 			writeError(w, http.StatusBadGateway, "cannot connect to cluster: "+err.Error())
 			return
 		}
@@ -156,18 +157,25 @@ func (s *Server) handleSelectCluster(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to save selection")
 		return
 	}
-	s.recordClusterSelectAudit(r, user.Username, name, "success")
+	s.recordClusterSelectAudit(r, name, body.ClusterID, audit.Success, "")
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "clusterId": body.ClusterID, "name": name})
 }
 
-func (s *Server) recordClusterSelectAudit(r *http.Request, user, cluster, outcome string) {
-	go s.audit.Record(s.auditCtx(r), models.AuditLog{
-		User:         user,
-		Action:       "cluster.select." + outcome,
-		Namespace:    "-",
-		ResourceType: "cluster",
+// recordClusterSelectAudit records a user's cluster pick. id 0 is "back to
+// the default cluster", which has no cluster of its own to record.
+func (s *Server) recordClusterSelectAudit(r *http.Request, cluster string, id int, outcome, reason string) {
+	target := ""
+	if id > 0 {
+		target = cluster
+	}
+	s.auditEvent(r, models.AuditLog{
+		Verb:         audit.VerbSelect,
+		Outcome:      outcome,
+		Reason:       reason,
+		ResourceType: audit.KindCluster,
 		ResourceName: cluster,
-		Cluster:      cluster,
+		Cluster:      target,
+		ClusterID:    id,
 	})
 }
 

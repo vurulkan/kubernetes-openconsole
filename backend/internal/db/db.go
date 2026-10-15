@@ -235,6 +235,17 @@ func migrate(ctx context.Context, conn *sql.DB) error {
 		// 2.16.0: optional LDAP account creation on first sign-in.
 		`ALTER TABLE ldap_config ADD COLUMN auto_provision INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE ldap_config ADD COLUMN auto_provision_groups TEXT NOT NULL DEFAULT ''`,
+		// 2.17.0: structured audit events. Rows written before have verb ''
+		// until audit.Logger.UpgradeLegacy fills it.
+		`ALTER TABLE audit_logs ADD COLUMN verb TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE audit_logs ADD COLUMN outcome TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE audit_logs ADD COLUMN reason TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE audit_logs ADD COLUMN cluster_id INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE audit_logs ADD COLUMN details TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE audit_logs ADD COLUMN request_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE audit_logs ADD COLUMN source_ip TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE audit_logs ADD COLUMN user_agent TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE audit_logs ADD COLUMN auth_source TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, stmt := range alterStatements {
 		if _, err := conn.ExecContext(ctx, stmt); err != nil {
@@ -249,6 +260,16 @@ func migrate(ctx context.Context, conn *sql.DB) error {
 	if _, err := conn.ExecContext(ctx, `ALTER TABLE users ADD COLUMN last_login_at DATETIME NULL`); err == nil {
 		if _, err := conn.ExecContext(ctx, `UPDATE users SET last_login_at = created_at`); err != nil {
 			return fmt.Errorf("backfill last_login_at: %w", err)
+		}
+	}
+
+	for _, stmt := range []string{
+		`CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs (timestamp)`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs (action)`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_logs_outcome ON audit_logs (outcome)`,
+	} {
+		if _, err := conn.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("audit indexes: %w", err)
 		}
 	}
 

@@ -14,7 +14,7 @@ func TestSavedViews(t *testing.T) {
 
 	view := map[string]any{"name": "payments pods", "namespace": "team-a", "tab": "pods", "search": "label:app=api", "viewMode": "list"}
 	e.expect("POST", "/api/views", alice, view, http.StatusOK)
-	e.waitAudit("view.save", "payments pods")
+	e.waitAudit("saved_view.create.success", "payments pods")
 	// Saving the same name again replaces it instead of duplicating.
 	view["search"] = "label:app=web"
 	e.expect("POST", "/api/views", alice, view, http.StatusOK)
@@ -37,12 +37,12 @@ func TestSavedViews(t *testing.T) {
 		t.Fatalf("bob should see alice's shared view: %s", out)
 	}
 	e.expect("PUT", "/api/views/1", bob, map[string]bool{"shared": false}, http.StatusForbidden)
-	e.waitAudit("view.change.denied", "payments pods")
+	e.waitAudit("saved_view.share.denied", "payments pods")
 	e.expect("DELETE", "/api/views/1", bob, nil, http.StatusForbidden)
 
 	// Admins can remove a shared view.
 	e.expect("DELETE", "/api/views/1", admin, nil, http.StatusOK)
-	e.waitAudit("view.delete", "owner=alice")
+	e.waitAudit("saved_view.delete.success", `"owner":"alice"`)
 	if out := e.expect("GET", "/api/views", alice, nil, http.StatusOK); strings.Contains(out, "payments pods") {
 		t.Fatalf("view should be gone: %s", out)
 	}

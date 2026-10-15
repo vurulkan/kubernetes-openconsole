@@ -4,15 +4,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
-	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"k8s-dashboard/backend/internal/logging"
+	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/models"
 )
 
@@ -51,9 +49,11 @@ type applyRequest struct {
 //
 // Permission required: {resource}:edit  (admins bypass as usual)
 // Rate limit: same per-user bucket as deployment.scale / restart.
-// Audit: {resource}.apply.{success,denied,rate_limited,failed} with
-//        from/to sha256 hashes of the YAML in the ResourceName field. Hashes
-//        rather than full bodies keep the audit table small and non-leaky.
+// Audit: <kind>.apply, outcome success / denied / rate_limited / failed,
+//
+//	with dry_run and the yaml_from / yaml_to sha256 hashes as details.
+//	Hashes rather than full bodies keep the audit table small and
+//	non-leaky.
 func (s *Server) handleYAMLApply(w http.ResponseWriter, r *http.Request) {
 	resource := chi.URLParam(r, "resource")
 	target, ok := resourceGVR[resource]
@@ -63,7 +63,6 @@ func (s *Server) handleYAMLApply(w http.ResponseWriter, r *http.Request) {
 	}
 	namespace := chi.URLParam(r, "namespace")
 	name := chi.URLParam(r, "name")
-	requestID := logging.RequestIDFrom(r.Context())
 
 	user, ok := s.userForRequest(r)
 	if !ok {
@@ -72,7 +71,7 @@ func (s *Server) handleYAMLApply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !s.can(r.Context(), user.ID, namespace, resource, "edit") {
-		s.recordApplyAudit(user.Username, namespace, name, resource, "denied", "", r)
+		s.recordApplyAudit(r, namespace, name, resource, audit.Denied, reasonForbidden, nil)
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -92,7 +91,7 @@ func (s *Server) handleYAMLApply(w http.ResponseWriter, r *http.Request) {
 	if !body.DryRun {
 		if !allowDeployAction(user.ID) {
 			w.Header().Set("Retry-After", "6")
-			s.recordApplyAudit(user.Username, namespace, name, resource, "rate_limited", "", r)
+			s.recordApplyAudit(r, namespace, name, resource, audit.RateLimited, reasonRateLimited, audit.D{"dry_run": false})
 			writeError(w, http.StatusTooManyRequests, "rate limited")
 			return
 		}
@@ -101,18 +100,8 @@ func (s *Server) handleYAMLApply(w http.ResponseWriter, r *http.Request) {
 	beforeHash := shortHash(body.YAML)
 	result, err := s.resources.Apply(r.Context(), target.GVR, target.Kind, namespace, name, []byte(body.YAML), body.DryRun)
 	if err != nil {
-		if !body.DryRun {
-			// log — dry-run failures are visible to the user already.
-			slog.ErrorContext(r.Context(), resource+".apply.failed",
-				slog.String("user", user.Username),
-				slog.String("namespace", namespace),
-				slog.String("name", name),
-				slog.Any("error", err),
-				slog.String("request_id", requestID),
-			)
-		}
-		s.recordApplyAudit(user.Username, namespace, name, resource, "failed",
-			fmt.Sprintf("dry=%v from=%s err=%s", body.DryRun, beforeHash, err.Error()), r)
+		s.recordApplyAudit(r, namespace, name, resource, audit.Failed, failReason(err),
+			failDetails(err, audit.D{"dry_run": body.DryRun, "yaml_from": beforeHash}))
 
 		// Map k8s API errors to the right HTTP status so a reverse proxy
 		// (Cloudflare, ingress-nginx) doesn't intercept a 5xx and show its
@@ -123,9 +112,8 @@ func (s *Server) handleYAMLApply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	afterHash := shortHash(result.AppliedYAML)
-	outcome := "success"
-	details := fmt.Sprintf("dry=%v from=%s to=%s", body.DryRun, beforeHash, afterHash)
-	s.recordApplyAudit(user.Username, namespace, name, resource, outcome, details, r)
+	s.recordApplyAudit(r, namespace, name, resource, audit.Success, "",
+		audit.D{"dry_run": body.DryRun, "yaml_from": beforeHash, "yaml_to": afterHash})
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"applied": result.AppliedYAML,
@@ -174,26 +162,14 @@ func shortHash(s string) string {
 	return hex.EncodeToString(sum[:4])
 }
 
-func (s *Server) recordApplyAudit(user, namespace, name, resource, outcome, details string, r *http.Request) {
-	requestID := requestIDOf(r)
-	resourceName := name
-	if details != "" {
-		resourceName = fmt.Sprintf("%s (%s)", name, details)
-	}
-	go s.audit.Record(s.auditCtx(r), models.AuditLog{
-		User:         user,
-		Action:       resource + ".apply." + outcome,
+func (s *Server) recordApplyAudit(r *http.Request, namespace, name, resource, outcome, reason string, details audit.D) {
+	s.auditEvent(r, models.AuditLog{
+		Verb:         audit.VerbApply,
+		Outcome:      outcome,
+		Reason:       reason,
+		ResourceType: audit.Kind(resource),
 		Namespace:    namespace,
-		ResourceType: resource,
-		ResourceName: resourceName,
+		ResourceName: name,
+		Details:      details,
 	})
-	slog.Info("yaml.apply",
-		slog.String("resource", resource),
-		slog.String("outcome", outcome),
-		slog.String("user", user),
-		slog.String("namespace", namespace),
-		slog.String("name", name),
-		slog.String("details", details),
-		slog.String("request_id", requestID),
-	)
 }

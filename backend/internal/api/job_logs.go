@@ -14,8 +14,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/auth"
-	"k8s-dashboard/backend/internal/logging"
 	"k8s-dashboard/backend/internal/models"
 )
 
@@ -34,14 +34,23 @@ func (s *Server) handleJobLogsWS(w http.ResponseWriter, r *http.Request) {
 	}
 	namespace := chi.URLParam(r, "namespace")
 	jobName := chi.URLParam(r, "name")
-	requestID := logging.RequestIDFrom(r.Context())
 
+	logsEvent := models.AuditLog{
+		Verb:         audit.VerbLogs,
+		ResourceType: "job",
+		Namespace:    namespace,
+		ResourceName: jobName,
+	}
 	if !s.can(r.Context(), claims.UserID, namespace, "jobs", "get") ||
 		!s.can(r.Context(), claims.UserID, namespace, "pods", "logs") {
+		logsEvent.Outcome, logsEvent.Reason = audit.Denied, reasonForbidden
+		s.auditEvent(r, logsEvent)
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
 	if !s.allowLogStream(claims.UserID) {
+		logsEvent.Outcome, logsEvent.Reason = audit.RateLimited, reasonRateLimited
+		s.auditEvent(r, logsEvent)
 		w.WriteHeader(http.StatusTooManyRequests)
 		return
 	}
@@ -80,20 +89,8 @@ func (s *Server) handleJobLogsWS(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 	MetricsLogStreamIncr()
 
-	go s.audit.Record(s.auditCtx(r), models.AuditLog{
-		User:         claims.Username,
-		Action:       "job.logs",
-		Namespace:    namespace,
-		ResourceType: "job",
-		ResourceName: jobName,
-	})
-	slog.Info("job.logs.start",
-		slog.String("user", claims.Username),
-		slog.String("namespace", namespace),
-		slog.String("job", jobName),
-		slog.Int("pods", len(podList.Items)),
-		slog.String("request_id", requestID),
-	)
+	logsEvent.Details = audit.D{"pods": len(podList.Items)}
+	s.auditEvent(r, logsEvent)
 
 	var writeMu sync.Mutex
 	writeLine := func(prefix, line string) {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/models"
 )
 
@@ -83,13 +84,13 @@ func (s *Server) handleSaveView(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to save view")
 		return
 	}
-	s.recordViewAudit(r, user.Username, "view.save", body.Name, "shared="+strconv.FormatBool(body.Shared))
+	s.recordViewAudit(r, audit.VerbCreate, audit.Success, body.Name, audit.D{"shared": body.Shared})
 	writeJSON(w, http.StatusOK, map[string]any{"id": id})
 }
 
 // handleShareView toggles sharing on one of the caller's views.
 func (s *Server) handleShareView(w http.ResponseWriter, r *http.Request) {
-	user, view, ok := s.viewForWrite(w, r, false)
+	_, view, ok := s.viewForWrite(w, r, audit.VerbShare, false)
 	if !ok {
 		return
 	}
@@ -104,12 +105,12 @@ func (s *Server) handleShareView(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to update view")
 		return
 	}
-	s.recordViewAudit(r, user.Username, "view.share", view.Name, "shared="+strconv.FormatBool(body.Shared))
+	s.recordViewAudit(r, audit.VerbShare, audit.Success, view.Name, audit.D{"shared": body.Shared, "owner": view.Owner})
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
 func (s *Server) handleDeleteView(w http.ResponseWriter, r *http.Request) {
-	user, view, ok := s.viewForWrite(w, r, true)
+	_, view, ok := s.viewForWrite(w, r, audit.VerbDelete, true)
 	if !ok {
 		return
 	}
@@ -117,13 +118,13 @@ func (s *Server) handleDeleteView(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to delete view")
 		return
 	}
-	s.recordViewAudit(r, user.Username, "view.delete", view.Name, "owner="+view.Owner)
+	s.recordViewAudit(r, audit.VerbDelete, audit.Success, view.Name, audit.D{"owner": view.Owner})
 	writeJSON(w, http.StatusOK, map[string]any{"status": "deleted"})
 }
 
 // viewForWrite loads the view in the URL and checks the caller may change
 // it: the owner, or (when adminMayAct) an admin for a shared view.
-func (s *Server) viewForWrite(w http.ResponseWriter, r *http.Request, adminMayAct bool) (*models.User, *models.SavedView, bool) {
+func (s *Server) viewForWrite(w http.ResponseWriter, r *http.Request, verb string, adminMayAct bool) (*models.User, *models.SavedView, bool) {
 	user, ok := s.userForRequest(r)
 	if !ok {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -150,19 +151,26 @@ func (s *Server) viewForWrite(w http.ResponseWriter, r *http.Request, adminMayAc
 			writeError(w, http.StatusNotFound, "view not found")
 			return nil, nil, false
 		}
-		s.recordViewAudit(r, user.Username, "view.change.denied", view.Name, "owner="+view.Owner)
+		s.recordViewAudit(r, verb, audit.Denied, view.Name, audit.D{"owner": view.Owner})
 		writeError(w, http.StatusForbidden, "only the owner can change this view")
 		return nil, nil, false
 	}
 	return user, view, true
 }
 
-func (s *Server) recordViewAudit(r *http.Request, user, action, name, detail string) {
-	go s.audit.Record(s.auditCtx(r), models.AuditLog{
-		User:         user,
-		Action:       action,
-		Namespace:    "-",
-		ResourceType: "view",
-		ResourceName: name + " (" + detail + ")",
+// recordViewAudit records a saved view change. Views are UI settings, not
+// cluster actions, so no cluster is recorded.
+func (s *Server) recordViewAudit(r *http.Request, verb, outcome, name string, details audit.D) {
+	reason := ""
+	if outcome == audit.Denied {
+		reason = "not_owner"
+	}
+	s.auditEvent(r, models.AuditLog{
+		Verb:         verb,
+		Outcome:      outcome,
+		Reason:       reason,
+		ResourceType: audit.KindSavedView,
+		ResourceName: name,
+		Details:      details,
 	})
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -281,6 +282,29 @@ func (s *Store) AddNamespacePermission(ctx context.Context, roleID, clusterID in
 		`INSERT INTO namespace_permissions (role_id, cluster_id, namespace, resource, action) VALUES (?, ?, ?, ?, ?)`,
 		roleID, clusterID, namespace, resource, action)
 	return err
+}
+
+// GetNamespacePermission returns one grant with its cluster name.
+func (s *Store) GetNamespacePermission(ctx context.Context, id int) (*models.NamespacePermission, error) {
+	var perm models.NamespacePermission
+	err := s.conn.QueryRowContext(ctx, `
+		SELECT np.id, np.role_id, COALESCE(np.cluster_id, 0), COALESCE(c.name, ''),
+		       np.namespace, np.resource, np.action
+		FROM namespace_permissions np
+		LEFT JOIN clusters c ON c.id = np.cluster_id
+		WHERE np.id = ?`, id).Scan(&perm.ID, &perm.RoleID, &perm.ClusterID, &perm.ClusterName,
+		&perm.Namespace, &perm.Resource, &perm.Action)
+	if err != nil {
+		return nil, err
+	}
+	return &perm, nil
+}
+
+// ClusterIDByName returns the id of the cluster with this name, 0 if none.
+func (s *Store) ClusterIDByName(ctx context.Context, name string) int {
+	var id int
+	_ = s.conn.QueryRowContext(ctx, `SELECT id FROM clusters WHERE name = ?`, name).Scan(&id)
+	return id
 }
 
 func (s *Store) DeleteNamespacePermission(ctx context.Context, id int) error {
@@ -610,22 +634,45 @@ func (s *Store) UpdateKubeCredentials(ctx context.Context, creds models.KubeCred
 }
 
 func (s *Store) AddAuditLog(ctx context.Context, entry models.AuditLog) error {
-	_, err := s.conn.ExecContext(ctx, `INSERT INTO audit_logs (timestamp, user, action, namespace, resource_type, resource_name, cluster) VALUES (?, ?, ?, ?, ?, ?, ?)`, entry.Timestamp, entry.User, entry.Action, entry.Namespace, entry.ResourceType, entry.ResourceName, entry.Cluster)
+	details := ""
+	if len(entry.Details) > 0 {
+		b, err := json.Marshal(entry.Details)
+		if err != nil {
+			return err
+		}
+		details = string(b)
+	}
+	_, err := s.conn.ExecContext(ctx, `INSERT INTO audit_logs
+		(timestamp, user, action, verb, outcome, reason, namespace, resource_type, resource_name,
+		 cluster, cluster_id, details, request_id, source_ip, user_agent, auth_source)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		entry.Timestamp, entry.User, entry.Action, entry.Verb, entry.Outcome, entry.Reason,
+		entry.Namespace, entry.ResourceType, entry.ResourceName, entry.Cluster, entry.ClusterID,
+		details, entry.RequestID, entry.SourceIP, entry.UserAgent, entry.AuthSource)
 	return err
 }
 
-// AuditFilter selects audit entries. Text filters match anywhere in the
-// field, except Action: "family.*" matches every action starting with
-// "family.", and ActionExact matches the action exactly. Outcome matches the
-// action's last segment (success, denied, failed, rate_limited, …).
+// AuditFilter selects audit entries. User, Namespace and ResourceName match
+// anywhere in the field. Action: "family.*" matches every action starting
+// with "family.", ActionExact matches exactly, anything else matches
+// anywhere; an action ending in an outcome (deployment.restart.success, the
+// pre-2.17 form) is split into action and outcome. Verb, Outcome,
+// ResourceType and Cluster match exactly.
 type AuditFilter struct {
-	User        string
-	Action      string
-	ActionExact bool
-	Outcome     string
-	Namespace   string
-	Start, End  *time.Time
+	User         string
+	Action       string
+	ActionExact  bool
+	Verb         string
+	Outcome      string
+	ResourceType string
+	ResourceName string
+	Cluster      string
+	Namespace    string
+	Start, End   *time.Time
 }
+
+// auditOutcomeSuffixes are the outcomes a pre-2.17 action ended in.
+var auditOutcomeSuffixes = []string{"success", "denied", "failed", "rate_limited", "locked"}
 
 // likeEscape makes s a literal inside a LIKE pattern (ESCAPE '\').
 func likeEscape(s string) string {
@@ -639,8 +686,18 @@ func (f AuditFilter) where() (string, []interface{}) {
 		conditions = append(conditions, column+` LIKE ? ESCAPE '\'`)
 		args = append(args, "%"+likeEscape(value)+"%")
 	}
+	equals := func(column, value string) {
+		conditions = append(conditions, column+" = ?")
+		args = append(args, value)
+	}
 	if f.User != "" {
 		contains("user", f.User)
+	}
+	for _, o := range auditOutcomeSuffixes {
+		if strings.HasSuffix(f.Action, "."+o) && f.Outcome == "" {
+			f.Action, f.Outcome = strings.TrimSuffix(f.Action, "."+o), o
+			break
+		}
 	}
 	switch {
 	case f.Action == "":
@@ -648,14 +705,24 @@ func (f AuditFilter) where() (string, []interface{}) {
 		conditions = append(conditions, `action LIKE ? ESCAPE '\'`)
 		args = append(args, likeEscape(strings.TrimSuffix(f.Action, "*"))+"%")
 	case f.ActionExact:
-		conditions = append(conditions, "action = ?")
-		args = append(args, f.Action)
+		equals("action", f.Action)
 	default:
 		contains("action", f.Action)
 	}
+	if f.Verb != "" {
+		equals("verb", f.Verb)
+	}
 	if f.Outcome != "" {
-		conditions = append(conditions, `action LIKE ? ESCAPE '\'`)
-		args = append(args, "%."+likeEscape(f.Outcome))
+		equals("outcome", f.Outcome)
+	}
+	if f.ResourceType != "" {
+		equals("resource_type", f.ResourceType)
+	}
+	if f.ResourceName != "" {
+		contains("resource_name", f.ResourceName)
+	}
+	if f.Cluster != "" {
+		equals("cluster", f.Cluster)
 	}
 	if f.Namespace != "" {
 		contains("namespace", f.Namespace)
@@ -678,10 +745,12 @@ func (s *Store) ListAuditLogs(ctx context.Context, limit, offset int, userFilter
 	return s.ListAuditLogsFiltered(ctx, limit, offset, AuditFilter{User: userFilter, Action: actionFilter, Namespace: namespaceFilter, Start: startTime, End: endTime})
 }
 
+const auditColumns = `id, timestamp, user, action, verb, outcome, reason, namespace, resource_type,
+	resource_name, cluster, cluster_id, details, request_id, source_ip, user_agent, auth_source`
+
 func (s *Store) ListAuditLogsFiltered(ctx context.Context, limit, offset int, f AuditFilter) ([]models.AuditLog, error) {
 	where, args := f.where()
-	query := `SELECT id, timestamp, user, action, namespace, resource_type, resource_name, cluster FROM audit_logs` +
-		where + ` ORDER BY timestamp DESC LIMIT ? OFFSET ?`
+	query := `SELECT ` + auditColumns + ` FROM audit_logs` + where + ` ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?`
 	args = append(args, limit, offset)
 	rows, err := s.conn.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -691,8 +760,15 @@ func (s *Store) ListAuditLogsFiltered(ctx context.Context, limit, offset int, f 
 	var logs []models.AuditLog
 	for rows.Next() {
 		var entry models.AuditLog
-		if err := rows.Scan(&entry.ID, &entry.Timestamp, &entry.User, &entry.Action, &entry.Namespace, &entry.ResourceType, &entry.ResourceName, &entry.Cluster); err != nil {
+		var details string
+		if err := rows.Scan(&entry.ID, &entry.Timestamp, &entry.User, &entry.Action, &entry.Verb,
+			&entry.Outcome, &entry.Reason, &entry.Namespace, &entry.ResourceType, &entry.ResourceName,
+			&entry.Cluster, &entry.ClusterID, &details, &entry.RequestID, &entry.SourceIP,
+			&entry.UserAgent, &entry.AuthSource); err != nil {
 			return nil, err
+		}
+		if details != "" {
+			_ = json.Unmarshal([]byte(details), &entry.Details)
 		}
 		logs = append(logs, entry)
 	}
@@ -712,9 +788,19 @@ func (s *Store) CountAuditLogsFiltered(ctx context.Context, f AuditFilter) (int,
 	return count, nil
 }
 
-// AuditFacets returns the distinct actions, users and namespaces present in
-// the audit log (up to limit each), for the filter suggestions.
-func (s *Store) AuditFacets(ctx context.Context, limit int) (actions, users, namespaces []string, err error) {
+// AuditFacets are the distinct values found in the audit log, for the filter
+// suggestions in Admin → Audit Logs.
+type AuditFacets struct {
+	Actions       []string `json:"actions"`
+	Users         []string `json:"users"`
+	Namespaces    []string `json:"namespaces"`
+	Verbs         []string `json:"verbs"`
+	ResourceTypes []string `json:"resourceTypes"`
+	Clusters      []string `json:"clusters"`
+}
+
+// AuditFacets returns up to limit distinct values per column.
+func (s *Store) AuditFacets(ctx context.Context, limit int) (AuditFacets, error) {
 	distinct := func(column string) ([]string, error) {
 		rows, err := s.conn.QueryContext(ctx,
 			`SELECT DISTINCT `+column+` FROM audit_logs WHERE `+column+` NOT IN ('', '-') ORDER BY `+column+` LIMIT ?`, limit)
@@ -732,14 +818,64 @@ func (s *Store) AuditFacets(ctx context.Context, limit int) (actions, users, nam
 		}
 		return out, rows.Err()
 	}
-	if actions, err = distinct("action"); err != nil {
-		return
+	var f AuditFacets
+	for _, c := range []struct {
+		column string
+		dst    *[]string
+	}{
+		{"action", &f.Actions}, {"user", &f.Users}, {"namespace", &f.Namespaces},
+		{"verb", &f.Verbs}, {"resource_type", &f.ResourceTypes}, {"cluster", &f.Clusters},
+	} {
+		v, err := distinct(c.column)
+		if err != nil {
+			return f, err
+		}
+		*c.dst = v
 	}
-	if users, err = distinct("user"); err != nil {
-		return
+	return f, nil
+}
+
+// LegacyAuditLogs returns rows written before 2.17 (no verb yet), at most
+// limit of them.
+func (s *Store) LegacyAuditLogs(ctx context.Context, limit int) ([]models.AuditLog, error) {
+	rows, err := s.conn.QueryContext(ctx,
+		`SELECT id, action, namespace, resource_type, resource_name FROM audit_logs WHERE verb = '' LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
 	}
-	namespaces, err = distinct("namespace")
-	return
+	defer rows.Close()
+	var out []models.AuditLog
+	for rows.Next() {
+		var e models.AuditLog
+		if err := rows.Scan(&e.ID, &e.Action, &e.Namespace, &e.ResourceType, &e.ResourceName); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// UpgradeAuditLogs rewrites the action, verb, outcome, namespace, resource
+// type and name of the given rows in one transaction.
+func (s *Store) UpgradeAuditLogs(ctx context.Context, entries []models.AuditLog) error {
+	tx, err := s.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	stmt, err := tx.PrepareContext(ctx, `UPDATE audit_logs SET action = ?, verb = ?, outcome = ?,
+		namespace = ?, resource_type = ?, resource_name = ? WHERE id = ?`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, e := range entries {
+		if _, err := stmt.ExecContext(ctx, e.Action, e.Verb, e.Outcome, e.Namespace,
+			e.ResourceType, e.ResourceName, e.ID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) PurgeAuditLogs(ctx context.Context, olderThan time.Time) error {

@@ -51,21 +51,21 @@ type NamespacePermission struct {
 }
 
 type LDAPConfig struct {
-	Enabled        bool     `json:"enabled"`
-	URL            string   `json:"url"`
-	Host           string   `json:"host"`
-	Port           int      `json:"port"`
-	UseSSL         bool     `json:"useSsl"`
-	StartTLS       bool     `json:"startTls"`
-	SkipVerify     bool     `json:"sslSkipVerify"`
-	TimeoutSeconds int      `json:"timeoutSeconds"`
-	BindDN         string   `json:"bindDn"`
-	BindPassword   string   `json:"bindPassword"`
-	UserBaseDN     string   `json:"userBaseDn"`
-	UserBaseDNs    []string `json:"userBaseDns"`
-	UserFilter     string   `json:"userFilter"`
-	UsernameAttribute string `json:"usernameAttribute"`
-	PasswordConfigured bool  `json:"passwordConfigured"`
+	Enabled            bool     `json:"enabled"`
+	URL                string   `json:"url"`
+	Host               string   `json:"host"`
+	Port               int      `json:"port"`
+	UseSSL             bool     `json:"useSsl"`
+	StartTLS           bool     `json:"startTls"`
+	SkipVerify         bool     `json:"sslSkipVerify"`
+	TimeoutSeconds     int      `json:"timeoutSeconds"`
+	BindDN             string   `json:"bindDn"`
+	BindPassword       string   `json:"bindPassword"`
+	UserBaseDN         string   `json:"userBaseDn"`
+	UserBaseDNs        []string `json:"userBaseDns"`
+	UserFilter         string   `json:"userFilter"`
+	UsernameAttribute  string   `json:"usernameAttribute"`
+	PasswordConfigured bool     `json:"passwordConfigured"`
 	// AutoProvision creates an LDAP account the first time a directory user
 	// signs in (off by default), adding it to AutoProvisionGroupIDs.
 	AutoProvision         bool  `json:"autoProvision"`
@@ -94,17 +94,32 @@ type KubeCredentials struct {
 	Active     bool   `json:"active"`
 }
 
+// AuditLog is one audit event. Action is "<resource type>.<verb>"
+// (deployment.restart, pod.exec, user.login); the result is in Outcome, never
+// in Action. ResourceName is the bare name ("*" for a list); anything else
+// about the event goes into Details under a key registered in package audit.
 type AuditLog struct {
 	ID           int       `json:"id"`
 	Timestamp    time.Time `json:"timestamp"`
 	User         string    `json:"user"`
 	Action       string    `json:"action"`
+	Verb         string    `json:"verb"`
+	Outcome      string    `json:"outcome"`
+	Reason       string    `json:"reason,omitempty"`
 	Namespace    string    `json:"namespace"`
 	ResourceType string    `json:"resourceType"`
 	ResourceName string    `json:"resourceName"`
-	// Cluster the action ran against ("" for cluster-independent actions
-	// such as logins or admin settings).
-	Cluster string `json:"cluster"`
+	// Cluster the action ran against: the target, not the cluster the user
+	// had selected. "" for cluster-independent actions (sign-ins, users,
+	// groups, roles, settings, sessions).
+	Cluster   string         `json:"cluster"`
+	ClusterID int            `json:"clusterId,omitempty"`
+	Details   map[string]any `json:"details,omitempty"`
+	// Who / from where, taken from the request.
+	RequestID  string `json:"requestId,omitempty"`
+	SourceIP   string `json:"sourceIp,omitempty"`
+	UserAgent  string `json:"userAgent,omitempty"`
+	AuthSource string `json:"authSource,omitempty"`
 }
 
 // SessionTokenRow is one row from session_tokens with the owner's username
@@ -189,4 +204,3 @@ type SavedView struct {
 	Shared      bool      `json:"shared"`
 	CreatedAt   time.Time `json:"createdAt"`
 }
-

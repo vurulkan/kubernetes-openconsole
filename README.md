@@ -22,7 +22,7 @@ Pods, Deployments, **DaemonSets**, **StatefulSets**, **HorizontalPodAutoscalers 
 - **Secrets** (`secrets:list`, `secrets:get`, `secrets:reveal`, `secrets:edit`) — names, types and key names by default; values are revealed one key at a time, and secrets can be edited in the YAML editor (diff + dry-run). Every reveal and every YAML open is audited. See [Secrets](#secrets).
 - **Pod / Deployment logs** (`pods:logs`) with rate limiting.
 
-Every write action records `{resource}.{action}.{success|denied|failed|rate_limited}` audit entries and the HTTP response carries `X-Request-Id` for correlation with the audit mirror in stdout.
+Every read and write is an audit event with its own fields: `action` (`deployment.restart`), `verb`, `outcome` (`success` / `denied` / `failed` / `rate_limited` / `locked`), the target cluster, namespace and resource, details such as `restarted_at` or `replicas_from` / `replicas_to`, and who / from where. See [Audit events](#audit-events). The HTTP response carries `X-Request-Id` for correlation with the audit line in stdout.
 
 ### Access & identity
 - **User → Groups → Roles → per-cluster, per-namespace permissions** (application-level RBAC, no Kubernetes RBAC for end users).
@@ -32,7 +32,7 @@ Every write action records `{resource}.{action}.{success|denied|failed|rate_limi
 - **JWT authentication** with forced password change on first login.
 - **Session management** (Admin → Sessions): list every active token, revoke individual sessions or every session for a user, change-password revokes everything.
 - **Session recordings** (Admin → Recordings): filter, replay (1x / 2x / 4x, seek, skip idle), download `.cast`, delete; retention, quota and on/off switch editable in the UI.
-- **Login brute-force protection** (5 fails per IP+user → 5-minute lock, audited). Every sign-in is audited: `login.success` with the method (`local` / `ldap`), `login.azure`, `login.failed` with the reason.
+- **Login brute-force protection** (5 fails per IP+user → 5-minute lock, audited). Every sign-in is audited as `user.login` with the outcome (`success` / `failed` / `locked`), the method (`login_method`: `local` / `ldap` / `azure`) and, for a failure, the reason.
 
 ### UX
 - **Light / Dark / System theme** (persisted; respects OS).
@@ -170,7 +170,7 @@ You normally set none of these. Recording is configured in **Admin → Recording
 ### Security & limits
 - `PASSWORD_MIN_LENGTH` (default `8`) — minimum length of local passwords (create, change, admin reset). Passwords are also capped at 72 bytes (bcrypt), must not be blank, and a change must actually change the password.
 - `EXEC_IDLE_TIMEOUT` (default `5m`, minimum `30s`) — a pod shell with no input for this long is closed. Go duration syntax: `90s`, `10m`, `1h`.
-- `MAX_EXEC_SESSIONS_PER_USER` (default `3`, `0` = unlimited) — concurrent pod shells per user; one more is refused with 429 and audited as `pod.exec.rate_limited`.
+- `MAX_EXEC_SESSIONS_PER_USER` (default `3`, `0` = unlimited) — concurrent pod shells per user; one more is refused with 429 and audited as `pod.exec` with outcome `rate_limited`.
 
 ### Feature flags
 Switch a capability off **for everyone, admins included**, regardless of role permissions — for example to keep pod shells closed in production for a while. Set `FEATURE_<NAME>=false` (or `0` / `no`); anything else, or unset, leaves it on.
@@ -219,7 +219,7 @@ Logs go to stdout, one record per line. With `json` or `ecs` every line, includi
 - `LOG_LEVEL` (default `info`) — `debug` | `info` | `warn` | `error`. Successful health probes (`/healthz`, `/livez`, `/readyz`) and `/metrics` scrapes are logged at `debug` only, so they don't flood the log; failing ones still show up.
 - `LOG_OUTPUT` (default `stdout`) — `stdout` | `stderr`.
 - `LOG_ADD_SOURCE` (default `false`) — include the source file and line (`log.origin.*` in ECS).
-- `LOG_INCLUDE_AUDIT` (default `true`) — mirror every audit entry to stdout. It carries the same request id as the matching HTTP request record.
+- `LOG_INCLUDE_AUDIT` (default `true`) — mirror every audit entry to stdout, one line per action ([Audit events](#audit-events)). It carries the same request id as the matching HTTP request record. With `false` audited actions write nothing to stdout (the database still has them).
 - `APP_ENV`, `APP_VERSION` — static labels on every record (`service.environment`, `service.version`). `deploy/deployment.yaml` sets `APP_ENV=prod`; change it per cluster. Release images already carry their version; set `APP_VERSION` only to override it, e.g. for a canary.
 
 An HTTP request and an audit event with `LOG_FORMAT=ecs` (one line each; wrapped here):
@@ -231,32 +231,88 @@ An HTTP request and an audit event with `LOG_FORMAT=ecs` (one line each; wrapped
  "url":{"path":"/api/namespaces"},"event":{"duration":509909,"kind":"event","category":["web"],"type":["access"],
  "outcome":"failure","dataset":"openconsole.app"},"source":{"ip":"10.31.67.52"},"user_agent":{"original":"Mozilla/5.0 …"}}
 
-{"@timestamp":"2026-10-05T08:14:05.123456Z","log":{"level":"info","logger":"audit"},
- "message":"mustafav: deployment.scale.success deployment payments/nginx (from=3 to=5) on prod-aks",
- "service":{"name":"openconsole","version":"2.16.2","environment":"prod"},"ecs":{"version":"8.11.0"},
- "event":{"action":"deployment.scale.success","kind":"event","outcome":"success","dataset":"openconsole.audit"},
- "user":{"name":"mustafav"},"http":{"request":{"id":"qXpB6yXONDiuXKX2"}},
- "openconsole":{"namespace":"payments","resource_type":"deployment","resource_name":"nginx (from=3 to=5)","cluster":"prod-aks"}}
+{"@timestamp":"2026-10-15T14:55:22.123456Z","log":{"level":"info","logger":"audit"},
+ "message":"mustafav: deployment.scale success payments/nginx on prod-aks",
+ "service":{"name":"openconsole","version":"2.17.0","environment":"prod"},"ecs":{"version":"8.11.0"},
+ "event":{"action":"deployment.scale","kind":"event","category":["configuration"],"type":["change"],
+ "outcome":"success","dataset":"openconsole.audit"},
+ "openconsole":{"verb":"scale","outcome":"success","auth_source":"azure","cluster":"prod-aks","cluster_id":2,
+ "namespace":"payments","resource_type":"deployment","resource_name":"nginx","replicas_from":3,"replicas_to":5},
+ "user":{"name":"mustafav"},"http":{"request":{"id":"qXpB6yXONDiuXKX2"}},"source":{"ip":"10.31.67.52"},
+ "user_agent":{"original":"Mozilla/5.0 …"}}
 ```
 
 What each `json` field becomes in `ecs`:
 
 | `json` | `ecs` |
 |---|---|
-| `time`, `level`, `msg` | `@timestamp` (UTC), `log.level` (lower case), `message` (for requests: `GET /path 401`; for audit events: `user: action resource namespace/name on cluster`) |
+| `time`, `level`, `msg` | `@timestamp` (UTC), `log.level` (lower case), `message` (for requests: `GET /path 401`; for audit events: `user: action outcome namespace/name on cluster (reason)`) |
 | `service`, `version`, `env` | `service.name`, `service.version`, `service.environment` |
 | `user`, `user_agent`, `remote_ip` | `user.name`, `user_agent.original`, `source.ip` |
 | `method`, `path`, `status`, `request_id` | `http.request.method`, `url.path`, `http.response.status_code`, `http.request.id` |
 | `duration_ms` | `event.duration` (nanoseconds, measured, not rounded) |
 | — | `http.response.body.bytes` |
-| `event` (audit action), `error`, `trace_id` | `event.action`, `error.message`, `trace.id` |
-| everything else (`namespace`, `pod`, `container`, `cluster`, `resource_name`, …) | `openconsole.<name>` |
+| `event` (audit action), `reason`, `error`, `trace_id` | `event.action`, `event.reason`, `error.message`, `trace.id` |
+| everything else (`verb`, `outcome`, `cluster`, `namespace`, `resource_name`, audit details such as `replicas_to`, …) | `openconsole.<name>` |
 
-Every `ecs` record also has `event.dataset`: `openconsole.audit` for audit events, `openconsole.app` for the rest. HTTP requests carry `event.kind: event`, `event.category: [web]`, `event.type: [access]` and `event.outcome` (`failure` for 4xx / 5xx). Audit events carry `event.kind: event` and, where the action says so, `event.outcome` (`success` for `*.success`; `failure` for `*.failed`, `*.denied`, `*.rate_limited`, `*.locked`) and `event.category` (`authentication` for sign-ins, `process` for pod shells). `log.logger` is `http` or `audit`.
+Every `ecs` record also has `event.dataset`: `openconsole.audit` for audit events, `openconsole.app` for the rest. HTTP requests carry `event.kind: event`, `event.category: [web]`, `event.type: [access]` and `event.outcome` (`failure` for 4xx / 5xx). Audit events carry `event.kind: event`, `event.outcome` (`success`, or `failure` for denied / failed / rate_limited / locked; the exact value is in `openconsole.outcome`), `event.type` from the verb (`access` for reads, `change`, `creation`, `deletion`, `start` / `end` for shells and sign-ins) and, where it applies, `event.category` (`authentication`, `session`, `process`, `iam`, `configuration`). `log.logger` is `http` or `audit`.
 
 `namespace` / `pod` / `container` describe the resource the action was performed on, so they live under `openconsole.*`. The shipper's own `kubernetes.*` and `container.*` fields describe the OpenConsole pod that wrote the line. The two never mix.
 
 Every HTTP response also carries an `X-Request-Id` header matching the request id.
+
+### Audit events
+
+Every audited action is one event, stored in the database (Admin → Audit Logs, CSV) and, with `LOG_INCLUDE_AUDIT=true`, written to stdout as one `audit` line. The same fields are everywhere, so filters work the same in the UI and in Kibana:
+
+| Field (`json` / DB) | `ecs` | Meaning |
+|---|---|---|
+| `event` / `action` | `event.action` | `<resource type>.<verb>`: `deployment.list`, `deployment.restart`, `pod.exec`, `secret.reveal`, `user.login`, `permission.create` |
+| `verb` | `openconsole.verb` | `list` `get` `logs` `exec` `restart` `scale` `apply` `view_yaml` `reveal` `view` `download` `create` `update` `delete` `share` `select` `activate` `deactivate` `revoke` `export` `import` `login` `change_password` `reset_password` `evict` `purge` |
+| `outcome` | `openconsole.outcome`, `event.outcome` | `success` `denied` `failed` `rate_limited` `locked` (`event.outcome` is `success` / `failure`) |
+| `reason` | `event.reason` | why it was denied or failed: `forbidden`, `feature_disabled`, `admin_only`, `k8s_forbidden`, `not_found`, `conflict`, `bad_password`, … |
+| `user`, `auth_source` | `user.name`, `openconsole.auth_source` | who, and where the account signs in (`local` / `ldap` / `azure`) |
+| `remote_ip`, `user_agent`, `request_id` | `source.ip`, `user_agent.original`, `http.request.id` | from where; the request id matches the `http.request` line |
+| `cluster`, `cluster_id` | `openconsole.cluster`, `openconsole.cluster_id` | the cluster the action **targeted**. Empty for actions that don't run on a cluster (sign-ins, users, groups, roles, settings, sessions, saved views). A permission grant records the grant's cluster (empty for "all clusters"), not the cluster the admin had selected. |
+| `namespace`, `resource_type`, `resource_name` | `openconsole.*` | the target; `resource_type` is singular (`deployment`), `resource_name` is the bare name, `*` for a list |
+| details | `openconsole.<key>` | typed, see below |
+
+Details are a fixed set of keys, each with a type in the Elastic mapping:
+
+| Action | Details |
+|---|---|
+| `deployment.restart` | `restarted_at` (date) |
+| `deployment.scale`, `statefulset.scale` | `replicas_from`, `replicas_to` |
+| `<kind>.apply` | `dry_run`, `yaml_from`, `yaml_to` (sha256 prefixes, never the YAML) |
+| `pod.exec` | `phase` (`start` / `end`), `container`, `command`; at the end `exit_code`, `bytes_in`, `bytes_out`, `duration_ms` |
+| `pod.logs`, `deployment.logs`, `job.logs` | `container` / `pods` |
+| `secret.reveal` | `key` (the key name, never the value) |
+| `recording.*` | `pod`, `container`, `owner`, `started_at`, `size_bytes`, `truncate_reason`, `count`, `retention_days` |
+| `user.login` | `login_method`, `linked_by`, `signed_in_as`, `account_source` |
+| `user.*`, `group.*`, `role.*`, `permission.*` | `changed` (field names, not values), `is_admin`, `is_active`, `account_source`, `groups`, `count`, `role`, `grant` (`deployments:restart`), `auto_provisioned` |
+| any failure | `error` (→ `error.message` in ECS) |
+
+Reads are audited too (`deployment.list`, `pod.get`, `pod.logs`, …), including a refused one (`denied`, reason `forbidden`). Lists the UI fetches on its own are not: the dashboard's reload every 10 seconds, and the namespace list behind the command palette and the role editor (they send `X-OpenConsole-Refresh: auto`). The lists you open are audited, and the HTTP request log still has every request.
+
+Kibana examples:
+
+```text
+openconsole.verb : "exec" and openconsole.cluster : "Zenia-NonProd"
+event.action : "deployment.restart" and event.outcome : "failure"
+openconsole.resource_name : "boh" and openconsole.namespace : "boh-cy"
+openconsole.replicas_to >= 10
+event.action : "pod.exec" and openconsole.phase : "end" and not openconsole.exit_code : 0
+openconsole.outcome : "denied" and user.name : "dev1"
+```
+
+#### Upgrading from 2.16
+
+Before 2.17 the outcome was part of the action (`deployment.restart.success`), reads were a bare verb (`list` with `resource_type: deployments`) and details sat in the resource name (`boh (restartedAt=…)`).
+
+- **Database**: on the first start of 2.17 the existing audit rows get the new `action`, `verb`, `outcome` and a singular `resource_type`. Their resource names keep the old `(k=v)` suffix; with the default 30-day retention those rows age out on their own.
+- **API**: `?action=deployment.restart.success` still works; the outcome is split off.
+- **Elastic**: re-run `deploy/elk/install.sh`. The new mapping applies from the next rollover of `logs-openconsole.audit-*` (`POST logs-openconsole.audit-default/_rollover` to apply it now). The pipeline gives 2.16 lines the 2.17 shape (action without the outcome, `openconsole.verb`, `openconsole.outcome`, `event.type`), so one query finds old and new events. Saved searches, visualizations and alerts that filter on `event.action : *.success` / `*.denied` must be changed to `event.action` + `event.outcome` (or `openconsole.outcome`).
+- **Console**: the extra `deployment.action`, `workload.action`, `secret.action`, `yaml.apply`, `recording.action`, `pod.exec.start` / `pod.exec.end`, `*.logs.start`, `user.password_reset` and `user.auto_provision` lines are gone, and so are the `level=error` lines `deployment.restart.failed`, `deployment.scale.failed`, `statefulset.scale.failed` and `<resource>.apply.failed`; the `audit` line has all their fields. A failed action is `event.outcome : "failure"` with `event.reason` and `error.message`. `level=error` is left for faults in OpenConsole itself (e.g. `http.panic`).
 
 #### Shipping logs to Elastic
 
@@ -271,7 +327,7 @@ ES_URL=https://elasticsearch.example:9200 ES_API_KEY=<base64 id:key> deploy/elk/
 It installs an ingest pipeline that the Kubernetes integration calls for every container log line (through `logs-kubernetes.container_logs@custom`). The pipeline:
 - decodes only OpenConsole's lines, so other pods' lines stay as they are;
 - keeps Agent's `kubernetes.*` / `container.*` / `log.file.path` fields;
-- sets `event.outcome` on audit events;
+- sets `event.outcome` on audit events, and gives audit lines from before 2.17 the 2.17 shape (see [Upgrading from 2.16](#upgrading-from-216));
 - routes the records to two data streams with proper mappings: `logs-openconsole.audit-*` (audit events) and `logs-openconsole.app-*` (everything else).
 
 This is a one-time step on the Elasticsearch side; nothing changes in the Agent policy. **Without it the logs still arrive, but unparsed.** Each line sits as one JSON string in `message` in `logs-kubernetes.container_logs-*`, so there is no `user.name` / `event.action` / status code to filter or chart on, audit and application records are mixed, and `@timestamp` is the time Agent read the line. If you can't run the script, the same four requests can be sent from Kibana Dev Tools ([deploy/elk/README.md](deploy/elk/README.md#without-installsh)).
@@ -477,7 +533,7 @@ Interactive shell into a running container, gated by application permission `pod
 - xterm.js UI with container picker on multi-container pods and shell picker (`/bin/sh`, `/bin/bash`, `/bin/ash`).
 - Idle timeout: **5 minutes** without input closes the session (`EXEC_IDLE_TIMEOUT`).
 - At most **3** open shells per user (`MAX_EXEC_SESSIONS_PER_USER`); the next one is refused with 429 and audited as `pod.exec.rate_limited`.
-- Each session logs `pod.exec.start` and `pod.exec.end` to both the audit DB and the structured console log. The end entry carries `exit=<code>` (the shell's exit status; `-1` when the session was cut — idle timeout, closed tab, network), `bytes_in`, `bytes_out` and `dur_ms`. A shell that ends with a non-zero status, e.g. after a failed last command, is a normal end.
+- Each session writes two `pod.exec` audit events, `phase: start` (container, command) and `phase: end`. The end event carries `exit_code` (the shell's exit status; `-1` when the session was cut — idle timeout, closed tab, network), `bytes_in`, `bytes_out` and `duration_ms`. A shell that ends with a non-zero status, e.g. after a failed last command, is a normal end (outcome `success`).
 - Can be switched off for everyone with `FEATURE_POD_EXEC=false` ([Feature flags](#feature-flags)).
 - Terminal output is recorded by default — see [Session Recording](#session-recording).
 - ClusterRole must grant `pods/exec: create` for this to work.
@@ -499,9 +555,9 @@ The Secrets tab (after ConfigMaps) uses four permissions. Seeing that a secret e
 
 - Values never leave the server on `list` / `get`. The `kubectl.kubernetes.io/last-applied-configuration` annotation, which embeds the data, is dropped too.
 - `reveal` is a POST for a single key, sent with `Cache-Control: no-store`. Binary values come back base64-encoded and labelled as such. Revealed values are discarded when the modal closes.
-- Every reveal is audited as `secret.reveal.{success,denied,failed}` with the namespace, secret and key name (never the value). It also emits a `secret.action` console line.
+- Every reveal is audited as `secret.reveal` (success / denied / failed) with the namespace, secret and the key name in `key` (never the value).
 - **Editing (`secrets:edit`)**: the YAML shows text values as plain-text `stringData`, so you edit readable values instead of base64. Binary values stay base64 in `data`. On apply Kubernetes merges `stringData` into `data`. Removing a key from the YAML deletes it. The dry-run result comes back in the same shape, so the before / after diff compares like with like.
-- The YAML holds every value, so opening it requires `secrets:edit`; `get` or `reveal` is not enough. Each open is audited as `secret.yaml.view.{success,denied,failed}`, and changes as `secrets.apply.{success,denied,rate_limited,failed}`, the same as other resources. Optimistic concurrency applies too: a stale `resourceVersion` gives a 409.
+- The YAML holds every value, so opening it requires `secrets:edit`; `get` or `reveal` is not enough. Each open is audited as `secret.view_yaml`, and changes as `secret.apply`, the same as other resources. Optimistic concurrency applies too: a stale `resourceVersion` gives a 409.
 - Secrets are not held in the informer cache. Each request reads from the API server, so no secret values sit in OpenConsole's memory.
 - Needs the `secrets` rule in the ClusterRole: get / list, plus `update` for `secrets:edit`.
 
@@ -534,26 +590,23 @@ Every pod shell session is recorded as an [asciicast v2](https://docs.asciinema.
 
 When a limit would be crossed, the **disk policy** decides what happens:
 
-- `evict_oldest` (default) — the oldest finished recordings are deleted, even before their retention ends, until the next session fits. Each eviction is audited as `recording.evicted`.
-- `stop` — existing recordings are kept. New shells still open but are **not** recorded (`pod.exec.session.record_skipped`), and running recordings stop with a truncation marker. The admin screen shows a warning until space is freed.
+- `evict_oldest` (default) — the oldest finished recordings are deleted, even before their retention ends, until the next session fits. Each eviction is audited as `recording.evict` (user `system`, reason `quota` / `low_disk`).
+- `stop` — existing recordings are kept. New shells still open but are **not** recorded (`recording.create` failed, reason `disk_quota`), and running recordings stop with a truncation marker. The admin screen shows a warning until space is freed.
 
 The shell itself is never blocked by recording: a disabled, full or broken recorder only means the session isn't recorded. For full isolation, give recordings their own PVC; `deploy/pvc.yaml` and `deploy/deployment.yaml` contain a commented example. Then set `SESSION_RECORDING_DIR=/recordings`.
 
-**Retention.** A background job runs one minute after start and then daily. It deletes recordings older than the retention period (row and file, audited as `recording.purge`) and removes stray `.cast` files that have no database row. If the process crashes mid-session, the next start closes the open row using the file's size and modification time.
+**Retention.** A background job runs one minute after start and then daily. It deletes recordings older than the retention period (row and file, audited as `recording.purge` with `count`) and removes stray `.cast` files that have no database row. If the process crashes mid-session, the next start closes the open row using the file's size and modification time.
 
 **Audit events**
 
 | Event | When |
 |---|---|
-| `pod.exec.session.recorded` | Session end — `session_id`, `size`, `dur_ms`, truncation reason; same `request_id` as `pod.exec.start` / `end` |
-| `pod.exec.session.record_skipped` | Disk policy `stop` refused to record |
-| `pod.exec.session.record_failed` | Recorder error (e.g. directory not writable) |
+| `recording.create` success | Session end — the session id as the resource, `pod`, `container`, `size_bytes`, `duration_ms`, `truncate_reason`; same `request_id` as the `pod.exec` events |
+| `recording.create` failed | Not recorded: reason `disk_quota` (disk policy `stop`) or `error` (e.g. directory not writable) |
 | `recording.view` / `recording.download` | An admin played or downloaded a recording |
-| `recording.delete.{success,denied,failed}` | Delete from the UI / API — records the recording's owner, start time, size, cluster and container, since the row and file are gone afterwards |
-| `recording.settings.update.{success,denied,failed}` | Settings change |
-| `recording.evicted` / `recording.purge` | Disk-policy eviction / retention purge (user `system`) |
-
-Recording actions (view / download / delete) also emit their own `recording.action` console log line with `event`, `user`, `session_id`, `details` and `request_id`, independent of `LOG_INCLUDE_AUDIT`.
+| `recording.delete` (success / denied / failed) | Delete from the UI / API — records the recording's `owner`, `started_at`, `size_bytes`, `pod`, `container` and cluster, since the row and file are gone afterwards |
+| `settings.update` on `recording` | Settings change |
+| `recording.evict` / `recording.purge` | Disk-policy eviction / retention purge (user `system`) |
 
 **API (admin only)**
 - `GET /api/admin/recordings?user=&namespace=&pod=&cluster=&from=&to=&limit=&offset=` → `{items, total}`
@@ -575,7 +628,7 @@ OpenConsole can restart, scale, and apply YAML to workloads when the caller has 
 
 The `edit` action covers Pod, Deployment, DaemonSet, StatefulSet, HPA, Service, ConfigMap, Ingress, CronJob, Job — same handler for all, powered by the `dynamic` client with GVK fallback and server-side `DryRun=All`.
 
-- Every call records an audit entry — `success`, `denied`, `rate_limited`, `failed` outcomes.
+- Every call records an audit event (`deployment.restart`, `deployment.scale`, `statefulset.scale`, `<kind>.apply`) with outcome `success`, `denied`, `rate_limited` or `failed`. Restart records `restarted_at`, scale `replicas_from` / `replicas_to`, apply `dry_run` and the `yaml_from` / `yaml_to` hashes; a failure has a `reason` (`k8s_forbidden`, `not_found`, `conflict`, `invalid`, …) and the `error`.
 - Per-user rate limit: 5 burst, 1 token every 6 s. 429 with `Retry-After` when exceeded.
 - Scale accepts replicas between 0 and `MAX_REPLICAS` (env, default 100).
 - YAML apply enforces optimistic concurrency via `metadata.resourceVersion` — a stale edit returns 409.
@@ -591,7 +644,7 @@ Every issued token lives in `session_tokens` and is checked on every request.
 - Revoke a single session, or revoke every session for a user.
 - Change-password revokes every session the user has (including the browser that initiated the change).
 - Rolling upgrades don't log everyone out — JWTs issued before 2.3.0 are honoured until their natural expiry.
-- Audit entries: `session.revoke`, `session.revoke_all`.
+- Audit entries: `session.revoke` (one session, or `all: true` for every session of a user).
 
 # Keyboard shortcuts
 
@@ -614,7 +667,7 @@ Open the full cheat sheet with `?`. The core set:
 
 - Grant each verb (`patch`, `update`, `pods/exec`, `pods/log`) only if the matching application permission will actually be handed to at least one role.
 - OpenConsole's ServiceAccount should never be granted more than the actions the UI will expose. Port-forward is not used. `secrets` get / list is only needed for the Secrets tab; drop that rule if you won't grant any `secrets:*` permission.
-- `secrets:reveal`, `secrets:edit` and `pods:exec` are the permissions that expose credentials. Grant them narrowly and review the `secret.reveal.*`, `secret.yaml.view.*`, `secrets.apply.*` and `pod.exec.*` audit entries.
+- `secrets:reveal`, `secrets:edit` and `pods:exec` are the permissions that expose credentials. Grant them narrowly and review the `secret.reveal`, `secret.view_yaml`, `secret.apply` and `pod.exec` audit events.
 - Token rotation is recommended (every 6–12 months).
 - Do not store generated tokens in Git.
 - Prefer one ServiceAccount per cluster.
@@ -660,9 +713,9 @@ On the very first start a default admin is created: **`admin` / `admin`**. You m
   - **Azure AD user**: pre-creates a Microsoft account with no password, by the person's UPN or e-mail address (e.g. `jane@example.com`). Their first "Sign in with Microsoft" uses it.
 
   The main part of the button opens the local-user form directly; the arrow opens the menu. Pick **Groups** right away, and tick **Admin** for full access. New accounts are listed first and highlighted for a moment. Non-admins see nothing until they are in a group with a role ([below](#groups-roles-and-permissions)).
-- **The source decides how a password is checked.** Local accounts use their OpenConsole password. LDAP accounts are checked against the directory only, and Azure AD accounts never accept a password (they use the Microsoft button), so a stray local password can't bypass the directory. A failed sign-in always gets the same answer, so the login form doesn't reveal whether an account exists or where it signs in; the `login.failed` audit entry records the reason.
+- **The source decides how a password is checked.** Local accounts use their OpenConsole password. LDAP accounts are checked against the directory only, and Azure AD accounts never accept a password (they use the Microsoft button), so a stray local password can't bypass the directory. A failed sign-in always gets the same answer, so the login form doesn't reveal whether an account exists or where it signs in; the failed `user.login` audit event records the reason.
 - **Edit** (pencil): admin flag, active / disabled, group membership. A disabled user is signed out on the next request.
-- **Reset password** (key icon, **local users only**): sets a new password (min. 8 characters, see `PASSWORD_MIN_LENGTH`) and by default forces a change at next login. All of that user's sessions are signed out, and the reset is audited as `user.password_reset.*`. LDAP and Azure AD users have no reset here: their password lives in the directory, and a local one would let them bypass it.
+- **Reset password** (key icon, **local users only**): sets a new password (min. 8 characters, see `PASSWORD_MIN_LENGTH`) and by default forces a change at next login. All of that user's sessions are signed out, and the reset is audited as `user.reset_password`. LDAP and Azure AD users have no reset here: their password lives in the directory, and a local one would let them bypass it.
 - Users change their own password from the header menu. Doing so signs out all their other sessions.
 - **Accounts from before 2.13** start out as Local. LDAP accounts switch to LDAP on their next directory sign-in. To fix sources up front (for example for users who haven't signed in since), update the database directly. Stop the app, since the volume is ReadWriteOnce and the image has no `sqlite3`:
 
@@ -677,7 +730,8 @@ On the very first start a default admin is created: **`admin` / `admin`**. You m
   SELECT username, auth_source FROM users ORDER BY auth_source, username;
   -- Azure AD: everyone with a Microsoft sign-in in the audit log (kept LOG_RETENTION_DAYS)
   UPDATE users SET auth_source = 'azure' WHERE auth_source = 'local'
-     AND username IN (SELECT DISTINCT user FROM audit_logs WHERE action = 'login.azure');
+     AND username IN (SELECT DISTINCT user FROM audit_logs WHERE action = 'user.login'
+       AND (details LIKE '%"login_method":"azure"%' OR resource_name LIKE 'azure_ad%'));
   -- By name
   UPDATE users SET auth_source = 'azure' WHERE username IN ('jane@example.com');
   UPDATE users SET auth_source = 'ldap'  WHERE username IN ('john', 'ayse.yilmaz');
@@ -720,7 +774,7 @@ Off by default. In **Admin → LDAP**, tick **Create an account on a user's firs
 
 - Someone without an account who signs in with valid directory credentials gets an LDAP account on the spot, under the name the directory uses (typing `John` signs in to `john`). The account is added to the chosen groups, so it can see something right away.
 - Anyone the **user filter** finds under the base DNs can sign in. To allow only one directory group, put it in the filter, e.g. `(&(sAMAccountName=%s)(memberOf=CN=OpenConsole Users,OU=Groups,DC=example,DC=corp))`.
-- New accounts are never admins. Each one is audited as `user.auto_provision.success`.
+- New accounts are never admins. Each one is audited as `user.create` with `auto_provisioned: true`.
 - **To lock someone out, disable their account; don't delete it.** A deleted account is created again on the next sign-in, while a disabled one stays disabled.
 - Unknown users with a wrong password are rejected as before; nothing is created.
 
@@ -745,7 +799,7 @@ Single-tenant sign-in that works alongside local / LDAP accounts.
 How the account is found on sign-in:
 - First by `preferred_username`, which is usually the UPN.
 - If there's no exact match, OpenConsole looks for a **pre-created Azure AD account that nobody has signed in to yet** whose name matches `preferred_username` in another letter case, or the token's `email` or `upn` claim. That covers a pre-created `jane.doe@corp.com` when the UPN is `jdoe@corp.onmicrosoft.com`.
-- Local, LDAP and already used accounts are never claimed this way. The `login.azure` audit entry notes when an account was claimed.
+- Local, LDAP and already used accounts are never claimed this way. The `user.login` audit event notes when an account was claimed (`linked_by`, `signed_in_as`).
 
 Signing out of OpenConsole does not sign the user out of Microsoft.
 
@@ -787,10 +841,10 @@ Every user works on **their own** cluster:
 
 ## Admin tools
 
-- **Audit Logs**: every read and write action with user, cluster, namespace and resource. Retention: `LOG_RETENTION_DAYS`. The CSV export uses the same filters as the screen. Filters:
+- **Audit Logs**: every read and write action with user, outcome, cluster, namespace and resource; **Details** on a row shows its details, reason, source IP, account source, request id and user agent ([Audit events](#audit-events)). Retention: `LOG_RETENTION_DAYS`. The CSV export uses the same filters as the screen and has a column per field (details as JSON). Filters:
   - **User**, **Action** and **Namespace** suggest the values that actually occur in the log as you type. Typed text matches anywhere.
-  - Picking an action matches it exactly. Its family row, e.g. `pod.exec.*`, selects the whole family.
-  - **Outcome** (success / denied / failed / rate_limited) narrows any of them, e.g. "everything denied", or `secret.*` + denied.
+  - Picking an action matches it exactly. Its family row, e.g. `pod.*`, selects everything done to pods.
+  - **Outcome** (success / denied / failed / rate_limited / locked), **Verb** (list, restart, exec, …), **Resource type** and **Cluster** narrow any of them, e.g. "everything denied", or `secret.*` + denied.
 - **Users / Groups → Export CSV**: who has access and through which group and role.
 - **Sessions**: every issued token; revoke one or all of a user's ([Sessions](#sessions-admin--sessions)).
 - **Recordings**: replay, download (with a warning) or delete pod shell sessions, and set retention / disk limits ([Session Recording](#session-recording)).

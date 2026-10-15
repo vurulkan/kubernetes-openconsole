@@ -57,6 +57,9 @@
             },
             "type": {
               "type": "keyword"
+            },
+            "reason": {
+              "type": "keyword"
             }
           }
         },
@@ -221,6 +224,111 @@
             },
             "ts": {
               "type": "date"
+            },
+            "verb": {
+              "type": "keyword"
+            },
+            "auth_source": {
+              "type": "keyword"
+            },
+            "cluster_id": {
+              "type": "long"
+            },
+            "restarted_at": {
+              "type": "date"
+            },
+            "replicas_from": {
+              "type": "long"
+            },
+            "replicas_to": {
+              "type": "long"
+            },
+            "pods": {
+              "type": "long"
+            },
+            "phase": {
+              "type": "keyword"
+            },
+            "duration_ms": {
+              "type": "long"
+            },
+            "max_sessions": {
+              "type": "long"
+            },
+            "dry_run": {
+              "type": "boolean"
+            },
+            "yaml_from": {
+              "type": "keyword"
+            },
+            "yaml_to": {
+              "type": "keyword"
+            },
+            "owner": {
+              "type": "keyword"
+            },
+            "started_at": {
+              "type": "date"
+            },
+            "size_bytes": {
+              "type": "long"
+            },
+            "truncate_reason": {
+              "type": "keyword"
+            },
+            "retention_days": {
+              "type": "long"
+            },
+            "login_method": {
+              "type": "keyword"
+            },
+            "account_source": {
+              "type": "keyword"
+            },
+            "linked_by": {
+              "type": "keyword"
+            },
+            "signed_in_as": {
+              "type": "keyword"
+            },
+            "must_change": {
+              "type": "boolean"
+            },
+            "auto_provisioned": {
+              "type": "boolean"
+            },
+            "is_admin": {
+              "type": "boolean"
+            },
+            "is_active": {
+              "type": "boolean"
+            },
+            "groups": {
+              "type": "long"
+            },
+            "count": {
+              "type": "long"
+            },
+            "all": {
+              "type": "boolean"
+            },
+            "id": {
+              "type": "long"
+            },
+            "role": {
+              "type": "keyword"
+            },
+            "grant": {
+              "type": "keyword"
+            },
+            "changed": {
+              "type": "keyword"
+            },
+            "shared": {
+              "type": "boolean"
+            },
+            "summary": {
+              "type": "match_only_text"
             }
           }
         },

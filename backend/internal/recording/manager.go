@@ -13,7 +13,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -368,7 +367,7 @@ func (m *Manager) ensureSpace(ctx context.Context, reserve int64) error {
 		if lowDisk {
 			reason = "low_disk"
 		}
-		m.recordSystemAudit("recording.evicted", v, "reason="+reason+";size="+strconv.FormatInt(v.SizeBytes, 10))
+		m.recordEvictAudit(v, reason)
 	}
 }
 
@@ -438,10 +437,10 @@ func (m *Manager) purge(ctx context.Context) {
 			slog.Info("recording retention purge", slog.Int("removed", removed), slog.Int64("freed_bytes", freed))
 			go m.audit.Record(context.Background(), models.AuditLog{
 				User:         "system",
-				Action:       "recording.purge",
-				Namespace:    "-",
-				ResourceType: "recording",
-				ResourceName: "count=" + strconv.Itoa(removed) + ";retention_days=" + strconv.Itoa(days),
+				Verb:         audit.VerbPurge,
+				ResourceType: audit.KindRecording,
+				ResourceName: "*",
+				Details:      audit.D{"count": removed, "retention_days": days, "size_bytes": freed},
 			})
 		}
 	}
@@ -500,13 +499,24 @@ func (m *Manager) recoverOpen(ctx context.Context) {
 	}
 }
 
-func (m *Manager) recordSystemAudit(action string, rec models.SessionRecording, detail string) {
+// recordEvictAudit records a recording removed to make room (quota or low
+// disk) before its retention ended.
+func (m *Manager) recordEvictAudit(rec models.SessionRecording, reason string) {
 	go m.audit.Record(context.Background(), models.AuditLog{
 		User:         "system",
-		Action:       action,
+		Verb:         audit.VerbEvict,
+		Reason:       reason,
+		ResourceType: audit.KindRecording,
 		Namespace:    rec.Namespace,
-		ResourceType: "recording",
-		ResourceName: rec.Pod + " (session_id=" + rec.SessionID + ";" + detail + ")",
+		ResourceName: rec.SessionID,
+		Cluster:      rec.Cluster,
+		Details: audit.D{
+			"pod":        rec.Pod,
+			"container":  rec.Container,
+			"owner":      rec.User,
+			"started_at": rec.StartedAt,
+			"size_bytes": rec.SizeBytes,
+		},
 	})
 }
 

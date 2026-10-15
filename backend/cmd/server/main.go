@@ -94,6 +94,9 @@ func main() {
 	auditLogger := audit.New(stor)
 	auditLogger.SetConsoleMirror(cfg.LogIncludeAudit)
 	audit.SetMetricHook(api.MetricsAuditIncr)
+	if err := auditLogger.UpgradeLegacy(context.Background()); err != nil {
+		slog.Warn("audit upgrade failed; older rows keep the pre-2.17 format", slog.Any("error", err))
+	}
 	auditLogger.StartRetention(context.Background(), cfg.LogRetentionDays, cfg.AuditPurgeInterval)
 
 	recDir := cfg.Recording.Dir

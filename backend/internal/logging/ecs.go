@@ -31,6 +31,7 @@ var ecsFieldNames = map[string]string{
 	"error":          "error.message",
 	"err":            "error.message", // klog / logr
 	"event":          "event.action",
+	"reason":         "event.reason",
 	"method":         "http.request.method",
 	"status":         "http.response.status_code",
 	"path":           "url.path",
@@ -52,6 +53,11 @@ type ecsHandler struct {
 	addSource bool
 	attrs     []slog.Attr // from WithAttrs, applied before the record's own
 	prefix    string      // from WithGroup
+}
+
+// NewECSHandler returns the handler behind LOG_FORMAT=ecs, writing to w.
+func NewECSHandler(w io.Writer, opts *slog.HandlerOptions) slog.Handler {
+	return newECSHandler(w, opts)
 }
 
 func newECSHandler(w io.Writer, opts *slog.HandlerOptions) *ecsHandler {
@@ -166,17 +172,24 @@ func enrich(doc *object, msg string, raw map[string]any) {
 		doc.set("event.dataset", "openconsole.app")
 	case "audit":
 		action, _ := raw["event"].(string)
+		verb, _ := raw["verb"].(string)
+		kind, _ := raw["resource_type"].(string)
 		doc.set("message", auditMessage(raw))
 		doc.set("log.logger", "audit")
 		doc.set("event.kind", "event")
-		switch {
-		case strings.HasPrefix(action, "login."):
-			doc.set("event.category", []string{"authentication"})
-		case strings.HasPrefix(action, "pod.exec."):
-			doc.set("event.category", []string{"process"})
+		if c := auditCategory(action, kind, verb); c != "" {
+			doc.set("event.category", []string{c})
 		}
-		if outcome := auditOutcome(action); outcome != "" {
-			doc.set("event.outcome", outcome)
+		phase, _ := raw["phase"].(string)
+		if t := AuditEventType(verb, phase); t != "" {
+			doc.set("event.type", []string{t})
+		}
+		switch raw["outcome"] {
+		case "success":
+			doc.set("event.outcome", "success")
+		case nil, "":
+		default:
+			doc.set("event.outcome", "failure")
 		}
 		doc.set("event.dataset", "openconsole.audit")
 	default:
@@ -184,19 +197,52 @@ func enrich(doc *object, msg string, raw map[string]any) {
 	}
 }
 
-// auditOutcome maps an action's last segment to ECS event.outcome.
-func auditOutcome(action string) string {
+// auditEventTypes maps an audit verb to ECS event.type.
+var auditEventTypes = map[string]string{
+	"list": "access", "get": "access", "logs": "access", "view_yaml": "access",
+	"reveal": "access", "view": "access", "download": "access", "export": "access",
+	"restart": "change", "scale": "change", "apply": "change", "update": "change",
+	"share": "change", "select": "change", "activate": "change", "deactivate": "change",
+	"change_password": "change", "reset_password": "change",
+	"create": "creation", "import": "creation",
+	"delete": "deletion", "evict": "deletion", "purge": "deletion", "revoke": "deletion",
+	"login": "start",
+}
+
+// AuditEventType returns the ECS event.type for an audit verb; a shell
+// (exec) is start or end by its phase. "" for an unknown verb.
+func AuditEventType(verb, phase string) string {
+	if verb == "exec" {
+		if phase == "end" {
+			return "end"
+		}
+		return "start"
+	}
+	return auditEventTypes[verb]
+}
+
+// auditCategory returns the ECS event.category of an audit event.
+func auditCategory(action, kind, verb string) string {
 	switch {
-	case strings.HasSuffix(action, ".success"):
-		return "success"
-	case strings.HasSuffix(action, ".failed"), strings.HasSuffix(action, ".denied"),
-		strings.HasSuffix(action, ".rate_limited"), strings.HasSuffix(action, ".locked"):
-		return "failure"
+	case action == "user.login":
+		return "authentication"
+	case kind == "session":
+		return "session"
+	case action == "pod.exec":
+		return "process"
+	case kind == "user" || kind == "group" || kind == "role" || kind == "permission":
+		return "iam"
+	}
+	switch auditEventTypes[verb] {
+	case "change", "creation", "deletion":
+		return "configuration"
 	}
 	return ""
 }
 
-// auditMessage reads like "admin: pod.exec.end pod default/shellpod (…)".
+// auditMessage reads like
+// "admin: deployment.restart success boh-cy/boh on Zenia-NonProd". It is for
+// people; filters use the fields.
 func auditMessage(raw map[string]any) string {
 	str := func(k string) string { s, _ := raw[k].(string); return s }
 	target := str("resource_name")
@@ -204,14 +250,17 @@ func auditMessage(raw map[string]any) string {
 		target = ns + "/" + target
 	}
 	parts := []string{str("event")}
-	if t := str("resource_type"); t != "" {
-		parts = append(parts, t)
+	if o := str("outcome"); o != "" {
+		parts = append(parts, o)
 	}
 	if target != "" {
 		parts = append(parts, target)
 	}
 	if c := str("cluster"); c != "" {
 		parts = append(parts, "on "+c)
+	}
+	if r := str("reason"); r != "" {
+		parts = append(parts, "("+r+")")
 	}
 	return str("user") + ": " + strings.Join(parts, " ")
 }

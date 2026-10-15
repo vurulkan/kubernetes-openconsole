@@ -185,7 +185,7 @@ func TestAzurePreCreatedByEmail(t *testing.T) {
 	if _, err := e.store.GetUserByUsername(ctx, "jdoe@corp.onmicrosoft.com"); err == nil {
 		t.Fatal("a second account was created instead of claiming the pre-created one")
 	}
-	e.waitAudit("login.azure", "claimed by email")
+	e.waitAudit("user.login.success", `"linked_by":"email"`)
 
 	// Already claimed: the same e-mail on another person gets a new account.
 	if code, _ := e.azureLogin("mallory", false); code != http.StatusOK {
@@ -204,4 +204,3 @@ func TestAzurePreCreatedByEmail(t *testing.T) {
 		t.Fatalf("local account was claimed: %+v", ops)
 	}
 }
-

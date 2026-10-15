@@ -14,8 +14,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/auth"
-	"k8s-dashboard/backend/internal/logging"
 	"k8s-dashboard/backend/internal/models"
 )
 
@@ -33,14 +33,23 @@ func (s *Server) handleDeploymentLogsWS(w http.ResponseWriter, r *http.Request) 
 	}
 	namespace := chi.URLParam(r, "namespace")
 	deploymentName := chi.URLParam(r, "name")
-	requestID := logging.RequestIDFrom(r.Context())
 
+	logsEvent := models.AuditLog{
+		Verb:         audit.VerbLogs,
+		ResourceType: "deployment",
+		Namespace:    namespace,
+		ResourceName: deploymentName,
+	}
 	if !s.can(r.Context(), claims.UserID, namespace, "deployments", "get") ||
 		!s.can(r.Context(), claims.UserID, namespace, "pods", "logs") {
+		logsEvent.Outcome, logsEvent.Reason = audit.Denied, reasonForbidden
+		s.auditEvent(r, logsEvent)
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
 	if !s.allowLogStream(claims.UserID) {
+		logsEvent.Outcome, logsEvent.Reason = audit.RateLimited, reasonRateLimited
+		s.auditEvent(r, logsEvent)
 		w.WriteHeader(http.StatusTooManyRequests)
 		return
 	}
@@ -86,20 +95,8 @@ func (s *Server) handleDeploymentLogsWS(w http.ResponseWriter, r *http.Request) 
 	defer conn.Close()
 	MetricsLogStreamIncr()
 
-	go s.audit.Record(s.auditCtx(r), models.AuditLog{
-		User:         claims.Username,
-		Action:       "deployment.logs",
-		Namespace:    namespace,
-		ResourceType: "deployment",
-		ResourceName: deploymentName,
-	})
-	slog.Info("deployment.logs.start",
-		slog.String("user", claims.Username),
-		slog.String("namespace", namespace),
-		slog.String("deployment", deploymentName),
-		slog.Int("pods", len(podList.Items)),
-		slog.String("request_id", requestID),
-	)
+	logsEvent.Details = audit.D{"pods": len(podList.Items)}
+	s.auditEvent(r, logsEvent)
 
 	// writeMu serializes WS writes from the fan-in goroutines.
 	var writeMu sync.Mutex

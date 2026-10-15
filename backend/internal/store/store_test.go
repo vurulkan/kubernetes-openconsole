@@ -263,16 +263,18 @@ func TestAuditFilterModesAndFacets(t *testing.T) {
 	defer conn.Close()
 	ctx := context.Background()
 	for _, e := range []models.AuditLog{
-		{User: "alice", Action: "pod.exec.start", Namespace: "team-a"},
-		{User: "alice", Action: "pod.exec.end", Namespace: "team-a"},
-		{User: "bob", Action: "pod.exec.denied", Namespace: "team-b"},
-		{User: "bob", Action: "secret.reveal.denied", Namespace: "team-b"},
-		{User: "carol", Action: "secret.reveal.success", Namespace: "team-a"},
-		{User: "carol", Action: "deployment.scale.rate_limited", Namespace: "team-a"},
-		{User: "dave_x", Action: "login.failed", Namespace: "-"},
+		{User: "alice", Action: "pod.exec", Verb: "exec", Outcome: "success", Namespace: "team-a", ResourceType: "pod", Cluster: "prod",
+			Details: map[string]any{"phase": "start"}},
+		{User: "alice", Action: "pod.exec", Verb: "exec", Outcome: "success", Namespace: "team-a", ResourceType: "pod", Cluster: "prod",
+			Details: map[string]any{"phase": "end", "exit_code": 0}},
+		{User: "bob", Action: "pod.exec", Verb: "exec", Outcome: "denied", Namespace: "team-b", ResourceType: "pod", Cluster: "dev"},
+		{User: "bob", Action: "secret.reveal", Verb: "reveal", Outcome: "denied", Namespace: "team-b", ResourceType: "secret", Cluster: "dev"},
+		{User: "carol", Action: "secret.reveal", Verb: "reveal", Outcome: "success", Namespace: "team-a", ResourceType: "secret", Cluster: "prod"},
+		{User: "carol", Action: "deployment.scale", Verb: "scale", Outcome: "rate_limited", Namespace: "team-a", ResourceType: "deployment", Cluster: "prod"},
+		{User: "dave_x", Action: "user.login", Verb: "login", Outcome: "failed", Reason: "bad_password", ResourceType: "user"},
 	} {
 		e.Timestamp = time.Now().UTC()
-		e.ResourceType, e.ResourceName = "x", "x"
+		e.ResourceName = "x"
 		if err := st.AddAuditLog(ctx, e); err != nil {
 			t.Fatal(err)
 		}
@@ -290,13 +292,17 @@ func TestAuditFilterModesAndFacets(t *testing.T) {
 		f    store.AuditFilter
 		want int
 	}{
-		{"family", store.AuditFilter{Action: "pod.exec.*"}, 3},
-		{"exact", store.AuditFilter{Action: "pod.exec.end", ActionExact: true}, 1},
-		{"exact needs the whole name", store.AuditFilter{Action: "pod.exec", ActionExact: true}, 0},
+		{"family", store.AuditFilter{Action: "pod.*"}, 3},
+		{"exact", store.AuditFilter{Action: "pod.exec", ActionExact: true}, 3},
+		{"exact needs the whole name", store.AuditFilter{Action: "pod.ex", ActionExact: true}, 0},
 		{"contains", store.AuditFilter{Action: "reveal"}, 2},
 		{"outcome", store.AuditFilter{Outcome: "denied"}, 2},
 		{"outcome rate_limited", store.AuditFilter{Outcome: "rate_limited"}, 1},
 		{"family + outcome", store.AuditFilter{Action: "secret.*", Outcome: "denied"}, 1},
+		{"pre-2.17 action with outcome", store.AuditFilter{Action: "secret.reveal.denied"}, 1},
+		{"verb", store.AuditFilter{Verb: "exec"}, 3},
+		{"resource type", store.AuditFilter{ResourceType: "secret"}, 2},
+		{"cluster", store.AuditFilter{Cluster: "dev"}, 2},
 		// _ and % are literal, not LIKE wildcards.
 		{"underscore literal", store.AuditFilter{User: "e_x"}, 1},
 		{"underscore literal, no false match", store.AuditFilter{User: "v_x"}, 0},
@@ -308,18 +314,30 @@ func TestAuditFilterModesAndFacets(t *testing.T) {
 		}
 	}
 
-	actions, users, namespaces, err := st.AuditFacets(ctx, 100)
+	logs, err := st.ListAuditLogsFiltered(ctx, 10, 0, store.AuditFilter{Verb: "exec", Outcome: "success"})
+	if err != nil || len(logs) != 2 {
+		t.Fatalf("logs = %v, %v", logs, err)
+	}
+	if logs[0].Details["phase"] != "end" || logs[0].Details["exit_code"] != float64(0) {
+		t.Fatalf("details = %v", logs[0].Details)
+	}
+
+	f, err := st.AuditFacets(ctx, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(actions) != 7 || actions[0] != "deployment.scale.rate_limited" {
-		t.Fatalf("actions = %v", actions)
+	if strings.Join(f.Actions, ",") != "deployment.scale,pod.exec,secret.reveal,user.login" {
+		t.Fatalf("actions = %v", f.Actions)
 	}
-	if strings.Join(users, ",") != "alice,bob,carol,dave_x" {
-		t.Fatalf("users = %v", users)
+	if strings.Join(f.Users, ",") != "alice,bob,carol,dave_x" {
+		t.Fatalf("users = %v", f.Users)
 	}
-	if strings.Join(namespaces, ",") != "team-a,team-b" { // "-" left out
-		t.Fatalf("namespaces = %v", namespaces)
+	if strings.Join(f.Namespaces, ",") != "team-a,team-b" { // "" left out
+		t.Fatalf("namespaces = %v", f.Namespaces)
+	}
+	if strings.Join(f.Verbs, ",") != "exec,login,reveal,scale" || strings.Join(f.Clusters, ",") != "dev,prod" ||
+		strings.Join(f.ResourceTypes, ",") != "deployment,pod,secret,user" {
+		t.Fatalf("facets = %+v", f)
 	}
 }
 

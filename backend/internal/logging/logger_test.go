@@ -82,14 +82,16 @@ func TestECSHTTPRecord(t *testing.T) {
 
 func TestECSAuditRecord(t *testing.T) {
 	var buf bytes.Buffer
-	ecsLogger(&buf).Info("audit", slog.String("event", "pod.exec.denied"), slog.String("user", "bob"),
+	ecsLogger(&buf).Info("audit", slog.String("event", "pod.exec"), slog.String("verb", "exec"),
+		slog.String("outcome", "denied"), slog.String("reason", "forbidden"), slog.String("user", "bob"),
 		slog.String("namespace", "team-a"), slog.String("resource_type", "pod"),
 		slog.String("resource_name", "api-1"), slog.String("cluster", "prod"),
 		slog.String("container", "app"), slog.Any("error", errors.New("boom")))
 	rec := lines(t, &buf)[0]
 	for path, want := range map[string]any{
-		"message": "bob: pod.exec.denied pod team-a/api-1 on prod", "log.logger": "audit",
-		"event.action": "pod.exec.denied", "event.outcome": "failure", "event.kind": "event",
+		"message": "bob: pod.exec denied team-a/api-1 on prod (forbidden)", "log.logger": "audit",
+		"event.action": "pod.exec", "event.outcome": "failure", "event.kind": "event",
+		"event.reason": "forbidden", "openconsole.outcome": "denied", "openconsole.verb": "exec",
 		"event.dataset": "openconsole.audit", "user.name": "bob", "error.message": "boom",
 		// The resource acted on: under openconsole.*, never kubernetes.* / container.*.
 		"openconsole.namespace": "team-a", "openconsole.container": "app", "openconsole.cluster": "prod",
@@ -103,6 +105,9 @@ func TestECSAuditRecord(t *testing.T) {
 	}
 	if c, _ := get(rec, "event.category").([]any); len(c) != 1 || c[0] != "process" {
 		t.Errorf("event.category = %v", get(rec, "event.category"))
+	}
+	if c, _ := get(rec, "event.type").([]any); len(c) != 1 || c[0] != "start" {
+		t.Errorf("event.type = %v", get(rec, "event.type"))
 	}
 }
 

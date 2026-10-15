@@ -23,6 +23,7 @@ import { useTranslation } from 'react-i18next';
 import { RolesSection } from './admin/RolesSection';
 import { useScopedShortcuts } from '../hooks/useScopedShortcuts';
 import { confirm } from '../components/ConfirmDialog';
+import { AuditEntryRow } from '../components/AuditEntryRow';
 import {
   User,
   ClusterListItem,
@@ -35,6 +36,8 @@ import {
   listUsers,
   createUser,
   getAuditFacets,
+  AuditEntry,
+  AuditFacets,
   AuditQuery,
   updateUser,
   deleteUser,
@@ -96,6 +99,15 @@ import {
 } from 'lucide-react';
 
 // ─── Tab definitions ──────────────────────────────────────────────────────────
+
+const emptyAuditFacets: AuditFacets = {
+  actions: [],
+  users: [],
+  namespaces: [],
+  verbs: [],
+  resourceTypes: [],
+  clusters: [],
+};
 
 const ADMIN_TABS: Array<{
   label: string;
@@ -278,18 +290,17 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     ready: false,
     lastError: '',
   });
-  const [auditLogs, setAuditLogs] = useState<Array<Record<string, unknown>>>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditEntry[]>([]);
   const [auditTotal, setAuditTotal] = useState(0);
   const [auditOffset, setAuditOffset] = useState(0);
   const [auditUserFilter, setAuditUserFilter] = useState('');
   const [auditActionFilter, setAuditActionFilter] = useState('');
   const [auditActionExact, setAuditActionExact] = useState(false);
   const [auditOutcome, setAuditOutcome] = useState<AuditQuery['outcome']>('');
-  const [auditFacets, setAuditFacets] = useState<{ actions: string[]; users: string[]; namespaces: string[] }>({
-    actions: [],
-    users: [],
-    namespaces: [],
-  });
+  const [auditVerb, setAuditVerb] = useState('');
+  const [auditResourceType, setAuditResourceType] = useState('');
+  const [auditCluster, setAuditCluster] = useState('');
+  const [auditFacets, setAuditFacets] = useState<AuditFacets>(emptyAuditFacets);
   const [auditNamespaceFilter, setAuditNamespaceFilter] = useState('');
   const [auditStartDate, setAuditStartDate] = useState('');
   const [auditEndDate, setAuditEndDate] = useState('');
@@ -478,7 +489,10 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     user: auditUserFilter,
     action: auditActionFilter,
     actionExact: auditActionExact,
+    verb: auditVerb,
     outcome: auditOutcome,
+    resourceType: auditResourceType,
+    cluster: auditCluster,
     namespace: auditNamespaceFilter,
     start: auditStartDate,
     end: auditEndDate,
@@ -495,7 +509,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
       getSession(),
       getCluster(),
       listAuditLogs(50, auditOffset, auditQuery),
-      listNamespaces(),
+      listNamespaces(true),
     ]);
 
     const [
@@ -629,6 +643,9 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     auditActionFilter,
     auditActionExact,
     auditOutcome,
+    auditVerb,
+    auditResourceType,
+    auditCluster,
     auditNamespaceFilter,
     auditStartDate,
     auditEndDate,
@@ -639,7 +656,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     if (tab !== 'audit') return;
     getAuditFacets()
       .then(setAuditFacets)
-      .catch(() => setAuditFacets({ actions: [], users: [], namespaces: [] }));
+      .catch(() => setAuditFacets(emptyAuditFacets));
   }, [tab]);
 
   const handleCreateUser = async () => {
@@ -2089,6 +2106,52 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   <option value="denied">denied</option>
                   <option value="failed">failed</option>
                   <option value="rate_limited">rate_limited</option>
+                  <option value="locked">locked</option>
+                </NativeSelect>
+                <NativeSelect
+                  label={tr('admin.audit.filterVerb')}
+                  value={auditVerb}
+                  onChange={(e) => {
+                    setAuditOffset(0);
+                    setAuditVerb(e.target.value);
+                  }}
+                >
+                  <option value="">{tr('admin.audit.outcomeAny')}</option>
+                  {auditFacets.verbs.map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </NativeSelect>
+                <NativeSelect
+                  label={tr('admin.audit.filterResourceType')}
+                  value={auditResourceType}
+                  onChange={(e) => {
+                    setAuditOffset(0);
+                    setAuditResourceType(e.target.value);
+                  }}
+                >
+                  <option value="">{tr('admin.audit.outcomeAny')}</option>
+                  {auditFacets.resourceTypes.map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </NativeSelect>
+                <NativeSelect
+                  label={tr('admin.audit.cluster')}
+                  value={auditCluster}
+                  onChange={(e) => {
+                    setAuditOffset(0);
+                    setAuditCluster(e.target.value);
+                  }}
+                >
+                  <option value="">{tr('admin.audit.outcomeAny')}</option>
+                  {auditFacets.clusters.map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
                 </NativeSelect>
                 <Combobox
                   label={tr('admin.audit.filterNamespace')}
@@ -2129,36 +2192,8 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
               </div>
 
               <div className="flex flex-col gap-2">
-                {auditLogs.map((entry, index) => (
-                  <div
-                    key={index}
-                    className="rounded-lg border border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3"
-                  >
-                    <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                      {(entry.user as string) ?? 'unknown'} —{' '}
-                      <span className="font-normal text-slate-600 dark:text-slate-300">
-                        {(entry.action as string) ?? ''}
-                      </span>
-                    </p>
-                    <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                      {(entry.timestampFormatted as string) ??
-                        (entry.timestamp as string) ??
-                        ''}
-                    </p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">
-                      {typeof entry.cluster === 'string' && entry.cluster !== '' && entry.cluster !== '-' && (
-                        <span
-                          className="mr-1.5 rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-600 dark:bg-slate-800 dark:text-slate-300"
-                          title={tr('admin.audit.cluster')}
-                        >
-                          {entry.cluster}
-                        </span>
-                      )}
-                      {(entry.namespace as string) ?? '-'} /{' '}
-                      {(entry.resourceType as string) ?? ''} /{' '}
-                      {(entry.resourceName as string) ?? ''}
-                    </p>
-                  </div>
+                {auditLogs.map((entry) => (
+                  <AuditEntryRow key={entry.id} entry={entry} />
                 ))}
               </div>
 

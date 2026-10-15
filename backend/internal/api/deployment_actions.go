@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -16,7 +15,7 @@ import (
 	"golang.org/x/time/rate"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
-	"k8s-dashboard/backend/internal/logging"
+	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/models"
 )
 
@@ -52,17 +51,16 @@ func (s *Server) handleDeploymentRestart(w http.ResponseWriter, r *http.Request)
 	}
 	namespace := chi.URLParam(r, "namespace")
 	name := chi.URLParam(r, "name")
-	requestID := logging.RequestIDFrom(r.Context())
 
 	if !s.can(r.Context(), user.ID, namespace, "deployments", "restart") {
-		s.recordDeployAudit(user.Username, namespace, name, "deployment.restart", "denied", "", r)
+		s.recordDeployAudit(r, namespace, name, audit.VerbRestart, audit.Denied, reasonForbidden, nil)
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 
 	if !allowDeployAction(user.ID) {
 		w.Header().Set("Retry-After", "6")
-		s.recordDeployAudit(user.Username, namespace, name, "deployment.restart", "rate_limited", "", r)
+		s.recordDeployAudit(r, namespace, name, audit.VerbRestart, audit.RateLimited, reasonRateLimited, nil)
 		writeError(w, http.StatusTooManyRequests, "rate limited")
 		return
 	}
@@ -70,19 +68,12 @@ func (s *Server) handleDeploymentRestart(w http.ResponseWriter, r *http.Request)
 	MetricsDeployAction()
 	stamp, err := s.resources.RestartDeployment(r.Context(), namespace, name)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "deployment.restart.failed",
-			slog.String("user", user.Username),
-			slog.String("namespace", namespace),
-			slog.String("deployment", name),
-			slog.Any("error", err),
-			slog.String("request_id", requestID),
-		)
-		s.recordDeployAudit(user.Username, namespace, name, "deployment.restart", "failed", err.Error(), r)
+		s.recordDeployAudit(r, namespace, name, audit.VerbRestart, audit.Failed, failReason(err), failDetails(err, nil))
 		writeActionError(w, err, "restart failed")
 		return
 	}
 
-	s.recordDeployAudit(user.Username, namespace, name, "deployment.restart", "success", "restartedAt="+stamp, r)
+	s.recordDeployAudit(r, namespace, name, audit.VerbRestart, audit.Success, "", audit.D{"restarted_at": stamp})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":      "ok",
 		"restartedAt": stamp,
@@ -98,10 +89,9 @@ func (s *Server) handleDeploymentScale(w http.ResponseWriter, r *http.Request) {
 	}
 	namespace := chi.URLParam(r, "namespace")
 	name := chi.URLParam(r, "name")
-	requestID := logging.RequestIDFrom(r.Context())
 
 	if !s.can(r.Context(), user.ID, namespace, "deployments", "scale") {
-		s.recordDeployAudit(user.Username, namespace, name, "deployment.scale", "denied", "", r)
+		s.recordDeployAudit(r, namespace, name, audit.VerbScale, audit.Denied, reasonForbidden, nil)
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -126,7 +116,7 @@ func (s *Server) handleDeploymentScale(w http.ResponseWriter, r *http.Request) {
 
 	if !allowDeployAction(user.ID) {
 		w.Header().Set("Retry-After", "6")
-		s.recordDeployAudit(user.Username, namespace, name, "deployment.scale", "rate_limited", "", r)
+		s.recordDeployAudit(r, namespace, name, audit.VerbScale, audit.RateLimited, reasonRateLimited, audit.D{"replicas_to": body.Replicas})
 		writeError(w, http.StatusTooManyRequests, "rate limited")
 		return
 	}
@@ -134,22 +124,14 @@ func (s *Server) handleDeploymentScale(w http.ResponseWriter, r *http.Request) {
 	MetricsDeployAction()
 	previous, err := s.resources.ScaleDeployment(r.Context(), namespace, name, body.Replicas)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "deployment.scale.failed",
-			slog.String("user", user.Username),
-			slog.String("namespace", namespace),
-			slog.String("deployment", name),
-			slog.Int("target_replicas", int(body.Replicas)),
-			slog.Any("error", err),
-			slog.String("request_id", requestID),
-		)
-		s.recordDeployAudit(user.Username, namespace, name, "deployment.scale", "failed",
-			fmt.Sprintf("from=%d to=%d err=%s", previous, body.Replicas, err.Error()), r)
+		s.recordDeployAudit(r, namespace, name, audit.VerbScale, audit.Failed, failReason(err),
+			failDetails(err, audit.D{"replicas_from": previous, "replicas_to": body.Replicas}))
 		writeActionError(w, err, "scale failed")
 		return
 	}
 
-	s.recordDeployAudit(user.Username, namespace, name, "deployment.scale", "success",
-		fmt.Sprintf("from=%d to=%d", previous, body.Replicas), r)
+	s.recordDeployAudit(r, namespace, name, audit.VerbScale, audit.Success, "",
+		audit.D{"replicas_from": previous, "replicas_to": body.Replicas})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":   "ok",
 		"previous": previous,
@@ -157,28 +139,16 @@ func (s *Server) handleDeploymentScale(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) recordDeployAudit(user, namespace, name, action, outcome, details string, r *http.Request) {
-	requestID := requestIDOf(r)
-	resourceName := name
-	if details != "" {
-		resourceName = fmt.Sprintf("%s (%s)", name, details)
-	}
-	go s.audit.Record(s.auditCtx(r), models.AuditLog{
-		User:         user,
-		Action:       action + "." + outcome,
-		Namespace:    namespace,
+func (s *Server) recordDeployAudit(r *http.Request, namespace, name, verb, outcome, reason string, details audit.D) {
+	s.auditEvent(r, models.AuditLog{
+		Verb:         verb,
+		Outcome:      outcome,
+		Reason:       reason,
 		ResourceType: "deployment",
-		ResourceName: resourceName,
+		Namespace:    namespace,
+		ResourceName: name,
+		Details:      details,
 	})
-	slog.Info("deployment.action",
-		slog.String("event", action),
-		slog.String("outcome", outcome),
-		slog.String("user", user),
-		slog.String("namespace", namespace),
-		slog.String("deployment", name),
-		slog.String("details", details),
-		slog.String("request_id", requestID),
-	)
 }
 
 // writeActionError reports a failed write action. Kubernetes API errors keep

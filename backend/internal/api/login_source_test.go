@@ -44,13 +44,13 @@ func TestLoginRespectsAuthSource(t *testing.T) {
 	// Local account: local password works.
 	account("bob", models.AuthSourceLocal)
 	login("bob", "Local-pass-1", http.StatusOK)
-	e.waitAudit("login.success", "local")
+	e.waitAudit("user.login.success", `"login_method":"local"`)
 
 	// LDAP account with a leftover local password: only the directory counts.
 	account("jo", models.AuthSourceLDAP)
 	login("jo", "Local-pass-1", http.StatusUnauthorized)
 	login("jo", ldapfake.JoPwd, http.StatusOK)
-	if a := e.waitAudit("login.success", "ldap"); a.User != "jo" {
+	if a := e.waitAudit("user.login.success", `"login_method":"ldap"`); a.User != "jo" {
 		t.Fatalf("audit user = %q", a.User)
 	}
 
@@ -69,7 +69,7 @@ func TestLoginRespectsAuthSource(t *testing.T) {
 	if out := login("jane@example.com", "Local-pass-1", http.StatusUnauthorized); strings.TrimSpace(out) != "" {
 		t.Fatalf("azure password login body = %q", out)
 	}
-	e.waitAudit("login.failed", "azure_account")
+	e.waitAudit("user.login.failed", "azure_account")
 }
 
 // TestCreateUserSources: admins can pre-create Azure AD accounts (no
@@ -93,7 +93,7 @@ func TestCreateUserSources(t *testing.T) {
 	if groups, _ := e.store.GetUserGroups(ctx, u.ID); len(groups) != 1 {
 		t.Fatalf("azure user groups = %v", groups)
 	}
-	e.waitAudit("admin.create", "source=azure")
+	e.waitAudit("user.create.success", `"account_source":"azure"`)
 
 	// Local users still need a password that meets the policy; LDAP users
 	// are imported, not created.
@@ -125,7 +125,7 @@ func TestLDAPImportIntoGroups(t *testing.T) {
 	if groups, _ := e.store.GetUserGroups(ctx, john.ID); john.AuthSource != models.AuthSourceLDAP || len(groups) != 1 {
 		t.Fatalf("john = %+v groups=%v", john, groups)
 	}
-	e.waitAudit("admin.import", "1: john")
+	e.waitAudit("user.import.success", `"count":1`)
 }
 
 func TestVersionEndpointNeedsLogin(t *testing.T) {

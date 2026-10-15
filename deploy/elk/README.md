@@ -13,8 +13,8 @@ Field reference: README → [Structured logging](../../README.md#structured-logg
 
 | File | What it is |
 |---|---|
-| `openconsole-logs.pipeline.json` | Ingest pipeline `openconsole-logs`. It runs only on OpenConsole lines (JSON whose `service.name` is `openconsole`); other containers' lines pass through unchanged. Steps:<br>1. A `json` processor decodes the line into the document. It merges with what Elastic Agent added, so `kubernetes.*`, `container.*` and `log.file.path` stay.<br>2. `dot_expander` handles the dotted keys written by 2.16.1, so lines from both versions end up the same during an upgrade.<br>3. A script fills `event.dataset` / `event.kind` / `event.outcome` only where the line lacks them (2.16.1 lines).<br>4. `reroute` sends the record to `logs-openconsole.audit` or `logs-openconsole.app`. |
-| `openconsole@mappings.component-template.json` | Mappings for the fields OpenConsole writes: keywords for names, `source.ip` (and `client.ip` from 2.16.1) as `ip`, `event.duration`, `http.response.status_code` and `http.response.body.bytes` as `long`, `openconsole.ts` as `date`, `openconsole.*` (the resource an action ran against) as keywords. |
+| `openconsole-logs.pipeline.json` | Ingest pipeline `openconsole-logs`. It runs only on OpenConsole lines (JSON whose `service.name` is `openconsole`); other containers' lines pass through unchanged. Steps:<br>1. A `json` processor decodes the line into the document. It merges with what Elastic Agent added, so `kubernetes.*`, `container.*` and `log.file.path` stay.<br>2. `dot_expander` handles the dotted keys written by 2.16.1, so lines from both versions end up the same during an upgrade.<br>3. A script fills `event.dataset` / `event.kind` / `event.outcome` only where the line lacks them (2.16.1 lines), and gives audit lines from before 2.17 the 2.17 shape: `event.action` without the outcome (`deployment.restart.success` → `deployment.restart`), bare reads with their resource (`list` + `deployments` → `deployment.list`), renamed actions (`login.failed` → `user.login`, `secret.yaml.view` → `secret.view_yaml`, …), plus `openconsole.verb`, `openconsole.outcome` and `event.type`.<br>4. `reroute` sends the record to `logs-openconsole.audit` or `logs-openconsole.app`. |
+| `openconsole@mappings.component-template.json` | Mappings for the fields OpenConsole writes: keywords for names, `source.ip` (and `client.ip` from 2.16.1) as `ip`, `event.duration`, `http.response.status_code` and `http.response.body.bytes` as `long`, `openconsole.ts` as `date`, `openconsole.*` (the resource an action ran against) as keywords, and every audit detail with its own type (`restarted_at` / `started_at` as `date`; `replicas_from`, `replicas_to`, `exit_code`, `duration_ms`, `cluster_id`, … as `long`; `dry_run`, `is_admin`, … as `boolean`). A backend test keeps this file and the list of audit details in step. |
 | `logs-openconsole.index-template.json` | Index template for the two data streams. It combines the stack's `logs@*` / `ecs@mappings` templates with the mappings above. |
 | `install.sh` | Installs the three and hooks the pipeline into the Kubernetes integration (below). Safe to re-run. |
 
@@ -94,11 +94,13 @@ GET logs-openconsole.audit-*/_search
 KQL examples (audit):
 
 ```text
-event.action : "login.failed"
+event.action : "user.login" and event.outcome : "failure"
 event.outcome : "failure"
 user.name : "dev1" and event.outcome : "failure"
-event.action : pod.exec.* and openconsole.cluster : "prod-aks"
-event.action : "deployment.restart.success" and openconsole.namespace : "payments"
+event.action : "pod.exec" and openconsole.cluster : "prod-aks"
+event.action : "deployment.restart" and event.outcome : "success" and openconsole.namespace : "payments"
+openconsole.verb : "list" and openconsole.resource_type : "secret"
+openconsole.replicas_to >= 10
 http.request.id : "4rvxiU2EG9Lmx4OB"
 ```
 
@@ -138,3 +140,5 @@ Tested on Elasticsearch 8.15.3 and 9.1.0 with images built from this version (2.
 - a broken line is tagged and stays where it was.
 
 `install.sh` was run twice; the second run changed nothing it shouldn't.
+
+**2.17.0** (structured audit events): tested on 8.15.3 and 9.1.0 (LogsDB) with audit lines written by the 2.17.0 audit code (list, restart with `restarted_at`, a failed scale with `replicas_from` / `replicas_to` and an error, the end of a pod shell, a failed sign-in) and 2.16.2 / 2.16.1 audit lines (bare `list`, `*.success` / `*.denied`, `pod.exec.end`, `login.failed`, `deployments.apply.success`, `admin.create`), sent together through the pipeline. `_bulk` reported no errors; old and new lines are found by the same queries (`event.action : "deployment.restart"`, `event.action : "user.login"`, `event.outcome : "failure"`); `openconsole.restarted_at` is a `date`, `openconsole.replicas_to` / `cluster_id` / `exit_code` are `long`, and range queries on them work.

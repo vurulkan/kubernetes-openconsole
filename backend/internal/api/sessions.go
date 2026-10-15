@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/models"
 )
 
@@ -60,13 +61,11 @@ func (s *Server) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
 	if targetJTI != "" {
 		s.sessionToucher.Forget(targetJTI)
 	}
-	user, _ := s.userForRequest(r)
-	go s.audit.Record(s.auditCtx(r), models.AuditLog{
-		User:         userName(user),
-		Action:       "session.revoke",
-		Namespace:    "-",
-		ResourceType: "session",
+	s.auditEvent(r, models.AuditLog{
+		Verb:         audit.VerbRevoke,
+		ResourceType: audit.KindSession,
 		ResourceName: targetUser,
+		Details:      audit.D{"session_id": strconv.Itoa(id)},
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
 }
@@ -81,13 +80,15 @@ func (s *Server) handleRevokeAllForUser(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "failed to revoke")
 		return
 	}
-	user, _ := s.userForRequest(r)
-	go s.audit.Record(s.auditCtx(r), models.AuditLog{
-		User:         userName(user),
-		Action:       "session.revoke_all",
-		Namespace:    "-",
-		ResourceType: "session",
-		ResourceName: "user:" + strconv.Itoa(id),
+	target := "id:" + strconv.Itoa(id)
+	if u, err := s.store.GetUserByID(r.Context(), id); err == nil {
+		target = u.Username
+	}
+	s.auditEvent(r, models.AuditLog{
+		Verb:         audit.VerbRevoke,
+		ResourceType: audit.KindSession,
+		ResourceName: target,
+		Details:      audit.D{"all": true},
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
 }

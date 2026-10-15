@@ -56,8 +56,8 @@ func TestLDAPAutoProvision(t *testing.T) {
 	if groups, _ := e.store.GetUserGroups(ctx, john.ID); len(groups) != 1 || groups[0] != gid {
 		t.Fatalf("john groups = %v", groups)
 	}
-	e.waitAudit("user.auto_provision.success", "john")
-	e.waitAudit("login.success", "ldap")
+	e.waitAudit("user.create.success", "john")
+	e.waitAudit("user.login.success", `"login_method":"ldap"`)
 
 	// Another spelling signs in to the same account, no duplicate.
 	login("JOHN", ldapfake.JohnPwd, http.StatusOK)

@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -13,8 +12,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
 
+	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/kube"
-	"k8s-dashboard/backend/internal/logging"
 	"k8s-dashboard/backend/internal/models"
 )
 
@@ -33,7 +32,7 @@ func (s *Server) handleDaemonSets(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
-	s.recordAudit(r, "list", namespace, "daemonsets", "*")
+	s.auditRead(r, audit.VerbList, "daemonsets", namespace, "*")
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
@@ -47,7 +46,7 @@ func (s *Server) handleDaemonSet(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	s.recordAudit(r, "get", namespace, "daemonsets", item.Name)
+	s.auditRead(r, audit.VerbGet, "daemonsets", namespace, item.Name)
 	writeJSON(w, http.StatusOK, item)
 }
 
@@ -81,7 +80,7 @@ func (s *Server) handleStatefulSets(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
-	s.recordAudit(r, "list", namespace, "statefulsets", "*")
+	s.auditRead(r, audit.VerbList, "statefulsets", namespace, "*")
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
@@ -95,7 +94,7 @@ func (s *Server) handleStatefulSet(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	s.recordAudit(r, "get", namespace, "statefulsets", item.Name)
+	s.auditRead(r, audit.VerbGet, "statefulsets", namespace, item.Name)
 	writeJSON(w, http.StatusOK, item)
 }
 
@@ -129,10 +128,9 @@ func (s *Server) handleStatefulSetScale(w http.ResponseWriter, r *http.Request) 
 	}
 	namespace := chi.URLParam(r, "namespace")
 	name := chi.URLParam(r, "name")
-	requestID := logging.RequestIDFrom(r.Context())
 
 	if !s.can(r.Context(), user.ID, namespace, "statefulsets", "scale") {
-		s.recordWorkloadAudit(user.Username, namespace, name, "statefulset", "statefulset.scale", "denied", "", requestID)
+		s.recordStatefulSetScaleAudit(r, namespace, name, audit.Denied, reasonForbidden, nil)
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -157,29 +155,21 @@ func (s *Server) handleStatefulSetScale(w http.ResponseWriter, r *http.Request) 
 
 	if !allowDeployAction(user.ID) {
 		w.Header().Set("Retry-After", "6")
-		s.recordWorkloadAudit(user.Username, namespace, name, "statefulset", "statefulset.scale", "rate_limited", "", requestID)
+		s.recordStatefulSetScaleAudit(r, namespace, name, audit.RateLimited, reasonRateLimited, audit.D{"replicas_to": body.Replicas})
 		writeError(w, http.StatusTooManyRequests, "rate limited")
 		return
 	}
 
 	previous, err := s.resources.ScaleStatefulSet(r.Context(), namespace, name, body.Replicas)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "statefulset.scale.failed",
-			slog.String("user", user.Username),
-			slog.String("namespace", namespace),
-			slog.String("statefulset", name),
-			slog.Int("target_replicas", int(body.Replicas)),
-			slog.Any("error", err),
-			slog.String("request_id", requestID),
-		)
-		s.recordWorkloadAudit(user.Username, namespace, name, "statefulset", "statefulset.scale", "failed",
-			fmt.Sprintf("from=%d to=%d err=%s", previous, body.Replicas, err.Error()), requestID)
+		s.recordStatefulSetScaleAudit(r, namespace, name, audit.Failed, failReason(err),
+			failDetails(err, audit.D{"replicas_from": previous, "replicas_to": body.Replicas}))
 		writeActionError(w, err, "scale failed")
 		return
 	}
 
-	s.recordWorkloadAudit(user.Username, namespace, name, "statefulset", "statefulset.scale", "success",
-		fmt.Sprintf("from=%d to=%d", previous, body.Replicas), requestID)
+	s.recordStatefulSetScaleAudit(r, namespace, name, audit.Success, "",
+		audit.D{"replicas_from": previous, "replicas_to": body.Replicas})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":   "ok",
 		"previous": previous,
@@ -197,7 +187,7 @@ func (s *Server) handleHPAs(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
-	s.recordAudit(r, "list", namespace, "hpas", "*")
+	s.auditRead(r, audit.VerbList, "hpas", namespace, "*")
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
@@ -211,7 +201,7 @@ func (s *Server) handleHPA(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	s.recordAudit(r, "get", namespace, "hpas", item.Name)
+	s.auditRead(r, audit.VerbGet, "hpas", namespace, item.Name)
 	writeJSON(w, http.StatusOK, item)
 }
 
@@ -235,26 +225,14 @@ func (s *Server) handleHPAYAML(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(kube.PrettifyYAML(data))})
 }
 
-func (s *Server) recordWorkloadAudit(user, namespace, name, resourceType, action, outcome, details, requestID string) {
-	resourceName := name
-	if details != "" {
-		resourceName = fmt.Sprintf("%s (%s)", name, details)
-	}
-	go s.audit.Record(s.auditCtxFromID(requestID), models.AuditLog{
-		User:         user,
-		Action:       action + "." + outcome,
+func (s *Server) recordStatefulSetScaleAudit(r *http.Request, namespace, name, outcome, reason string, details audit.D) {
+	s.auditEvent(r, models.AuditLog{
+		Verb:         audit.VerbScale,
+		Outcome:      outcome,
+		Reason:       reason,
+		ResourceType: "statefulset",
 		Namespace:    namespace,
-		ResourceType: resourceType,
-		ResourceName: resourceName,
+		ResourceName: name,
+		Details:      details,
 	})
-	slog.Info("workload.action",
-		slog.String("event", action),
-		slog.String("outcome", outcome),
-		slog.String("user", user),
-		slog.String("namespace", namespace),
-		slog.String("resource", resourceType),
-		slog.String("name", name),
-		slog.String("details", details),
-		slog.String("request_id", requestID),
-	)
 }

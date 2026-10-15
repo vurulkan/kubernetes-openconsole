@@ -45,7 +45,7 @@ func TestExecConcurrentSessionLimit(t *testing.T) {
 		}
 	}
 	e.expect("GET", "/ws/namespaces/team-a/pods/api-1/exec", bob, nil, http.StatusTooManyRequests)
-	e.waitAudit("pod.exec.rate_limited", "max_sessions=2")
+	e.waitAudit("pod.exec.rate_limited", `"max_sessions":2`)
 
 	// A browser (WebSocket upgrade) can't see a handshake status, so it gets
 	// an error frame it can show, then close code 4429.
@@ -90,6 +90,7 @@ func TestUserAndGroupCSVExport(t *testing.T) {
 	if !strings.HasPrefix(out, "group,members,roles\n") || !strings.Contains(out, ",bob,role-") {
 		t.Fatalf("groups.csv = %s", out)
 	}
-	e.waitAudit("admin.export", "")
+	e.waitAudit("user.export.success", `"count":2`)
+	e.waitAudit("group.export.success", "")
 	e.expect("GET", "/api/admin/users/export", bob, nil, http.StatusForbidden)
 }

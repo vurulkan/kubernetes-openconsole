@@ -124,7 +124,7 @@ func TestPasswordResetLocalUsersOnly(t *testing.T) {
 
 	e.expect("POST", path(localID), admin, map[string]string{"password": "short"}, http.StatusBadRequest)
 	e.expect("POST", path(localID), admin, map[string]string{"password": "New-passw0rd"}, http.StatusOK)
-	e.waitAudit("user.password_reset.success", "carol")
+	e.waitAudit("user.reset_password.success", "carol")
 
 	// Sessions revoked, new password works, must change it at next login.
 	e.expect("GET", "/api/cluster/active", carolTok, nil, http.StatusUnauthorized)
@@ -136,13 +136,13 @@ func TestPasswordResetLocalUsersOnly(t *testing.T) {
 
 	// Directory users are refused.
 	e.expect("POST", path(ldapID), admin, map[string]string{"password": "New-passw0rd"}, http.StatusConflict)
-	e.waitAudit("user.password_reset.failed", "source=ldap")
+	e.waitAudit("user.reset_password.failed", `"account_source":"ldap"`)
 	e.expect("POST", path(azureID), admin, map[string]string{"password": "New-passw0rd"}, http.StatusConflict)
 
 	// Non-admins are refused and audited.
 	_, bob := e.user("bob", false)
 	e.expect("POST", path(localID), bob, map[string]string{"password": "New-passw0rd"}, http.StatusForbidden)
-	e.waitAudit("user.password_reset.denied", "")
+	e.waitAudit("user.reset_password.denied", "")
 
 	// The users list shows where each account signs in.
 	out = e.expect("GET", "/api/admin/users", admin, nil, http.StatusOK)

@@ -439,13 +439,14 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
     void loadPermissions();
   }, [selectedNamespace]);
 
-  const loadResources = useCallback(async () => {
+  // auto: the periodic refresh, which the server doesn't audit.
+  const loadResources = useCallback(async (auto = false) => {
     if (!selectedNamespace || !activeTab) return;
     setLoading(true);
     try {
       let result: { items: Array<Record<string, unknown>> } | null = null;
-      if (activeTab === 'pods') result = await listPods(selectedNamespace);
-      else if (activeTab === 'deployments') result = await listDeployments(selectedNamespace);
+      if (activeTab === 'pods') result = await listPods(selectedNamespace, auto);
+      else if (activeTab === 'deployments') result = await listDeployments(selectedNamespace, auto);
       else if (activeTab === 'daemonsets') result = await listDaemonSets(selectedNamespace);
       else if (activeTab === 'statefulsets') result = await listStatefulSets(selectedNamespace);
       else if (activeTab === 'hpas') result = await listHPAs(selectedNamespace);
@@ -559,7 +560,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   useEffect(() => {
     if (!selectedNamespace || (activeTab !== 'pods' && activeTab !== 'deployments')) return;
     const interval = setInterval(() => {
-      void loadResources();
+      void loadResources(true);
     }, 10000);
     return () => clearInterval(interval);
   }, [activeTab, loadResources, selectedNamespace]);

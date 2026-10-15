@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
 	"sort"
 	"time"
@@ -14,6 +13,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
+	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/kube"
 	"k8s-dashboard/backend/internal/models"
 )
@@ -102,7 +102,7 @@ func (s *Server) handleSecrets(w http.ResponseWriter, r *http.Request) {
 	for i := range items {
 		out = append(out, summarizeSecret(&items[i]))
 	}
-	s.recordAudit(r, "list", namespace, "secrets", "*")
+	s.auditRead(r, audit.VerbList, "secrets", namespace, "*")
 	writeJSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
@@ -116,7 +116,7 @@ func (s *Server) handleSecret(w http.ResponseWriter, r *http.Request) {
 		writeKubeError(w, err)
 		return
 	}
-	s.recordAudit(r, "get", namespace, "secrets", sec.Name)
+	s.auditRead(r, audit.VerbGet, "secrets", namespace, sec.Name)
 	writeJSON(w, http.StatusOK, summarizeSecret(sec))
 }
 
@@ -138,23 +138,23 @@ func (s *Server) handleSecretReveal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.can(r.Context(), user.ID, namespace, "secrets", "reveal") {
-		s.recordSecretRevealAudit(user.Username, namespace, name, body.Key, "denied", "", r)
+		s.recordSecretAudit(r, namespace, name, audit.VerbReveal, audit.Denied, reasonForbidden, audit.D{"key": body.Key})
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 	sec, err := s.resources.GetSecret(r.Context(), namespace, name)
 	if err != nil {
-		s.recordSecretRevealAudit(user.Username, namespace, name, body.Key, "failed", err.Error(), r)
+		s.recordSecretAudit(r, namespace, name, audit.VerbReveal, audit.Failed, failReason(err), failDetails(err, audit.D{"key": body.Key}))
 		writeKubeError(w, err)
 		return
 	}
 	value, found := sec.Data[body.Key]
 	if !found {
-		s.recordSecretRevealAudit(user.Username, namespace, name, body.Key, "failed", "key_not_found", r)
+		s.recordSecretAudit(r, namespace, name, audit.VerbReveal, audit.Failed, "key_not_found", audit.D{"key": body.Key})
 		writeError(w, http.StatusNotFound, "key not found")
 		return
 	}
-	s.recordSecretRevealAudit(user.Username, namespace, name, body.Key, "success", "", r)
+	s.recordSecretAudit(r, namespace, name, audit.VerbReveal, audit.Success, "", audit.D{"key": body.Key})
 	w.Header().Set("Cache-Control", "no-store")
 	// Text values come back as-is; binary values (keystores, certs in DER)
 	// as base64 with a flag so the UI can say so instead of printing mojibake.
@@ -178,13 +178,13 @@ func (s *Server) handleSecretYAML(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 	name := chi.URLParam(r, "name")
 	if !s.can(r.Context(), user.ID, namespace, "secrets", "edit") {
-		s.recordSecretAudit(user.Username, namespace, name, "secret.yaml.view.denied", "", r)
+		s.recordSecretAudit(r, namespace, name, audit.VerbViewYAML, audit.Denied, reasonForbidden, nil)
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 	sec, err := s.resources.GetSecret(r.Context(), namespace, name)
 	if err != nil {
-		s.recordSecretAudit(user.Username, namespace, name, "secret.yaml.view.failed", err.Error(), r)
+		s.recordSecretAudit(r, namespace, name, audit.VerbViewYAML, audit.Failed, failReason(err), failDetails(err, nil))
 		writeKubeError(w, err)
 		return
 	}
@@ -193,57 +193,23 @@ func (s *Server) handleSecretYAML(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to render yaml")
 		return
 	}
-	s.recordSecretAudit(user.Username, namespace, name, "secret.yaml.view.success", "", r)
+	s.recordSecretAudit(r, namespace, name, audit.VerbViewYAML, audit.Success, "", nil)
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(out)})
 }
 
-func (s *Server) recordSecretAudit(user, namespace, name, action, detail string, r *http.Request) {
-	requestID := requestIDOf(r)
-	resource := name
-	if detail != "" {
-		resource += " (" + detail + ")"
-	}
-	go s.audit.Record(s.auditCtx(r), models.AuditLog{
-		User:         user,
-		Action:       action,
-		Namespace:    namespace,
+// recordSecretAudit records a reveal or YAML view. Details carry the key
+// name, never a value.
+func (s *Server) recordSecretAudit(r *http.Request, namespace, name, verb, outcome, reason string, details audit.D) {
+	s.auditEvent(r, models.AuditLog{
+		Verb:         verb,
+		Outcome:      outcome,
+		Reason:       reason,
 		ResourceType: "secret",
-		ResourceName: resource,
-	})
-	slog.Info("secret.action",
-		slog.String("event", action),
-		slog.String("user", user),
-		slog.String("namespace", namespace),
-		slog.String("secret", name),
-		slog.String("details", detail),
-		slog.String("request_id", requestID),
-	)
-}
-
-func (s *Server) recordSecretRevealAudit(user, namespace, name, key, outcome, detail string, r *http.Request) {
-	requestID := requestIDOf(r)
-	resource := name + " (key=" + key
-	if detail != "" {
-		resource += ";" + detail
-	}
-	resource += ")"
-	go s.audit.Record(s.auditCtx(r), models.AuditLog{
-		User:         user,
-		Action:       "secret.reveal." + outcome,
 		Namespace:    namespace,
-		ResourceType: "secret",
-		ResourceName: resource,
+		ResourceName: name,
+		Details:      details,
 	})
-	slog.Info("secret.action",
-		slog.String("event", "secret.reveal."+outcome),
-		slog.String("user", user),
-		slog.String("namespace", namespace),
-		slog.String("secret", name),
-		slog.String("key", key),
-		slog.String("details", detail),
-		slog.String("request_id", requestID),
-	)
 }
 
 // writeKubeError reuses httpStatusFor for API-server errors and reports
