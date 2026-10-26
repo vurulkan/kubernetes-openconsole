@@ -2,8 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, "1.*"]
-    # Release tags (v2.14.2 …) publish :2.14.2 and :latest.
+    # Every branch is built and tested; branches other than main also publish
+    # :dev-latest + :dev-<run>. Release tags (v2.14.2 …) publish :2.14.2 and :latest.
+    branches: ["**"]
     tags: ["v*"]
   pull_request:
     branches: [main]
@@ -73,11 +74,12 @@ jobs:
     name: Publish image to GHCR
     runs-on: ubuntu-latest
     needs: [docker]
-    # Only release tags publish, and one build gets both tags, so :latest is
-    # always the newest release (same digest as :X.Y.Z). Pushes to main are
-    # built and tested by the jobs above but never published. CI is the only
-    # publisher of image tags.
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    # Release tags publish :X.Y.Z + :latest from one build, so :latest is
+    # always the newest release (same digest as :X.Y.Z). Other branches publish
+    # :dev-<run> + :dev-latest for testing before merge; :latest never moves to
+    # a dev build. Pushes to main are built and tested but never published.
+    # CI is the only publisher of image tags. Fork PRs never publish (no push).
+    if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || github.ref != 'refs/heads/main')
     permissions:
       contents: read
       packages: write
@@ -97,8 +99,13 @@ jobs:
         run: |
           IMG="ghcr.io/${{ github.repository_owner }}/kubernetes-openconsole"
           echo "image=$IMG" >> "$GITHUB_OUTPUT"
-          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-          printf 'tags<<EOF\n%s:%s\n%s:latest\nEOF\n' "$IMG" "${GITHUB_REF_NAME#v}" "$IMG" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            VERSION="${GITHUB_REF_NAME#v}"; MOVING=latest
+          else
+            VERSION="dev-${GITHUB_RUN_NUMBER}"; MOVING=dev-latest
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          printf 'tags<<EOF\n%s:%s\n%s:%s\nEOF\n' "$IMG" "$VERSION" "$IMG" "$MOVING" >> "$GITHUB_OUTPUT"
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:

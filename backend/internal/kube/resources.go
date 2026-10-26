@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -129,6 +130,43 @@ func (c *ResourceClient) ListDeployments(ctx context.Context, namespace string) 
 		return nil, err
 	}
 	return result.Items, nil
+}
+
+// ListDeploymentReplicaSets returns the ReplicaSets a Deployment controls,
+// newest revision first. Read on demand (no informer): the deployment detail
+// view is the only reader, and a cluster role without replicasets access must
+// not break the informer cache.
+func (c *ResourceClient) ListDeploymentReplicaSets(ctx context.Context, namespace, name string) ([]appsv1.ReplicaSet, error) {
+	client, ok := c.mgr(ctx).Client()
+	if !ok || !c.mgr(ctx).Ready() {
+		return nil, fmt.Errorf("kubernetes client not ready")
+	}
+	dep, err := client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	sel, err := metav1.LabelSelectorAsSelector(dep.Spec.Selector)
+	if err != nil {
+		return nil, err
+	}
+	list, err := client.AppsV1().ReplicaSets(namespace).List(ctx, metav1.ListOptions{LabelSelector: sel.String()})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]appsv1.ReplicaSet, 0, len(list.Items))
+	for _, rs := range list.Items {
+		if owner := metav1.GetControllerOf(&rs); owner != nil && owner.UID == dep.UID {
+			out = append(out, rs)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return revision(&out[i]) > revision(&out[j]) })
+	return out, nil
+}
+
+// revision is the deployment.kubernetes.io/revision annotation (0 if missing).
+func revision(rs *appsv1.ReplicaSet) int64 {
+	n, _ := strconv.ParseInt(rs.Annotations["deployment.kubernetes.io/revision"], 10, 64)
+	return n
 }
 
 func (c *ResourceClient) GetDeployment(ctx context.Context, namespace, name string) (*appsv1.Deployment, error) {

@@ -137,6 +137,7 @@ var DetailKeys = map[string]DetailType{
 	"pod":          Keyword,
 	"pods":         Long,
 	"container":    Keyword,
+	"previous":     Bool, // logs of the previous (crashed) container
 	"command":      Keyword,
 	"phase":        Keyword, // exec: start | end
 	"exit_code":    Long,

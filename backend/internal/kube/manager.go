@@ -25,6 +25,9 @@ type Manager struct {
 	lastError  string
 	bus        *EventBus
 	informers  *InformerCache
+	metrics    *MetricsSampler
+	// onTermination receives container exits seen by the pod informer (restart history).
+	onTermination func(models.ContainerTermination)
 }
 
 func NewManager() *Manager {
@@ -62,6 +65,7 @@ func (m *Manager) ApplyCredentials(creds models.KubeCredentials) error {
 		m.informers.stopAll()
 		m.informers = nil
 	}
+	m.stopMetrics()
 
 	config, err := buildConfig(creds)
 	if err != nil {
@@ -87,11 +91,34 @@ func (m *Manager) ApplyCredentials(creds models.KubeCredentials) error {
 		m.ready = false
 		return nil
 	}
-	ic := newInformerCache(client, m.bus)
+	ic := newInformerCache(client, m.bus, m.onTermination)
 	go ic.start(context.Background())
 	m.informers = ic
+	m.metrics = newMetricsServerSampler(client)
+	go m.metrics.run()
 
 	return nil
+}
+
+// Metrics is the cluster's pod usage sampler; nil when not connected.
+func (m *Manager) Metrics() *MetricsSampler {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.metrics
+}
+
+// UseMetrics installs a sampler (tests: one fed by a stub instead of metrics-server).
+func (m *Manager) UseMetrics(s *MetricsSampler) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.metrics = s
+}
+
+func (m *Manager) stopMetrics() {
+	if m.metrics != nil {
+		m.metrics.close()
+		m.metrics = nil
+	}
 }
 
 // RESTConfig returns the underlying *rest.Config for low-level operations such
@@ -180,6 +207,7 @@ func (m *Manager) Stop() {
 		m.informers.stopAll()
 		m.informers = nil
 	}
+	m.stopMetrics()
 	m.client = nil
 	m.restConfig = nil
 	m.ready = false

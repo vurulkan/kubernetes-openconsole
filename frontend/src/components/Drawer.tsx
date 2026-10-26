@@ -1,6 +1,7 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
+import { modalScopeDepth, popModalScope, pushModalScope } from '../hooks/useScopedShortcuts';
 
 type DrawerProps = {
   open: boolean;
@@ -39,17 +40,27 @@ export const Drawer: React.FC<DrawerProps> = ({
   footer,
   width = 'md',
 }) => {
+  // Kept in a ref so a new onClose identity doesn't re-register the scope (and its depth) on every render.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     if (!open) return;
+    // A drawer is a modal scope too: page shortcuts (table j / k, …) pause.
+    pushModalScope();
+    const depth = modalScopeDepth();
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      // A modal opened from the drawer (logs, shell) closes first.
+      if (e.key === 'Escape' && modalScopeDepth() === depth) {
         e.preventDefault();
-        onClose();
+        onCloseRef.current();
       }
     };
     document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [open, onClose]);
+    return () => {
+      document.removeEventListener('keydown', handler);
+      popModalScope();
+    };
+  }, [open]);
 
   if (!open) return null;
 

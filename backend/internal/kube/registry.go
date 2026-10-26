@@ -16,8 +16,17 @@ import (
 type Registry struct {
 	load func(ctx context.Context, clusterID int) (models.KubeCredentials, error)
 
-	mu       sync.Mutex
-	managers map[int]*Manager
+	mu            sync.Mutex
+	managers      map[int]*Manager
+	onTermination func(clusterID int, t models.ContainerTermination)
+}
+
+// OnTermination installs the receiver of container exits from every
+// cluster connected afterwards (the restart history store, in production).
+func (r *Registry) OnTermination(f func(clusterID int, t models.ContainerTermination)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.onTermination = f
 }
 
 // NewRegistry takes a loader that returns the stored credentials for a
@@ -46,6 +55,9 @@ func (r *Registry) Get(ctx context.Context, clusterID int) (*Manager, error) {
 		return nil, fmt.Errorf("load cluster %d: %w", clusterID, err)
 	}
 	m := NewManager()
+	if r.onTermination != nil {
+		m.onTermination = func(t models.ContainerTermination) { r.onTermination(clusterID, t) }
+	}
 	if err := m.ApplyCredentials(creds); err != nil {
 		return nil, fmt.Errorf("connect cluster %d: %w", clusterID, err)
 	}

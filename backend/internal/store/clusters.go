@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"fmt"
 
 	"k8s-dashboard/backend/internal/models"
@@ -156,7 +158,11 @@ func (s *Store) DeleteCluster(ctx context.Context, id int) error {
 	if active == 1 {
 		return fmt.Errorf("cannot delete the active cluster — activate another first")
 	}
-	_, err := s.conn.ExecContext(ctx, `DELETE FROM clusters WHERE id = ?`, id)
+	if _, err := s.conn.ExecContext(ctx, `DELETE FROM clusters WHERE id = ?`, id); err != nil {
+		return err
+	}
+	// Its restart history goes with it (ids are not reused, but don't keep orphans).
+	_, err := s.conn.ExecContext(ctx, `DELETE FROM restart_history WHERE cluster_id = ?`, id)
 	return err
 }
 
@@ -207,4 +213,41 @@ func (s *Store) GetClusterName(ctx context.Context, id int) (string, error) {
 func (s *Store) ClearClusterSelections(ctx context.Context, clusterID int) error {
 	_, err := s.conn.ExecContext(ctx, `UPDATE users SET active_cluster_id = NULL WHERE active_cluster_id = ?`, clusterID)
 	return err
+}
+
+// GetPrometheus returns a cluster's Prometheus settings (zero value when none).
+func (s *Store) GetPrometheus(ctx context.Context, clusterID int) (models.PrometheusConfig, error) {
+	var enc string
+	if err := s.conn.QueryRowContext(ctx, `SELECT prometheus_enc FROM clusters WHERE id = ?`, clusterID).Scan(&enc); err != nil {
+		return models.PrometheusConfig{}, err
+	}
+	var cfg models.PrometheusConfig
+	if enc == "" {
+		return cfg, nil
+	}
+	raw, err := decrypt(s.key, enc)
+	if err != nil {
+		return cfg, err
+	}
+	return cfg, json.Unmarshal([]byte(raw), &cfg)
+}
+
+// SetPrometheus stores a cluster's Prometheus settings, encrypted.
+func (s *Store) SetPrometheus(ctx context.Context, clusterID int, cfg models.PrometheusConfig) error {
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	enc, err := encrypt(s.key, string(raw))
+	if err != nil {
+		return err
+	}
+	res, err := s.conn.ExecContext(ctx, `UPDATE clusters SET prometheus_enc = ? WHERE id = ?`, enc, clusterID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }

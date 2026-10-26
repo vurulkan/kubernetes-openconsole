@@ -94,6 +94,61 @@ type KubeCredentials struct {
 	Active     bool   `json:"active"`
 }
 
+// ContainerTermination is one restart cause of a container: a run of
+// identical exits (same code and reason) in a row is one row, with Count and
+// the first / last finish time. A single observed exit has Count 1.
+type ContainerTermination struct {
+	Namespace string    `json:"namespace"`
+	Pod       string    `json:"pod"`
+	Container string    `json:"container"`
+	Owner     string    `json:"owner,omitempty"` // "Deployment/web", "StatefulSet/db", …
+	ExitCode  int       `json:"exitCode"`
+	Signal    int       `json:"signal,omitempty"`
+	Reason    string    `json:"reason,omitempty"`
+	FirstAt   time.Time `json:"firstAt"`
+	LastAt    time.Time `json:"lastAt"`
+	Count     int       `json:"count"`
+}
+
+// PrometheusConfig says how OpenConsole reaches a cluster's Prometheus (any
+// Prometheus-compatible query API). Stored encrypted as a whole; the fields
+// marked secret never leave the server.
+type PrometheusConfig struct {
+	// Mode: "" (not configured) | "proxy" (a Service in the cluster, through the
+	// API server's service proxy) | "url" (direct).
+	Mode string `json:"mode"`
+
+	// proxy
+	Namespace string `json:"namespace,omitempty"`
+	Service   string `json:"service,omitempty"`
+	Port      string `json:"port,omitempty"`   // number or port name
+	Scheme    string `json:"scheme,omitempty"` // http | https
+
+	// url
+	URL                string   `json:"url,omitempty"`
+	Auth               string   `json:"auth,omitempty"` // none | basic | bearer | azure | mtls
+	Username           string   `json:"username,omitempty"`
+	Password           string   `json:"password,omitempty"` // secret
+	Token              string   `json:"token,omitempty"`    // secret
+	AzureTenantID      string   `json:"azureTenantId,omitempty"`
+	AzureClientID      string   `json:"azureClientId,omitempty"`
+	AzureClientSecret  string   `json:"azureClientSecret,omitempty"` // secret
+	ClientCert         string   `json:"clientCert,omitempty"`        // PEM
+	ClientKey          string   `json:"clientKey,omitempty"`         // PEM, secret
+	CACert             string   `json:"caCert,omitempty"`            // PEM
+	InsecureSkipVerify bool     `json:"insecureSkipVerify,omitempty"`
+	Headers            []Header `json:"headers,omitempty"` // values are secret
+
+	// A Prometheus that holds several clusters: the label and value that select this one.
+	ClusterLabel string `json:"clusterLabel,omitempty"`
+	ClusterValue string `json:"clusterValue,omitempty"`
+}
+
+type Header struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
 // AuditLog is one audit event. Action is "<resource type>.<verb>"
 // (deployment.restart, pod.exec, user.login); the result is in Outcome, never
 // in Action. ResourceName is the bare name ("*" for a list); anything else

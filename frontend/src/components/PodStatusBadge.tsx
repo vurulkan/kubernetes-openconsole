@@ -1,12 +1,16 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, XCircle } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { Badge, Spinner } from './ui';
 import { getPodEvents } from '../services/api';
+import { ageShort } from '../utils/age';
+import { exitCodeHint, exitLabel, type PodStatus, type Tone } from '../utils/podStatus';
 
 type Props = {
   namespace: string;
   podName: string;
+  status: PodStatus;
 };
 
 type ParsedEvent = {
@@ -17,25 +21,43 @@ type ParsedEvent = {
   count?: number;
 };
 
+const BADGE_VARIANT: Record<Tone, 'success' | 'warning' | 'error' | 'default'> = {
+  ok: 'success',
+  warn: 'warning',
+  error: 'error',
+  idle: 'default',
+};
+
+/** Status-dot class for the card header, by tone. */
+export const STATUS_DOT: Record<Tone, string> = {
+  ok: 'status-dot status-dot-success',
+  warn: 'status-dot status-dot-warning',
+  error: 'status-dot status-dot-error',
+  idle: 'status-dot status-dot-idle',
+};
+
 /**
- * Status chip for pods that are NOT ready. Includes a triangle-exclamation
- * icon in the same amber tone, plus a hover popover that lazily fetches the
- * pod's Warning events and renders the latest reason + message. One fetch
- * per badge lifetime — subsequent hovers reuse the cached list.
+ * Pod status chip with kubectl's STATUS text (CrashLoopBackOff, OOMKilled,
+ * Init:0/2 …). For unhealthy pods a hover popover lazily fetches the pod's
+ * Warning events and shows the latest reason + message. One fetch per badge
+ * lifetime — subsequent hovers reuse the cached list.
  *
  * The popover is portaled to document.body with a viewport-anchored
  * position so it escapes card / table-row overflow and the sidebar's
  * stacking context.
  */
-export const PodNotReadyBadge: React.FC<Props> = ({ namespace, podName }) => {
+export const PodStatusBadge: React.FC<Props> = ({ namespace, podName, status }) => {
+  const { t } = useTranslation();
   const anchorRef = useRef<HTMLSpanElement | null>(null);
   const [open, setOpen] = useState(false);
   const [events, setEvents] = useState<ParsedEvent[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const hoverTimer = useRef<number | null>(null);
+  const unhealthy = status.tone === 'warn' || status.tone === 'error';
 
   const scheduleOpen = () => {
+    if (!unhealthy) return;
     if (hoverTimer.current !== null) window.clearTimeout(hoverTimer.current);
     hoverTimer.current = window.setTimeout(() => setOpen(true), 120);
   };
@@ -89,6 +111,14 @@ export const PodNotReadyBadge: React.FC<Props> = ({ namespace, podName }) => {
     };
   }, [open]);
 
+  // "Running" with containers not ready reads better as "Not ready 1/2".
+  const text =
+    status.label === 'Running'
+      ? status.tone === 'ok'
+        ? t('dashboard.status.running')
+        : t('dashboard.status.notReady', { ready: status.ready, total: status.total })
+      : status.label;
+
   return (
     <span
       ref={anchorRef}
@@ -96,9 +126,11 @@ export const PodNotReadyBadge: React.FC<Props> = ({ namespace, podName }) => {
       onMouseLeave={scheduleClose}
       className="relative inline-flex"
     >
-      <Badge variant="warning">
-        <AlertTriangle size={11} className="text-amber-600 dark:text-amber-300" />
-        Not Ready
+      <Badge variant={BADGE_VARIANT[status.tone]}>
+        {status.tone === 'ok' && <span className="h-1.5 w-1.5 animate-live rounded-full bg-emerald-500" />}
+        {status.tone === 'warn' && <AlertTriangle size={11} aria-hidden className="text-amber-700 dark:text-amber-300" />}
+        {status.tone === 'error' && <XCircle size={11} aria-hidden className="text-rose-600 dark:text-rose-300" />}
+        {text}
       </Badge>
 
       {open && pos &&
@@ -111,14 +143,12 @@ export const PodNotReadyBadge: React.FC<Props> = ({ namespace, podName }) => {
           >
             <div className="mb-2 flex items-center justify-between">
               <span className="font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                Warning events
+                {t('dashboard.podStatus.warningEvents')}
               </span>
               {loading && <Spinner size="sm" />}
             </div>
             {!loading && events && events.length === 0 && (
-              <p className="text-slate-500 dark:text-slate-400">
-                No warning events on this pod. The container may still be starting.
-              </p>
+              <p className="text-slate-500 dark:text-slate-400">{t('dashboard.podStatus.noWarningEvents')}</p>
             )}
             {!loading && events && events.length > 0 && (
               <ul className="flex flex-col gap-2">
@@ -145,7 +175,7 @@ export const PodNotReadyBadge: React.FC<Props> = ({ namespace, podName }) => {
                 ))}
                 {events.length > 3 && (
                   <p className="text-[10px] text-slate-500 dark:text-slate-400">
-                    +{events.length - 3} more warning event(s) — open Events for the full list.
+                    {t('dashboard.podStatus.moreWarnings', { count: events.length - 3 })}
                   </p>
                 )}
               </ul>
@@ -157,4 +187,31 @@ export const PodNotReadyBadge: React.FC<Props> = ({ namespace, podName }) => {
   );
 };
 
-export default PodNotReadyBadge;
+/**
+ * Restart count. When a container has restarted, hovering it lists every
+ * restarted container's last exit code with a plain-language explanation.
+ */
+export const PodRestarts: React.FC<{ status: PodStatus }> = ({ status }) => {
+  const { t } = useTranslation();
+  const lines = status.containers
+    .filter((c) => c.lastTermination)
+    .map((c) => {
+      const term = c.lastTermination!;
+      const hint = exitCodeHint(term);
+      return `${c.name}: ${t('dashboard.detail.lastExit')} ${exitLabel(term)}, ${t('dashboard.podStatus.ago', {
+        age: ageShort(term.finishedAt),
+      })} · ${t('dashboard.podStatus.restartsN', { count: c.restarts })}\n${t(hint.key, { signal: hint.signal })}`;
+    });
+  return (
+    <span
+      className={`whitespace-nowrap font-mono text-xs ${
+        status.restarts > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-slate-500 dark:text-slate-400'
+      } ${lines.length ? 'cursor-help underline decoration-dotted underline-offset-2' : ''}`}
+      title={lines.join('\n\n') || undefined}
+    >
+      {status.restarts}
+    </span>
+  );
+};
+
+export default PodStatusBadge;

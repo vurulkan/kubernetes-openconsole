@@ -3,9 +3,15 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"k8s-dashboard/backend/internal/models"
 	"k8s-dashboard/backend/internal/store"
 )
 
@@ -103,4 +109,51 @@ func TestAuditClusterIsTheTarget(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("second grant not audited")
+}
+
+// "Previous logs" reads the crashed container instance once, without
+// following, and the audit record says so.
+func TestPreviousPodLogs(t *testing.T) {
+	if o := (models.PodLogOptions{Previous: true}).ToKube(); !o.Previous || o.Follow {
+		t.Fatalf("previous log options = %+v, want previous without follow", o)
+	}
+	e := newTestEnv(t)
+	_, admin := e.user("root", true)
+	wsURL := "ws" + strings.TrimPrefix(e.http.URL, "http") + "/ws/namespaces/team-a/pods/api-1/logs?container=app&previous=true"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, http.Header{"Authorization": {"Bearer " + admin}})
+	if err != nil {
+		t.Fatalf("dial logs: %v", err)
+	}
+	conn.Close()
+	if got := e.waitAudit("pod.logs", `"previous":true`); got.Details["container"] != "app" {
+		t.Fatalf("previous logs audit = %+v", got)
+	}
+}
+
+// Without ?container= a multi-container pod's log opens on the container
+// kubectl would pick (annotation, else the first), instead of failing.
+func TestPodLogsDefaultContainer(t *testing.T) {
+	e := newTestEnv(t)
+	_, admin := e.user("root", true)
+	two := []corev1.Container{{Name: "app"}, {Name: "sidecar"}}
+	for _, p := range []*corev1.Pod{
+		{ObjectMeta: metav1.ObjectMeta{Name: "plain", Namespace: "team-a"}, Spec: corev1.PodSpec{Containers: two}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "annotated", Namespace: "team-a",
+			Annotations: map[string]string{"kubectl.kubernetes.io/default-container": "sidecar"}}, Spec: corev1.PodSpec{Containers: two}},
+	} {
+		if _, err := e.client.CoreV1().Pods("team-a").Create(context.Background(), p, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for pod, want := range map[string]string{"plain": "app", "annotated": "sidecar"} {
+		wsURL := "ws" + strings.TrimPrefix(e.http.URL, "http") + "/ws/namespaces/team-a/pods/" + pod + "/logs"
+		conn, _, err := websocket.DefaultDialer.Dial(wsURL, http.Header{"Authorization": {"Bearer " + admin}})
+		if err != nil {
+			t.Fatalf("dial %s: %v", pod, err)
+		}
+		conn.Close()
+		if got := e.waitAudit("pod.logs", pod); got.Details["container"] != want {
+			t.Fatalf("%s: container = %v, want %s", pod, got.Details["container"], want)
+		}
+	}
 }

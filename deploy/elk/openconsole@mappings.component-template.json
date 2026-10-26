@@ -258,6 +258,9 @@
             "dry_run": {
               "type": "boolean"
             },
+            "previous": {
+              "type": "boolean"
+            },
             "yaml_from": {
               "type": "keyword"
             },

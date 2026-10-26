@@ -30,6 +30,9 @@ type Config struct {
 	ExecIdleTimeout        time.Duration
 	MaxExecSessionsPerUser int
 
+	// RestartHistoryDays keeps container terminations (restart history) this long.
+	RestartHistoryDays int
+
 	// Pod exec session recording. These only seed recording_settings on
 	// first boot (except Dir); afterwards the admin UI owns the values.
 	Recording RecordingConfig
@@ -87,6 +90,7 @@ func Load() Config {
 
 		ExecIdleTimeout:        envDurationMin("EXEC_IDLE_TIMEOUT", 5*time.Minute, 30*time.Second),
 		MaxExecSessionsPerUser: envIntMin("MAX_EXEC_SESSIONS_PER_USER", 3, 0),
+		RestartHistoryDays:     envIntMin("RESTART_HISTORY_RETENTION_DAYS", 30, 1),
 
 		Recording: RecordingConfig{
 			Enabled:       envBool("SESSION_RECORDING_ENABLED", true),

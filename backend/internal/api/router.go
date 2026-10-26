@@ -29,6 +29,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/time/rate"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
 
@@ -67,6 +68,9 @@ type Server struct {
 	recorder *recording.Manager
 	// execSessions enforces MAX_EXEC_SESSIONS_PER_USER.
 	execSessions execSessionTracker
+	// prom caches each cluster's Prometheus client (cluster id → *prom.Client,
+	// nil when none is configured); dropped when the cluster or its settings change.
+	prom sync.Map
 }
 
 // sessionValidator is the AuthMiddleware adapter around *store.Store. Returning
@@ -200,7 +204,15 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/namespaces/{namespace}/deployments", s.handleDeployments)
 		r.Get("/api/namespaces/{namespace}/deployments/{name}", s.handleDeployment)
 		r.Get("/api/namespaces/{namespace}/deployments/{name}/yaml", s.handleDeploymentYAML)
-		r.Get("/api/namespaces/{namespace}/deployments/{name}/events", s.handleDeploymentEvents)
+		r.Get("/api/namespaces/{namespace}/deployments/{name}/replicasets", s.handleDeploymentReplicaSets)
+		r.Get("/api/namespaces/{namespace}/pods/{name}/restarts", s.handlePodRestarts)
+		r.Get("/api/namespaces/{namespace}/metrics/pods", s.handlePodMetrics)
+		r.Get("/api/namespaces/{namespace}/metrics/pods/{name}", s.handlePodMetricsHistory)
+		for resource := range workloadKinds {
+			r.Get("/api/namespaces/{namespace}/"+resource+"/{name}/restarts", s.handleWorkloadRestarts(resource))
+			r.Get("/api/namespaces/{namespace}/metrics/"+resource+"/{name}", s.handleWorkloadMetricsHistory(resource))
+			r.Get("/api/namespaces/{namespace}/"+resource+"/{name}/events", s.handleWorkloadEvents(resource))
+		}
 		r.Post("/api/namespaces/{namespace}/deployments/{name}/restart", s.handleDeploymentRestart)
 		r.Post("/api/namespaces/{namespace}/deployments/{name}/scale", s.handleDeploymentScale)
 		r.Get("/api/namespaces/{namespace}/daemonsets", s.handleDaemonSets)
@@ -298,6 +310,10 @@ func (s *Server) Router() http.Handler {
 		r.Delete("/api/admin/clusters/{id}", s.handleDeleteCluster)
 		r.Post("/api/admin/clusters/{id}/activate", s.handleActivateCluster)
 		r.Post("/api/admin/clusters/{id}/deactivate", s.handleDeactivateCluster)
+		r.Get("/api/admin/clusters/{id}/prometheus", s.handleGetPrometheus)
+		r.Put("/api/admin/clusters/{id}/prometheus", s.handlePutPrometheus)
+		r.Post("/api/admin/clusters/{id}/prometheus/test", s.handleTestPrometheus)
+		r.Get("/api/admin/clusters/{id}/prometheus/discover", s.handleDiscoverPrometheus)
 		r.Put("/api/admin/cluster", s.handleUpdateCluster)
 		r.Post("/api/admin/cluster/validate", s.handleValidateCluster)
 
@@ -1226,12 +1242,24 @@ func (s *Server) handlePodLogsWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	namespace := chi.URLParam(r, "namespace")
+	podName := chi.URLParam(r, "name")
+	previous := r.URL.Query().Get("previous") == "true"
+	container := r.URL.Query().Get("container")
+	if container == "" {
+		// Kubernetes refuses a log request without a container when the pod has several.
+		if pod, err := s.resources.GetPod(r.Context(), namespace, podName); err == nil {
+			container = defaultContainer(pod)
+		}
+	}
 	podLogs := models.AuditLog{
 		Verb:         audit.VerbLogs,
 		ResourceType: "pod",
 		Namespace:    namespace,
-		ResourceName: chi.URLParam(r, "name"),
-		Details:      audit.D{"container": r.URL.Query().Get("container")},
+		ResourceName: podName,
+		Details:      audit.D{"container": container},
+	}
+	if previous {
+		podLogs.Details["previous"] = true
 	}
 	if !s.can(r.Context(), claims.UserID, namespace, "pods", "logs") {
 		podLogs.Outcome, podLogs.Reason = audit.Denied, reasonForbidden
@@ -1264,15 +1292,13 @@ func (s *Server) handlePodLogsWS(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 	MetricsLogStreamIncr()
 
-	podName := chi.URLParam(r, "name")
-	container := r.URL.Query().Get("container")
 	tail := int64(100)
 	if value := r.URL.Query().Get("tail"); value != "" {
 		if parsed, err := strconv.ParseInt(value, 10, 64); err == nil && parsed > 0 {
 			tail = parsed
 		}
 	}
-	logOptions := &models.PodLogOptions{Container: container, TailLines: tail}
+	logOptions := &models.PodLogOptions{Container: container, TailLines: tail, Previous: previous}
 
 	stream, err := client.CoreV1().Pods(namespace).GetLogs(podName, logOptions.ToKube()).Stream(r.Context())
 	if err != nil {
@@ -1292,6 +1318,24 @@ func (s *Server) handlePodLogsWS(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
+	// The log ended (previous instance fully read, or the container stopped): say so, instead of a 1006 drop.
+	_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+}
+
+// defaultContainer picks the container kubectl would: the one named by the
+// kubectl.kubernetes.io/default-container annotation, else the first.
+func defaultContainer(pod *corev1.Pod) string {
+	if name := pod.Annotations["kubectl.kubernetes.io/default-container"]; name != "" {
+		for _, c := range pod.Spec.Containers {
+			if c.Name == name {
+				return name
+			}
+		}
+	}
+	if len(pod.Spec.Containers) > 0 {
+		return pod.Spec.Containers[0].Name
+	}
+	return ""
 }
 
 // Typed client-go objects return with an empty TypeMeta (apiVersion/kind are
@@ -1519,25 +1563,30 @@ func (s *Server) handlePodEvents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"items": events.Items})
 }
 
-func (s *Server) handleDeploymentEvents(w http.ResponseWriter, r *http.Request) {
-	namespace, ok := s.requirePermission(w, r, "deployments", "get")
-	if !ok {
-		return
+// handleWorkloadEvents lists a Deployment's, StatefulSet's or DaemonSet's own
+// events (needs <kind>:get); its pods' events are on the pods.
+func (s *Server) handleWorkloadEvents(resource string) http.HandlerFunc {
+	kind := workloadKinds[resource]
+	return func(w http.ResponseWriter, r *http.Request) {
+		namespace, ok := s.requirePermission(w, r, resource, "get")
+		if !ok {
+			return
+		}
+		client, ok := kubeFor(r).Client()
+		if !ok || !kubeFor(r).Ready() {
+			writeError(w, http.StatusServiceUnavailable, "kubernetes client not ready")
+			return
+		}
+		name := chi.URLParam(r, "name")
+		events, err := client.CoreV1().Events(namespace).List(r.Context(), metav1.ListOptions{
+			FieldSelector: fmt.Sprintf("involvedObject.kind=%s,involvedObject.name=%s", kind, name),
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to fetch events")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"items": events.Items})
 	}
-	client, ok := kubeFor(r).Client()
-	if !ok || !kubeFor(r).Ready() {
-		writeError(w, http.StatusServiceUnavailable, "kubernetes client not ready")
-		return
-	}
-	name := chi.URLParam(r, "name")
-	events, err := client.CoreV1().Events(namespace).List(r.Context(), metav1.ListOptions{
-		FieldSelector: fmt.Sprintf("involvedObject.kind=Deployment,involvedObject.name=%s", name),
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to fetch events")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"items": events.Items})
 }
 
 func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {

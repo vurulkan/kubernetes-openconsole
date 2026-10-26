@@ -640,7 +640,7 @@ export const Modal: React.FC<ModalProps> = ({
   // the containing block and the dialog would feel "anchored" to the card
   // that opened it instead of being viewport-centered.
   return createPortal(
-    <div className="fixed inset-0 z-50 flex animate-fade-in items-center justify-center p-4">
+    <div className="fixed inset-0 z-[80] flex animate-fade-in items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
       <div
         className="relative z-10 flex animate-slide-up flex-col overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-elevated"

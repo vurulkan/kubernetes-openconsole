@@ -82,3 +82,25 @@ describe('DataTable keyboard navigation', () => {
     await expectNoA11yViolations(container);
   });
 });
+
+describe('DataTable sorting', () => {
+  type U = { id: number; pct: number | null };
+  const data: U[] = [
+    { id: 1, pct: 0.2 },
+    { id: 2, pct: null },
+    { id: 3, pct: 0.95 },
+  ];
+  const cols: Column<U>[] = [
+    { key: 'id', header: 'Id', cell: (r) => `row-${r.id}` },
+    { key: 'pct', header: 'Use', cell: (r) => String(r.pct), sortValue: (r) => r.pct, descFirst: true },
+  ];
+  const order = () => screen.getAllByText(/^row-/).map((el) => el.textContent);
+
+  it('a descFirst column sorts highest first, and empty values stay last both ways', () => {
+    render(<DataTable rows={data} columns={cols} rowKey={(r) => r.id} />);
+    fireEvent.click(screen.getByRole('button', { name: /Use/ }));
+    expect(order()).toEqual(['row-3', 'row-1', 'row-2']);
+    fireEvent.click(screen.getByRole('button', { name: /Use/ }));
+    expect(order()).toEqual(['row-1', 'row-3', 'row-2']);
+  });
+});

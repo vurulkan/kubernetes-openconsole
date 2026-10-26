@@ -8,6 +8,10 @@ Modern, production-ready Kubernetes visibility and operations console with stric
 - **Informer-driven lister cache** — list endpoints read from a `client-go` SharedInformerFactory, so the UI is instant and the API server isn't hammered by polling.
 - **Live Events side panel** — streams `added` / `updated` / `deleted` plus native `corev1.Event` objects over a WebSocket. Filter by All / K8s events / Warnings.
 - **Prometheus `/metrics`**, dedicated `/livez` (process) and `/readyz` (DB) endpoints. Clusters are left out of readiness, so one unreachable cluster can't take the console down. See [Metrics](#metrics).
+- **Pod health like `kubectl`, and why it restarted** — the STATUS `kubectl get pods` prints (CrashLoopBackOff, OOMKilled, ImagePullBackOff, Init:Error, Unschedulable …) in red / amber / green, and the last exit of a restarted container (`137 OOMKilled · 2m`) with a plain-language explanation; the log of the container before its last restart. See [Pod health, usage and restart history](#pod-health-usage-and-restart-history).
+- **Detail drawers** for pods, Deployments, StatefulSets and DaemonSets — containers, requests / limits, probes, conditions, events; rollout, the workload's pods, usage, restart history, and a Deployment's revisions (read only). Workload lists flag workloads whose pods are failing.
+- **CPU / memory** from metrics-server against the limit, with 1h – 24h charts kept in memory, or up to 7 days from the cluster's **Prometheus** (in the cluster through the API server proxy, or any Prometheus-compatible URL).
+- **Restart history** — every container exit OpenConsole sees is kept for 30 days, also for pods that no longer exist.
 - **OpenTelemetry tracing** (opt-in): one span per API request, named after its route, with the Kubernetes API calls it made as child spans. Exported over OTLP/HTTP to any collector (Jaeger, Tempo, Elastic APM, …). See [Tracing](#tracing-opentelemetry).
 
 ### Workloads shown in the Dashboard
@@ -67,17 +71,17 @@ docker build -t kubernetes-openconsole:local .
 ### Option B — prebuilt image (GHCR)
 
 ```yaml
-image: ghcr.io/vurulkan/kubernetes-openconsole:2.16.2   # pin a release
+image: ghcr.io/vurulkan/kubernetes-openconsole:2.18.0   # pin a release
 ```
 
-Images are multi-arch (**linux/amd64** and **linux/arm64**: Graviton, Ampere, Apple silicon); the runtime picks the right one. CI is the only publisher, and there are just two kinds of tags:
+Images are multi-arch (**linux/amd64** and **linux/arm64**: Graviton, Ampere, Apple silicon); the runtime picks the right one. CI is the only publisher. Release tags:
 
 | Tag | Points to | Moves? |
 |---|---|---|
-| `X.Y.Z` (e.g. `2.16.2`) | that release | no — use this in production |
+| `X.Y.Z` (e.g. `2.18.0`) | that release | no — use this in production |
 | `latest` | the newest release, same image (same digest) as its `X.Y.Z` | yes, on each release |
 
-Releasing = push the `vX.Y.Z` git tag; CI builds once and pushes `:X.Y.Z` and `:latest`. Pushes to `main` are built and tested but not published.
+Releasing = push the `vX.Y.Z` git tag; CI builds once and pushes `:X.Y.Z` and `:latest`. Pushes to `main` are built and tested but not published. Pushes to other branches publish pre-release test images as `:dev-<build number>` and `:dev-latest`; never run those in production, and `:latest` never points to one.
 
 #### Verifying an image
 
@@ -85,12 +89,12 @@ Every release image has a signed SLSA **build provenance** and an SPDX **SBOM** 
 
 ```bash
 # Provenance: built by this repository's CI from a release tag
-gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.16.2 \
+gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.18.0 \
   --repo vurulkan/kubernetes-openconsole \
   --signer-workflow vurulkan/kubernetes-openconsole/.github/workflows/ci.yml
 
 # SBOM (packages in the image)
-gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.16.2 \
+gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.18.0 \
   --repo vurulkan/kubernetes-openconsole \
   --predicate-type https://spdx.dev/Document/v2.3 --format json \
   --jq '.[0].verificationResult.statement.predicate.packages | length'
@@ -118,7 +122,7 @@ cd frontend && npx tsc --noEmit -p . && npm test && npm run build
 docker run --rm -p 8080:8080 \
   -e TIMEZONE=Europe/Istanbul \
   -v kubernetes-openconsole-data:/data \
-  ghcr.io/vurulkan/kubernetes-openconsole:2.16.2
+  ghcr.io/vurulkan/kubernetes-openconsole:2.18.0
 ```
 
 The image defaults to `DATA_PATH=/data/app.db` and `STATIC_DIR=/app/public`; the SQLite DB and session recordings live under `/data`. Drop the `-v` for a throwaway instance. Then open http://localhost:8080 and add a cluster ([Connecting clusters](#connecting-clusters)).
@@ -145,7 +149,7 @@ Then:
 1. Open the UI and log in as `admin` / `admin` ([First login](#first-login)).
 2. Add the cluster in **Admin → Clusters** ([Connecting clusters](#connecting-clusters)). The backend never picks up a cluster on its own.
 
-To upgrade, run `kubectl -n kubernetes-openconsole rollout restart deploy/kubernetes-openconsole`. The pod pulls `:latest`, i.e. the newest release. To stay on a fixed version, set a release tag (e.g. `2.16.2`) in `deployment.yaml` or through the `images:` override in `kustomization.yaml`, then re-apply.
+To upgrade, run `kubectl -n kubernetes-openconsole rollout restart deploy/kubernetes-openconsole`. The pod pulls `:latest`, i.e. the newest release. To stay on a fixed version, set a release tag (e.g. `2.18.0`) in `deployment.yaml` or through the `images:` override in `kustomization.yaml`, then re-apply.
 
 ## Environment variables
 
@@ -154,6 +158,7 @@ To upgrade, run `kubectl -n kubernetes-openconsole rollout restart deploy/kubern
 - `STATIC_DIR` (default `/app/public` in the image) — Served React build output.
 - `TIMEZONE` (default `UTC`) — Used for audit log timestamps.
 - `LOG_RETENTION_DAYS` (default `30`) — Audit log retention (purged automatically).
+- `RESTART_HISTORY_RETENTION_DAYS` (default `30`) — How long container exits (restart history) are kept.
 - `MAX_REPLICAS` (default `100`) — Hard upper bound the Scale endpoint accepts for Deployment / StatefulSet scaling.
 
 ### Session recording
@@ -285,7 +290,7 @@ Details are a fixed set of keys, each with a type in the Elastic mapping:
 | `deployment.scale`, `statefulset.scale` | `replicas_from`, `replicas_to` |
 | `<kind>.apply` | `dry_run`, `yaml_from`, `yaml_to` (sha256 prefixes, never the YAML) |
 | `pod.exec` | `phase` (`start` / `end`), `container`, `command`; at the end `exit_code`, `bytes_in`, `bytes_out`, `duration_ms` |
-| `pod.logs`, `deployment.logs`, `job.logs` | `container` / `pods` |
+| `pod.logs`, `deployment.logs`, `job.logs` | `container` / `pods`; `previous` (true) for the log before the last restart |
 | `secret.reveal` | `key` (the key name, never the value) |
 | `recording.*` | `pod`, `container`, `owner`, `started_at`, `size_bytes`, `truncate_reason`, `count`, `retention_days` |
 | `user.login` | `login_method`, `linked_by`, `signed_in_as`, `account_source` |
@@ -380,7 +385,7 @@ Configured through **Admin → LDAP** at runtime — no env vars.
 
 OpenConsole talks to each cluster as one ServiceAccount and enforces per-user access itself (Users → Groups → Roles). The ServiceAccount's ClusterRole is the ceiling: no user can do more than it allows, whatever their role says.
 
-Clusters are added **only in the UI** (Admin → Clusters). Two methods: **ServiceAccount Token** (API server URL + token + CA) or **Kubeconfig** (upload a file). Credentials are validated against the API server before they are saved (a real namespace list call, so a wrong server, token or CA is rejected) and stored encrypted in SQLite. Each user works on the cluster they pick in the header; see [Choosing your cluster](#choosing-your-cluster). The default cluster is connected at startup.
+Clusters are added **only in the UI** (Admin → Clusters). Two methods: **ServiceAccount Token** (API server URL + token + CA) or **Kubeconfig** (upload a file). Credentials are validated against the API server before they are saved (a real namespace list call, so a wrong server, token or CA is rejected) and stored encrypted in SQLite. Each user works on the cluster they pick in the header; see [Choosing your cluster](#choosing-your-cluster). Every cluster is connected at startup, so pod usage and restart history are recorded from then on.
 
 ## 1. Create the ServiceAccount on the cluster
 
@@ -415,6 +420,9 @@ What the ClusterRole allows, and which application permission needs it. Delete t
 | `deployments`: patch | `deployments:restart` |
 | `deployments/scale, statefulsets/scale`: get / update | `deployments:scale`, `statefulsets:scale` |
 | `horizontalpodautoscalers, ingresses, cronjobs, jobs`: get / list / watch / update | tabs + `edit` |
+| `replicasets`: get / list | deployment revisions in the detail drawer |
+| `metrics.k8s.io` `pods`: get / list | CPU / memory (needs metrics-server in the cluster) |
+| `services/proxy`: get on your Prometheus Service (commented out; optional) | Prometheus "in the cluster" mode |
 
 ### Read-only mode
 
@@ -506,6 +514,8 @@ If you would rather use an expiring token: `kubectl -n kubernetes-openconsole cr
 - **Validation fails on Save**: the API server is not reachable from the pod (network policy, private endpoint), or the CA does not match.
 - **Secrets tab: "ServiceAccount is not allowed to read secrets"**: the ClusterRole lacks the `secrets` rule. Re-apply `deploy/rbac.yaml`.
 - **A tab is empty or 403 for a user**: check that user's role permissions first, then the ClusterRole rule in the table above.
+- **No CPU / memory columns**: the cluster has no metrics-server (`kubectl get apiservices v1beta1.metrics.k8s.io`), or the ClusterRole lacks `metrics.k8s.io` `pods`. The Pods tab says which.
+- **Prometheus test fails**: the test names the failing step; see [Prometheus](#prometheus).
 
 ---
 
@@ -522,6 +532,39 @@ Granted per role, per namespace, per cluster (or all clusters) under **Admin →
 | secrets | `list`, `get`, `reveal`, `edit` |
 
 Templates in the Add Permissions modal: Viewer (read only, including secret *metadata*), Developer (+ restart / scale), SRE (+ edit on common workloads, pod exec), Admin (everything, including `secrets:reveal` and `secrets:edit`). Any of these can also be granted one by one to any role, so regular users can be given secret access per namespace without being admins.
+
+---
+
+# Pod health, usage and restart history
+
+**Status.** Pods show the STATUS `kubectl get pods` would print, computed the same way (waiting / terminated reasons, init containers, Terminating, Unschedulable): red for a pod that is crashing or can't start, amber for one that waits or isn't ready, green for ready, gray for completed. Hovering an unhealthy status shows its latest Warning events.
+
+**Restarts.** Next to the restart count is the last exit of a restarted container: `9 · 137 OOMKilled · 3m`. The tooltip and the pod drawer explain the code: `137` with `OOMKilled` is the memory limit, `137` otherwise a failed liveness probe or a stop that took longer than the grace period, `143` a normal SIGTERM (rollout, scale-down), `1` an application error, `127` a command missing from the image, … Kubernetes keeps only the last exit of a container; OpenConsole keeps the rest (below).
+
+**Previous log.** For a restarted container the log window has *Before the last restart*, the log of the container instance that exited (`kubectl logs --previous`). It is audited as `pod.logs` with `previous: true`. Some runtimes drop the log of a container that died within a second; the API then answers "unable to retrieve container logs", as `kubectl` does.
+
+**Detail drawers.** Click a pod, Deployment, StatefulSet or DaemonSet (or press Enter on a selected row): a pod shows status, node, IP, QoS class, owner (a link to the workload), every container with its state, requests / limits, probes, usage and last exit code; conditions; events, warnings first. A workload shows its rollout (red on `ProgressDeadlineExceeded`, and how many pods are failing), its pods, usage, restart history, conditions and events; a Deployment also its revisions with their images and restarts (read only: no rollback). Logs, shell, YAML, scale and restart are there for users allowed to use them. In the Deployments, StatefulSets and DaemonSets lists a red *N pods failing* badge sits next to the status of any workload with a crashing pod.
+
+**CPU / memory.** With metrics-server in the cluster, pods and deployments show usage against the limit (or the request when there is no limit): amber from 70 %, red from 90 %. OpenConsole reads every pod of every connected cluster every 30 s and keeps, in memory, the last hour at 30 s and up to 24 hours as 5-minute averages (about 10 KB per pod). That history starts over when OpenConsole restarts; for longer, persistent history configure the cluster's Prometheus. Each chart says where its data comes from.
+
+**Restart history.** The pod informers report every container exit: when the restart count goes up, and, for pods OpenConsole meets at start, the last exit they still carry. A run of identical exits (same code and reason) is one row with a count, so a crash loop doesn't flood the table; history stays after the pod is gone, so a workload shows the restarts of the pods it replaced. Kept for `RESTART_HISTORY_RETENTION_DAYS` (30). Exits that happen while OpenConsole is down are lost unless the pod still shows them afterwards.
+
+## Prometheus
+
+Admin → Clusters → **Prometheus**, one setting per cluster. Without it a cluster's charts use the in-memory samples (24 hours at most). Any Prometheus-compatible query API works: Prometheus, kube-prometheus-stack, Thanos, Mimir, Cortex, VictoriaMetrics, Azure Monitor managed Prometheus.
+
+| Mode | When | What it needs |
+|---|---|---|
+| **In the cluster (API server proxy)** | Prometheus is only reachable inside the cluster (a ClusterIP Service, the usual kube-prometheus-stack setup) | namespace, Service, port (*Find in cluster* fills them). OpenConsole goes through the Kubernetes API with the cluster's credentials, so no network path or Prometheus password is needed, but the ServiceAccount needs `services/proxy` `get` on that Service: uncomment the rule in `deploy/rbac.yaml` and name only your Service. |
+| **Direct URL** | Prometheus has an address OpenConsole can reach (ingress, Thanos / Mimir, managed service) | URL (a path prefix is kept); authentication: none, basic, bearer token, **Azure AD** client credentials (scope `https://prometheus.monitor.azure.com/.default`; for Azure Monitor managed Prometheus), or a client certificate; extra headers (e.g. `X-Scope-OrgID`); CA certificate or skip verification. |
+
+Passwords, tokens, client secrets, client keys and header values are stored encrypted and never returned; the form shows a mask, and saving the mask keeps the stored value. A change is audited as `cluster.update` with `changed: [prometheus]`.
+
+If one Prometheus holds several clusters, set the label that tells them apart (`cluster`, `cluster_name`, …) and this cluster's value; *Test connection* lists the values it finds. Without it the charts add the clusters up.
+
+**Test connection** checks, in order, and stops at the first failure: reachable (DNS / TLS / timeout told apart), allowed in, a Prometheus API, container metrics for this cluster, the cluster filter, and whether cAdvisor is scraped twice (harmless: OpenConsole takes the maximum per container).
+
+Queries use the cAdvisor metrics `container_cpu_usage_seconds_total` and `container_memory_working_set_bytes` (no kube-state-metrics needed; requests and limits come from the pod spec), `max by` container against double scrapes, and a rate window of at least 5 minutes so 60 s scrape intervals work. A deployment's chart includes the pods of its earlier revisions. When Prometheus fails, the chart falls back to the in-memory samples and says so.
 
 ---
 

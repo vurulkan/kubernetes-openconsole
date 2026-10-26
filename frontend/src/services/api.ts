@@ -306,6 +306,70 @@ export const getPodEvents = (namespace: string, name: string) =>
 export const getDeploymentEvents = (namespace: string, name: string) =>
   apiRequest<{ items: Array<Record<string, unknown>> }>(`/api/namespaces/${namespace}/deployments/${name}/events`);
 
+export const getWorkload = (kind: WorkloadKind, namespace: string, name: string) =>
+  apiRequest<Record<string, unknown>>(`/api/namespaces/${namespace}/${kind}/${name}`);
+
+export type Usage = { cpu: number; memory: number };
+/** owner: "Deployment/web", "StatefulSet/db", "DaemonSet/agent". */
+export type PodUsage = Usage & { name: string; owner?: string; containers: Record<string, Usage> };
+export type MetricsSnapshot = {
+  available: boolean;
+  /** metrics_server_missing | forbidden | error | warming_up | not_connected */
+  reason?: string;
+  updatedAt?: string;
+  items: PodUsage[];
+};
+export type UsageHistory = {
+  source: 'memory' | 'prometheus';
+  points: Array<Usage & { t: number }>;
+  /** prometheus_unreachable: Prometheus is configured but failed; these are the in-memory samples. */
+  note?: string;
+  /** Ranges the source can answer (7d only from Prometheus). */
+  ranges?: string[];
+};
+
+// Polled every 30 s next to the lists; never audited server-side.
+export const getPodMetrics = (namespace: string) =>
+  apiRequest<MetricsSnapshot>(`/api/namespaces/${namespace}/metrics/pods`, autoRefresh(true));
+export const getPodUsageHistory = (namespace: string, name: string, range: string) =>
+  apiRequest<UsageHistory>(`/api/namespaces/${namespace}/metrics/pods/${name}?range=${range}`, autoRefresh(true));
+/** Workloads with a detail drawer, by URL segment. */
+export type WorkloadKind = 'deployments' | 'statefulsets' | 'daemonsets';
+export const getWorkloadUsageHistory = (kind: WorkloadKind, namespace: string, name: string, range: string) =>
+  apiRequest<UsageHistory>(`/api/namespaces/${namespace}/metrics/${kind}/${name}?range=${range}`, autoRefresh(true));
+
+export type ContainerTermination = {
+  namespace: string;
+  pod: string;
+  container: string;
+  owner?: string;
+  exitCode: number;
+  signal?: number;
+  reason?: string;
+  firstAt: string;
+  lastAt: string;
+  count: number;
+};
+export const getPodRestarts = (namespace: string, name: string) =>
+  apiRequest<{ items: ContainerTermination[] }>(`/api/namespaces/${namespace}/pods/${name}/restarts`, autoRefresh(true));
+export const getWorkloadRestarts = (kind: WorkloadKind, namespace: string, name: string) =>
+  apiRequest<{ items: ContainerTermination[] }>(`/api/namespaces/${namespace}/${kind}/${name}/restarts`, autoRefresh(true));
+export const getWorkloadEvents = (kind: WorkloadKind, namespace: string, name: string) =>
+  apiRequest<{ items: Array<Record<string, unknown>> }>(`/api/namespaces/${namespace}/${kind}/${name}/events`);
+
+export type ReplicaSetRevision = {
+  name: string;
+  revision: string;
+  podTemplateHash: string;
+  images: string[];
+  replicas: number;
+  readyReplicas: number;
+  createdAt: string;
+};
+
+export const getDeploymentReplicaSets = (namespace: string, name: string) =>
+  apiRequest<{ items: ReplicaSetRevision[] }>(`/api/namespaces/${namespace}/deployments/${name}/replicasets`);
+
 export const restartDeployment = (namespace: string, name: string) =>
   apiRequest<{ status: string; restartedAt: string }>(
     `/api/namespaces/${namespace}/deployments/${name}/restart`,
@@ -415,6 +479,42 @@ export const updateClusterRow = (
     method: 'PUT',
     body: JSON.stringify(payload),
   });
+
+// Per-cluster Prometheus. Secret fields come back as a mask; sending the mask keeps the stored value.
+export type PrometheusConfig = {
+  mode: '' | 'proxy' | 'url';
+  namespace?: string;
+  service?: string;
+  port?: string;
+  scheme?: 'http' | 'https';
+  url?: string;
+  auth?: 'none' | 'basic' | 'bearer' | 'azure' | 'mtls';
+  username?: string;
+  password?: string;
+  token?: string;
+  azureTenantId?: string;
+  azureClientId?: string;
+  azureClientSecret?: string;
+  clientCert?: string;
+  clientKey?: string;
+  caCert?: string;
+  insecureSkipVerify?: boolean;
+  headers?: Array<{ name: string; value: string }>;
+  clusterLabel?: string;
+  clusterValue?: string;
+};
+export type PrometheusStep = { id: string; status: 'ok' | 'warn' | 'fail'; reason?: string; detail?: string };
+export type PrometheusDiagnosis = { ok: boolean; steps: PrometheusStep[]; clusterValues?: string[] };
+
+export const getPrometheusSettings = (id: number) => apiRequest<PrometheusConfig>(`/api/admin/clusters/${id}/prometheus`);
+export const savePrometheusSettings = (id: number, cfg: PrometheusConfig) =>
+  apiRequest<PrometheusConfig>(`/api/admin/clusters/${id}/prometheus`, { method: 'PUT', body: JSON.stringify(cfg) });
+export const testPrometheus = (id: number, cfg: PrometheusConfig) =>
+  apiRequest<PrometheusDiagnosis>(`/api/admin/clusters/${id}/prometheus/test`, { method: 'POST', body: JSON.stringify(cfg) });
+export const discoverPrometheus = (id: number) =>
+  apiRequest<{ items: Array<{ namespace: string; service: string; port: string }> }>(
+    `/api/admin/clusters/${id}/prometheus/discover`,
+  );
 
 export const deleteClusterRow = (id: number) =>
   apiRequest<{ status: string }>(`/api/admin/clusters/${id}`, { method: 'DELETE' });

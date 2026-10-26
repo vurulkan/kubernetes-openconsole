@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -235,4 +236,87 @@ func (s *Server) recordStatefulSetScaleAudit(r *http.Request, namespace, name, o
 		ResourceName: name,
 		Details:      details,
 	})
+}
+
+// replicaSetRevision is one Deployment revision as the detail view shows it.
+type replicaSetRevision struct {
+	Name          string   `json:"name"`
+	Revision      string   `json:"revision"`
+	Hash          string   `json:"podTemplateHash"`
+	Images        []string `json:"images"`
+	Replicas      int32    `json:"replicas"`
+	ReadyReplicas int32    `json:"readyReplicas"`
+	CreatedAt     string   `json:"createdAt"`
+}
+
+// handleDeploymentReplicaSets lists a Deployment's revisions (read-only; there
+// is no rollback). Like the events endpoint it is part of the detail view and
+// needs deployments:get.
+func (s *Server) handleDeploymentReplicaSets(w http.ResponseWriter, r *http.Request) {
+	namespace, ok := s.requirePermission(w, r, "deployments", "get")
+	if !ok {
+		return
+	}
+	sets, err := s.resources.ListDeploymentReplicaSets(r.Context(), namespace, chi.URLParam(r, "name"))
+	if err != nil {
+		writeKubeError(w, err, "replicasets")
+		return
+	}
+	out := make([]replicaSetRevision, 0, len(sets))
+	for _, rs := range sets {
+		images := make([]string, 0, len(rs.Spec.Template.Spec.Containers))
+		for _, c := range rs.Spec.Template.Spec.Containers {
+			images = append(images, c.Image)
+		}
+		var replicas int32
+		if rs.Spec.Replicas != nil {
+			replicas = *rs.Spec.Replicas
+		}
+		out = append(out, replicaSetRevision{
+			Name:          rs.Name,
+			Revision:      rs.Annotations["deployment.kubernetes.io/revision"],
+			Hash:          rs.Labels["pod-template-hash"],
+			Images:        images,
+			Replicas:      replicas,
+			ReadyReplicas: rs.Status.ReadyReplicas,
+			CreatedAt:     rs.CreationTimestamp.UTC().Format("2006-01-02T15:04:05Z"),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"items": out})
+}
+
+// Restart history (container exits recorded by the pod informers), newest first.
+func (s *Server) restartHistory(w http.ResponseWriter, r *http.Request, namespace, deployment, pod string) {
+	days, err := strconv.Atoi(r.URL.Query().Get("days"))
+	if err != nil || days <= 0 || days > 365 {
+		days = 30
+	}
+	since := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
+	items, err := s.store.ListTerminations(r.Context(), clusterIDFrom(r.Context()), namespace, deployment, pod, since, 500)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not read restart history")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Server) handlePodRestarts(w http.ResponseWriter, r *http.Request) {
+	namespace, ok := s.requirePermission(w, r, "pods", "get")
+	if !ok {
+		return
+	}
+	s.restartHistory(w, r, namespace, "", chi.URLParam(r, "name"))
+}
+
+// handleWorkloadRestarts: restart history of a Deployment's, StatefulSet's or
+// DaemonSet's pods, those that no longer exist included (needs <kind>:get).
+func (s *Server) handleWorkloadRestarts(resource string) http.HandlerFunc {
+	kind := workloadKinds[resource]
+	return func(w http.ResponseWriter, r *http.Request) {
+		namespace, ok := s.requirePermission(w, r, resource, "get")
+		if !ok {
+			return
+		}
+		s.restartHistory(w, r, namespace, kind+"/"+chi.URLParam(r, "name"), "")
+	}
 }

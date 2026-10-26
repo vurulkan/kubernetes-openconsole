@@ -201,6 +201,26 @@ func migrate(ctx context.Context, conn *sql.DB) error {
 			min_free_mb INTEGER NOT NULL DEFAULT 512,
 			disk_policy TEXT NOT NULL DEFAULT 'evict_oldest'
 		);`,
+		// 2.18.0: restart history, written by the pod informers. owner is
+		// "Deployment/web", "StatefulSet/db", … (pre-release builds had a
+		// container_terminations table keyed by deployment; it is left unused).
+		`CREATE TABLE IF NOT EXISTS restart_history (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			cluster_id INTEGER NOT NULL,
+			namespace TEXT NOT NULL,
+			pod TEXT NOT NULL,
+			container TEXT NOT NULL,
+			owner TEXT NOT NULL DEFAULT '',
+			exit_code INTEGER NOT NULL,
+			signal INTEGER NOT NULL DEFAULT 0,
+			reason TEXT NOT NULL DEFAULT '',
+			first_at DATETIME NOT NULL,
+			last_at DATETIME NOT NULL,
+			count INTEGER NOT NULL DEFAULT 1
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_restart_history_pod ON restart_history (cluster_id, namespace, pod, container, last_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_restart_history_owner ON restart_history (cluster_id, namespace, owner, last_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_restart_history_last ON restart_history (last_at)`,
 	}
 
 	for _, stmt := range stmts {
@@ -238,6 +258,8 @@ func migrate(ctx context.Context, conn *sql.DB) error {
 		// 2.17.0: structured audit events. Rows written before have verb ''
 		// until audit.Logger.UpgradeLegacy fills it.
 		`ALTER TABLE audit_logs ADD COLUMN verb TEXT NOT NULL DEFAULT ''`,
+		// 2.18.0: per-cluster Prometheus settings (JSON, encrypted).
+		`ALTER TABLE clusters ADD COLUMN prometheus_enc TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE audit_logs ADD COLUMN outcome TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE audit_logs ADD COLUMN reason TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE audit_logs ADD COLUMN cluster_id INTEGER NOT NULL DEFAULT 0`,

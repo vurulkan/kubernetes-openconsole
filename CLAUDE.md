@@ -14,8 +14,9 @@ manual (long, read only the section you need); this file is for working on the c
 | `internal/audit` | audit events: `Verb*` constants, `DetailKeys` registry (`event.go`), DB + console mirror (`logger.go`), 2.16 legacy upgrade (`legacy.go`). Handlers call `s.auditEvent` / `s.auditRead` / `s.auditReadDenied` (`api/audit_events.go`) |
 | `internal/rbac` | permission engine (role → namespace / resource / action, cluster-scoped grants) |
 | `internal/auth` | local passwords + policy, JWT sessions, LDAP, Azure AD |
-| `internal/kube` | per-cluster client + informer cache (`Manager`, `Registry`), event bus, resource reads, apply, YAML prettify |
-| `internal/store`, `internal/db` | SQLite store (users, roles, clusters, sessions, views, recordings settings) and migrations; credentials encrypted at rest |
+| `internal/kube` | per-cluster client + informer cache (`Manager`, `Registry`), event bus, resource reads, apply, YAML prettify; `metrics.go` 30 s metrics-server sampler (24 h in memory), `terminations.go` container exits from the pod informer (restart history) |
+| `internal/prom` | Prometheus-compatible query client (API server proxy or URL; basic / bearer / Azure AD / mTLS), history queries, test-button diagnosis |
+| `internal/store`, `internal/db` | SQLite store (users, roles, clusters + their Prometheus settings, sessions, views, recordings settings, restart history) and migrations; credentials encrypted at rest |
 | `internal/config` | env vars (`Load`), feature flags (`FEATURE_*`) |
 | `internal/logging` | slog setup; `LOG_FORMAT=text|json|ecs` (`ecs.go`) |
 | `internal/recording` | pod shell session recording (asciicast), quota / eviction |
@@ -25,13 +26,13 @@ manual (long, read only the section you need); this file is for working on the c
 `frontend/` (React 18, TypeScript, Vite, Tailwind, react-i18next, Monaco, xterm.js).
 | Path | What |
 |---|---|
-| `src/pages/DashboardPage.tsx` | workloads screen (cards + table, tabs per kind); `pages/dashboard/ResourceListView.tsx` table columns |
-| `src/pages/AdminPage.tsx` | admin shell + audit, clusters, LDAP, Azure; `pages/admin/*` users, groups, roles, sessions, recordings |
-| `src/components` | `ui.tsx` (Button, Badge, …), `DataTable`, `Drawer`, `ConfirmDialog`, `Combobox`, modals, `CommandPalette`, `LiveEventsPanel` |
+| `src/pages/DashboardPage.tsx` | workloads screen (cards + table, tabs per kind); `pages/dashboard/ResourceListView.tsx` table columns; `PodDrawer` / `WorkloadDrawer` (Deployment, StatefulSet, DaemonSet; + `DetailParts`, `RestartHistory`) detail views |
+| `src/pages/AdminPage.tsx` | admin shell + audit, clusters, LDAP, Azure; `pages/admin/*` users, groups, roles, sessions, recordings, `PrometheusSettings` |
+| `src/components` | `ui.tsx` (Button, Badge, …), `DataTable`, `Drawer`, `ConfirmDialog`, `Combobox`, modals, `CommandPalette`, `LiveEventsPanel`, `PodStatusBadge` (+ `PodRestarts`), `Usage` (meter + SVG line charts) |
 | `src/hooks` | global / scoped keyboard shortcuts, modal scopes |
 | `src/services/api.ts` | every API call |
 | `src/i18n.ts` | EN + TR dictionaries (one file) |
-| `src/utils` | `formatAge`, `formatBytes`, `formatDuration` |
+| `src/utils` | `formatAge`, `formatBytes`, `formatDuration`, Kubernetes quantities (`parseCpu` / `parseMem` / `formatCpu` / `formatMem`); `podStatus.ts` = kubectl STATUS logic, last container termination, exit code hints, `podOwner` ("Deployment/web"); use it, don't re-derive pod health or ownership; `resources.ts` requests / limits sums |
 
 `deploy/`: kustomize manifests; `rbac.yaml` / `rbac-readonly.yaml` = ClusterRole of the token users paste in;
 `elk/` = Elasticsearch ingest pipeline + mappings for the logs. `.github/workflows/ci.yml` = tests + image publish.
@@ -53,12 +54,17 @@ cd frontend && npm ci && npx tsc --noEmit -p . && npm test && npm run build
 cd backend  && go run ./cmd/server
 cd frontend && npm run dev
 ```
-First login `admin` / `admin`. No cluster is picked up automatically: add one in Admin → Clusters.
+First login `admin` / `admin`, and every API call is 403 until the password is changed. No cluster is picked up
+automatically. Scripted: `POST /api/auth/login` → `POST /api/auth/change-password` → login again →
+`POST /api/admin/clusters` `{"name","method":"kubeconfig","kubeconfigBase64"}` → `POST /api/admin/clusters/{id}/activate`.
 
 Smoke test before a PR: `docker build -t kubernetes-openconsole:local .`, run it, check `/healthz` + `/readyz`.
 End to end: throwaway `k3d cluster create oc-smoke --kubeconfig-switch-context=false`, always use
 `kubectl --context k3d-oc-smoke`, never touch other contexts, delete the cluster afterwards.
 Don't pipe `go test` into grep in a chain that pushes: the pipe hides the failure.
+Screenshots: Playwright's `chromium.launch` dies on this Mac; start Chrome yourself with `--headless
+--remote-debugging-port=9333` and use `chromium.connectOverCDP`. The dashboard reads `authToken`,
+`dashboardNamespace`, `dashboardResourceTab`, `dashboardViewMode` (`card`|`list`), `uiLocale` from localStorage.
 
 ## When you add …
 
@@ -68,7 +74,8 @@ Don't pipe `go test` into grep in a chain that pushes: the pipe hides the failur
   Never write secret values, YAML bodies, passwords or tokens into audit or logs.
 - **UI text** → key in both EN and TR in `i18n.ts` (the parity test fails otherwise).
 - **an env var / feature flag** → `internal/config` + README "Environment variables" + `deploy/deployment.yaml` comment.
-- **a Kubernetes API the app reads or writes** → `deploy/rbac.yaml` and `deploy/rbac-readonly.yaml`.
+- **a Kubernetes API the app reads or writes** → `deploy/rbac.yaml` and `deploy/rbac-readonly.yaml`, plus the README ClusterRole table.
+- **a UI poll** → send `X-OpenConsole-Refresh: auto` (`autoRefresh(true)` in `api.ts`) so it isn't audited.
 - **a DB column / table** → migration in `internal/db` (idempotent; store tests upgrade an old schema).
 - **any UI** → light + dark theme, TR + EN, keyboard reachable, axe clean (frontend tests run axe).
 
@@ -93,11 +100,13 @@ complete change, reuse what the repo already has, no unrequested options or abst
 
 ## Release
 
-Feature branch `X.Y.Z-name` → squash merge to `main` → `git tag -a vX.Y.Z` + push the tag → CI builds once
+Feature branch `X.Y.Z-name`: every push publishes `:dev-<run>` + `:dev-latest` (test the pinned `:dev-<run>`
+before merging) → squash merge to `main` → `git tag -a vX.Y.Z` + push the tag → CI builds once
 and publishes `ghcr.io/vurulkan/kubernetes-openconsole:X.Y.Z` and `:latest` (same digest, amd64 + arm64,
 GitHub attestations) → check digests, `gh attestation verify`, smoke test → `gh release create`.
 Pushes to `main` build and test but publish nothing. **Never `docker push` by hand**, never add `:<sha>` or
-signature tags. The version comes from the tag (Dockerfile `ARG VERSION` → `internal/version`, `dev` locally).
+signature tags. The version comes from the tag (`dev-<run>` on branches; Dockerfile `ARG VERSION` →
+`internal/version`, `dev` locally).
 
 ## Planning
 

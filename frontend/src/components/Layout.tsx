@@ -173,6 +173,7 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, children }) => {
 
       {/* ── Rail (icons) ───────────────────────────────────────────── */}
       <aside
+        aria-label={t('nav.main')}
         className={`fixed bottom-0 left-0 top-0 z-50 flex w-[64px] flex-col items-center border-r border-slate-800/70 bg-sidebar-gradient py-3 text-slate-200 transition-transform duration-200 lg:top-14 lg:translate-x-0 ${
           drawerOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         }`}
@@ -181,7 +182,7 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, children }) => {
           <LogoMark compact />
         </div>
 
-        <nav className="flex w-full flex-col items-center gap-1">
+        <nav aria-label={t('nav.main')} className="flex w-full flex-col items-center gap-1">
           {items.map((item) => {
             const Icon = item.icon;
             const active = isActive(item.path);
@@ -228,6 +229,7 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, children }) => {
 
       {/* ── Section panel ──────────────────────────────────────────── */}
       <aside
+        aria-label={panelTitle || t('nav.section')}
         className={`fixed bottom-0 left-[64px] top-14 z-40 hidden w-[240px] flex-col border-r border-slate-200 dark:border-slate-800/70 bg-white dark:bg-slate-900/80 backdrop-blur-sm lg:flex`}
       >
         {panelTitle && (
@@ -242,7 +244,7 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, children }) => {
 
       {/* ── Mobile panel inside drawer ─────────────────────────────── */}
       {drawerOpen && panel && (
-        <aside className="fixed bottom-0 left-[64px] top-14 z-50 flex w-[260px] flex-col border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 lg:hidden">
+        <aside aria-label={panelTitle || t('nav.section')} className="fixed bottom-0 left-[64px] top-14 z-50 flex w-[260px] flex-col border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 lg:hidden">
           <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 px-4 py-3">
             <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
               {panelTitle ?? 'Menu'}

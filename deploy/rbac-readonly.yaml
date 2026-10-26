@@ -53,6 +53,24 @@ rules:
     resources: [deployments, daemonsets, statefulsets]
     verbs: [get, list, watch]
 
+  # Deployment revisions in the detail view (read only, no rollback).
+  - apiGroups: [apps]
+    resources: [replicasets]
+    verbs: [get, list]
+
+  # Pod CPU / memory (metrics-server), sampled every 30 s.
+  - apiGroups: [metrics.k8s.io]
+    resources: [pods]
+    verbs: [get, list]
+
+  # Optional: Prometheus "in the cluster (API server proxy)" mode (Admin →
+  # Clusters → Prometheus). Off by default: services/proxy lets the token send
+  # GET requests to the Service, so name only your Prometheus Service.
+  # - apiGroups: [""]
+  #   resources: [services/proxy]
+  #   resourceNames: ["monitoring-kube-prometheus-prometheus:9090"]  # <service>:<port>, or http:<service>:<port>
+  #   verbs: [get]
+
   - apiGroups: [autoscaling]
     resources: [horizontalpodautoscalers]
     verbs: [get, list, watch]

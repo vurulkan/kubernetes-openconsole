@@ -16,6 +16,8 @@ import (
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
+
+	"k8s-dashboard/backend/internal/models"
 )
 
 // ResourceEvent is the normalized shape pushed over the WS feed. It covers
@@ -124,7 +126,7 @@ type InformerCache struct {
 	namespaceLister   corelisters.NamespaceLister
 }
 
-func newInformerCache(client kubernetes.Interface, bus *EventBus) *InformerCache {
+func newInformerCache(client kubernetes.Interface, bus *EventBus, onTermination func(models.ContainerTermination)) *InformerCache {
 	// 10m resync keeps listers lively without flooding the API server; events
 	// still arrive via the watch stream in near real-time.
 	factory := informers.NewSharedInformerFactory(client, 10*time.Minute)
@@ -178,6 +180,22 @@ func newInformerCache(client kubernetes.Interface, bus *EventBus) *InformerCache
 		})
 	}
 	attach(podInf.Informer(), "Pod")
+	if onTermination != nil {
+		report := func(old, cur any) {
+			p, ok := cur.(*corev1.Pod)
+			if !ok || p.Status.Phase == "" {
+				return
+			}
+			o, _ := old.(*corev1.Pod)
+			for _, t := range podTerminations(o, p) {
+				onTermination(t)
+			}
+		}
+		podInf.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+			AddFunc:    func(obj any) { report(nil, obj) },
+			UpdateFunc: report,
+		})
+	}
 	attach(deployInf.Informer(), "Deployment")
 	attach(dsInf.Informer(), "DaemonSet")
 	attach(ssInf.Informer(), "StatefulSet")

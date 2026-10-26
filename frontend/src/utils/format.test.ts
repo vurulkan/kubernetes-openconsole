@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatBytes, formatDuration } from './format';
+import { formatBytes, formatCpu, formatDuration, formatMem, parseCpu, parseMem } from './format';
 
 describe('formatBytes', () => {
   it.each([
@@ -26,4 +26,37 @@ describe('formatDuration', () => {
   ])('%s ms → %s', (input, out) => {
     expect(formatDuration(input)).toBe(out);
   });
+});
+
+describe('Kubernetes quantities', () => {
+  it.each([
+    ['500m', 500],
+    ['1', 1000],
+    ['0.25', 250],
+    ['2500000n', 2.5],
+    ['', NaN],
+  ])('cpu %s → %s', (q, out) => expect(parseCpu(q)).toBe(out));
+
+  it.each([
+    ['512Mi', 512 * 2 ** 20],
+    ['1Gi', 2 ** 30],
+    ['1G', 1e9],
+    ['128974848', 128974848],
+    ['1e3', 1000],
+    ['abc', NaN],
+  ])('memory %s → %s', (q, out) => expect(parseMem(q)).toBe(out));
+
+  it.each([
+    [120, '120m'],
+    [1500, '1.5'],
+    [12_000, '12'],
+    [-1, '—'],
+  ])('formatCpu %s → %s', (m, out) => expect(formatCpu(m)).toBe(out));
+
+  it.each([
+    [432013312, '412Mi'],
+    [1.5 * 2 ** 30, '1.5Gi'],
+    [512, '512B'],
+    [NaN, '—'],
+  ])('formatMem %s → %s', (b, out) => expect(formatMem(b)).toBe(out));
 });

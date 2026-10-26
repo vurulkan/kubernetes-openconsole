@@ -42,6 +42,8 @@ export const popModalScope = () => {
   modalDepth = Math.max(0, modalDepth - 1);
 };
 export const isModalScopeActive = () => modalDepth > 0;
+/** Current nesting depth, so a drawer can tell whether a modal opened above it. */
+export const modalScopeDepth = () => modalDepth;
 
 /**
  * Register page-scoped shortcuts. They stop firing while a Modal is open or

@@ -21,6 +21,7 @@ import { RecordingSettingsPanel, RecordingsSection } from './admin/RecordingsSec
 import { RolePermissionsPanel } from './admin/RolePermissionsPanel';
 import { useTranslation } from 'react-i18next';
 import { RolesSection } from './admin/RolesSection';
+import { PrometheusSettingsModal } from './admin/PrometheusSettings';
 import { useScopedShortcuts } from '../hooks/useScopedShortcuts';
 import { confirm } from '../components/ConfirmDialog';
 import { AuditEntryRow } from '../components/AuditEntryRow';
@@ -85,6 +86,7 @@ import {
   KeyRound,
   Layers,
   Pencil,
+  Activity,
   Plus,
   Power,
   PowerOff,
@@ -163,7 +165,7 @@ const SectionCard: React.FC<{ title: string; description?: string; children: Rea
   <section className="card-surface p-5">
     <header className="mb-4 flex items-start justify-between gap-3">
       <div>
-        <h3 className="text-sm font-semibold tracking-tight text-slate-900 dark:text-slate-100">{title}</h3>
+        <h2 className="text-sm font-semibold tracking-tight text-slate-900 dark:text-slate-100">{title}</h2>
         {description && <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{description}</p>}
       </div>
     </header>
@@ -410,6 +412,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
   const [newClusterCA, setNewClusterCA] = useState('');
   const [newClusterKubeconfigName, setNewClusterKubeconfigName] = useState('');
   const [clusterBusy, setClusterBusy] = useState<number | 'create' | null>(null);
+  const [promCluster, setPromCluster] = useState<{ id: number; name: string } | null>(null);
   const [editCluster, setEditCluster] = useState<{
     id: number;
     name: string;
@@ -993,7 +996,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
       user={user}
       panelTitle="Admin"
       panel={
-        <nav className="flex flex-col gap-0.5 p-2">
+        <nav aria-label={tr('nav.admin')} className="flex flex-col gap-0.5 p-2">
           {ADMIN_TABS.map((entry) => {
             const Icon = entry.icon;
             const active = tab === entry.value;
@@ -1730,6 +1733,15 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                             {tr('actions.edit')}
                           </Button>
                           <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={clusterBusy !== null}
+                            onClick={() => setPromCluster({ id: c.id, name: c.name })}
+                          >
+                            <Activity size={13} />
+                            {tr('prometheus.button')}
+                          </Button>
+                          <Button
                             variant="danger"
                             size="sm"
                             disabled={c.isActive || clusterBusy !== null}
@@ -1884,6 +1896,8 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
               </SectionCard>
             </div>
           )}
+
+          {promCluster && <PrometheusSettingsModal cluster={promCluster} onClose={() => setPromCluster(null)} />}
 
           {/* ── Edit cluster modal ───────────────────────────────────── */}
           {editCluster && (

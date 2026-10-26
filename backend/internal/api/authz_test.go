@@ -37,11 +37,13 @@ import (
 // top of client-go's fake clientset. Clusters 1 ("alpha", active) and 2
 // ("beta") exist so cluster-scoped grants can be exercised.
 type testEnv struct {
-	t      *testing.T
-	client *fake.Clientset
-	store  *store.Store
-	server *Server
-	http   *httptest.Server
+	t       *testing.T
+	client  *fake.Clientset
+	store   *store.Store
+	server  *Server
+	http    *httptest.Server
+	alpha   *kube.Manager // the default cluster's connection
+	alphaID int
 }
 
 const secretValue = "s3cr3t-db-password"
@@ -105,7 +107,8 @@ func newTestEnv(t *testing.T) *testEnv {
 		t.Fatal(err)
 	}
 	clusters := kube.NewRegistry(nil)
-	clusters.Put(alpha, kube.NewManagerWithClient(client))
+	alphaMgr := kube.NewManagerWithClient(client)
+	clusters.Put(alpha, alphaMgr)
 	// beta is a different "cluster": its own objects, so tests can tell
 	// which cluster a request actually reached.
 	betaClient := fake.NewSimpleClientset(
@@ -118,7 +121,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	srv := NewServer(st, auditLogger, clusters, rec, filepath.Join(tmp, "public"), tmp, "UTC")
 	hs := httptest.NewServer(srv.Router())
 	t.Cleanup(hs.Close)
-	return &testEnv{t: t, client: client, store: st, server: srv, http: hs}
+	return &testEnv{t: t, client: client, store: st, server: srv, http: hs, alpha: alphaMgr, alphaID: alpha}
 }
 
 // user creates an account and returns a bearer token for it.

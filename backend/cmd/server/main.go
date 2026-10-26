@@ -89,7 +89,8 @@ func main() {
 		}
 		return c.Credentials, nil
 	})
-	warmDefaultCluster(context.Background(), stor, clusters)
+	startRestartHistory(stor, clusters, cfg.RestartHistoryDays)
+	warmClusters(context.Background(), stor, clusters)
 
 	auditLogger := audit.New(stor)
 	auditLogger.SetConsoleMirror(cfg.LogIncludeAudit)
@@ -152,19 +153,43 @@ func main() {
 	slog.Info("server stopped")
 }
 
-// warmDefaultCluster connects the default cluster at boot so the first
-// requests don't pay the connection cost. A failure is logged, not fatal:
-// the console still starts and an admin can fix the cluster in the UI.
-func warmDefaultCluster(ctx context.Context, stor *store.Store, clusters *kube.Registry) {
-	c, err := stor.GetActiveCluster(ctx)
-	if err != nil || c == nil {
+// warmClusters connects every cluster at boot, so the first requests don't
+// pay the connection cost and pod usage history (sampled per connected
+// cluster) starts right away. A failure is logged, not fatal: the console
+// still starts and an admin can fix the cluster in the UI.
+func warmClusters(ctx context.Context, stor *store.Store, clusters *kube.Registry) {
+	list, err := stor.ListClusters(ctx)
+	if err != nil {
 		return
 	}
-	if _, err := clusters.Get(ctx, c.ID); err != nil {
-		slog.Warn("default cluster unavailable", slog.String("cluster", c.Name), slog.Any("error", err))
-		return
+	for _, c := range list {
+		if _, err := clusters.Get(ctx, c.ID); err != nil {
+			slog.Warn("cluster unavailable", slog.String("cluster", c.Name), slog.Any("error", err))
+			continue
+		}
+		slog.Info("cluster connected", slog.String("cluster", c.Name))
 	}
-	slog.Info("default cluster connected", slog.String("cluster", c.Name))
+}
+
+// startRestartHistory stores the container exits the pod informers see and
+// prunes them after days. Exits older than that (still on a pod OpenConsole
+// meets at start) are not stored at all.
+func startRestartHistory(stor *store.Store, clusters *kube.Registry, days int) {
+	keep := time.Duration(days) * 24 * time.Hour
+	clusters.OnTermination(func(clusterID int, t models.ContainerTermination) {
+		if time.Since(t.LastAt) > keep {
+			return
+		}
+		if err := stor.RecordTermination(context.Background(), clusterID, t); err != nil {
+			slog.Warn("restart history write failed", slog.Any("error", err))
+		}
+	})
+	go func() {
+		for {
+			_ = stor.PurgeTerminations(context.Background(), time.Now().Add(-keep))
+			time.Sleep(time.Hour)
+		}
+	}()
 }
 
 func fatal(msg string, err error) {

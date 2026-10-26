@@ -105,6 +105,10 @@ spec:
             # never purge. Default 30.
             - name: LOG_RETENTION_DAYS
               value: "30"
+            # RESTART_HISTORY_RETENTION_DAYS: how long container exits (restart
+            # history in the pod / deployment drawers) are kept. Default 30.
+            - name: RESTART_HISTORY_RETENTION_DAYS
+              value: "30"
 
             # ── Operational guardrails ───────────────────────────────────────────
             # MAX_REPLICAS: upper bound the Scale endpoint accepts for

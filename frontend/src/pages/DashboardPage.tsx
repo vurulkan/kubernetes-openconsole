@@ -25,7 +25,13 @@ import Layout from '../components/Layout';
 import LiveEventsPanel from '../components/LiveEventsPanel';
 import PodExecModal from '../components/PodExecModal';
 import SecretModal from '../components/SecretModal';
-import { PodNotReadyBadge } from '../components/PodNotReadyBadge';
+import { PodRestarts, PodStatusBadge, STATUS_DOT } from '../components/PodStatusBadge';
+import { podOwner, podStatus } from '../utils/podStatus';
+import { PodDrawer } from './dashboard/PodDrawer';
+import { KIND, WorkloadDrawer } from './dashboard/WorkloadDrawer';
+import { usePodMetrics } from '../hooks/usePodMetrics';
+import { UsageBar } from '../components/Usage';
+import { ownerUsage, podResources, scaleResources } from '../utils/resources';
 import YamlEditModal, { YamlEditTarget } from '../components/YamlEditModal';
 import { useTheme } from '../components/ThemeProvider';
 import SavedViewsMenu from '../components/SavedViewsMenu';
@@ -64,9 +70,11 @@ import {
   getJobYaml,
   getConfigMapData,
   getPodEvents,
+  getWorkload,
   getDeploymentEvents,
   restartDeployment,
   scaleDeployment,
+  type WorkloadKind,
 } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 
@@ -146,6 +154,8 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   const [logPaused, setLogPaused] = useState(false);
   const [autoScroll, setAutoScroll] = useState(false);
   const [wordWrap, setWordWrap] = useState(false);
+  // Container whose previous (pre-restart) instance the pod log modal shows; null = live log.
+  const [logPrevious, setLogPrevious] = useState<string | null>(null);
   const [scaleTarget, setScaleTarget] = useState<{
     name: string;
     current: number;
@@ -168,12 +178,38 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   // Secret whose keys modal is open (null = closed).
   const [secretTarget, setSecretTarget] = useState<string | null>(null);
   const [execTarget, setExecTarget] = useState<{ name: string; containers: string[] } | null>(null);
+  // Detail drawer. obj is a snapshot for objects not in the current tab (a pod opened from its deployment).
+  const [detail, setDetail] = useState<{ kind: 'pods' | WorkloadKind; name: string; obj?: Record<string, any> } | null>(null);
+  useEffect(() => setDetail(null), [selectedNamespace]);
+  const detailObj = detail
+    ? (activeTab === detail.kind ? items.find((it) => (it.metadata as { name?: string })?.name === detail.name) : undefined) ??
+      detail.obj ??
+      null
+    : null;
+  const isWorkloadTab = activeTab === 'deployments' || activeTab === 'statefulsets' || activeTab === 'daemonsets';
+  const metrics = usePodMetrics(selectedNamespace, activeTab === 'pods' || isWorkloadTab || detail !== null);
+  // Workload tabs also read the namespace's pods (auto-refresh, not audited) to flag workloads with failing pods.
+  const [workloadPods, setWorkloadPods] = useState<Array<Record<string, unknown>>>([]);
+  const failingByOwner = React.useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of workloadPods) {
+      const owner = podOwner(p);
+      if (owner && podStatus(p).tone === 'error') m.set(owner, (m.get(owner) ?? 0) + 1);
+    }
+    return m;
+  }, [workloadPods]);
+  const usageOf = (name: string) => (metrics?.available ? metrics.items.find((p) => p.name === name) : undefined);
+  const openDetail = (item: Record<string, unknown>) => {
+    const name = (item.metadata as { name?: string })?.name;
+    if (name && (activeTab === 'pods' || isWorkloadTab)) setDetail({ kind: activeTab as 'pods' | WorkloadKind, name });
+  };
   const [viewMode, setViewMode] = useState<'card' | 'list'>(() => {
     try {
+      // List is the default; a user who picked cards keeps them.
       const stored = localStorage.getItem('dashboardViewMode');
-      return stored === 'list' ? 'list' : 'card';
+      return stored === 'card' ? 'card' : 'list';
     } catch (err) {
-      return 'card';
+      return 'list';
     }
   });
   useEffect(() => {
@@ -212,14 +248,34 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
     setTimeout(() => setActionNotice((v) => (v === msg ? null : v)), 4000);
   };
 
+  // One log stream at a time. A replaced or closed socket keeps firing events for a
+  // while (close / error arrive after the next stream started); only the current
+  // socket may write to the modal, so a switch never shows the old stream's end.
+  const streamLogs = (wsUrl: string) => {
+    const old = logSocketRef.current;
+    logSocketRef.current = null;
+    old?.close(1000);
+    const socket = new WebSocket(wsUrl);
+    const current = () => logSocketRef.current === socket;
+    socket.onopen = () => {
+      if (current()) setModalContent((prev) => (prev ? `${prev}\n` : '') + '[log stream connected]\n');
+    };
+    socket.onmessage = (event) => {
+      if (current() && !logPausedRef.current) setModalContent((prev) => `${prev}${event.data}`);
+    };
+    socket.onerror = () => {
+      if (current()) setModalContent((prev) => `${prev}\n[log stream error]\n`);
+    };
+    socket.onclose = (event) => {
+      if (current() && event.code !== 1000) setModalContent((prev) => `${prev}\n[log stream closed: ${event.code}]\n`);
+    };
+    logSocketRef.current = socket;
+  };
+
   // Job "Logs" opens one WebSocket to the backend fan-out that follows every
   // pod of the job (label-selected by job-name). Same visual as deployment
   // logs; the modal title prefix drives the Reconnect handler.
   const openJobLogs = (ns: string, jobName: string) => {
-    if (logSocketRef.current) {
-      logSocketRef.current.close();
-      logSocketRef.current = null;
-    }
     setModalOpen(true);
     setModalTitle(`Job Logs - ${jobName}`);
     setModalContent('');
@@ -233,24 +289,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
     }
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const wsUrl = `${protocol}://${window.location.host}/ws/namespaces/${ns}/jobs/${jobName}/logs?tail=100&token=${encodeURIComponent(token)}`;
-    const socket = new WebSocket(wsUrl);
-    socket.onopen = () => {
-      setModalContent((prev) => (prev ? `${prev}\n` : '') + '[log stream connected]\n');
-    };
-    socket.onmessage = (event) => {
-      if (!logPausedRef.current) {
-        setModalContent((prev) => `${prev}${event.data}`);
-      }
-    };
-    socket.onerror = () => {
-      setModalContent((prev) => `${prev}\n[log stream error]\n`);
-    };
-    socket.onclose = (event) => {
-      if (event.code !== 1000) {
-        setModalContent((prev) => `${prev}\n[log stream closed: ${event.code}]\n`);
-      }
-    };
-    logSocketRef.current = socket;
+    streamLogs(wsUrl);
   };
 
   // Deployment "Logs" opens one WebSocket to a backend fan-out that follows
@@ -258,10 +297,6 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   // `[pod/container]`, matching the behavior of
   //    kubectl logs -f -l <selector> --all-containers --prefix
   const openDeploymentLogs = (ns: string, deploymentName: string) => {
-    if (logSocketRef.current) {
-      logSocketRef.current.close();
-      logSocketRef.current = null;
-    }
     setModalOpen(true);
     setModalTitle(`Deployment Logs - ${deploymentName}`);
     setModalContent('');
@@ -275,24 +310,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
     }
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const wsUrl = `${protocol}://${window.location.host}/ws/namespaces/${ns}/deployments/${deploymentName}/logs?tail=100&token=${encodeURIComponent(token)}`;
-    const socket = new WebSocket(wsUrl);
-    socket.onopen = () => {
-      setModalContent((prev) => (prev ? `${prev}\n` : '') + '[log stream connected]\n');
-    };
-    socket.onmessage = (event) => {
-      if (!logPausedRef.current) {
-        setModalContent((prev) => `${prev}${event.data}`);
-      }
-    };
-    socket.onerror = () => {
-      setModalContent((prev) => `${prev}\n[log stream error]\n`);
-    };
-    socket.onclose = (event) => {
-      if (event.code !== 1000) {
-        setModalContent((prev) => `${prev}\n[log stream closed: ${event.code}]\n`);
-      }
-    };
-    logSocketRef.current = socket;
+    streamLogs(wsUrl);
   };
   const logContainerRef = React.useRef<HTMLPreElement | null>(null);
   const logSocketRef = React.useRef<WebSocket | null>(null);
@@ -461,6 +479,11 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
       // list (CronJob runs, migration helpers, one-shots). They're now visible
       // on their own Jobs tab with proper status chips.
       let items = result?.items ?? [];
+      if (activeTab === 'deployments' || activeTab === 'statefulsets' || activeTab === 'daemonsets') {
+        listPods(selectedNamespace, true)
+          .then((r) => setWorkloadPods(r.items ?? []))
+          .catch(() => setWorkloadPods([]));
+      }
       if (activeTab === 'pods') {
         items = items.filter((p) => {
           const owners = ((p.metadata as any)?.ownerReferences ?? []) as Array<{ kind?: string }>;
@@ -674,44 +697,26 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
     }
   };
 
-  const connectLogs = (namespace: string, name: string) => {
-    if (logSocketRef.current) {
-      logSocketRef.current.close();
-    }
+  const connectLogs = (namespace: string, name: string, previousContainer?: string | null) => {
     const token = localStorage.getItem('authToken') ?? '';
     if (!token) {
       setModalContent('[log stream error] Missing auth token.\n');
       return;
     }
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const wsUrl = `${protocol}://${window.location.host}/ws/namespaces/${namespace}/pods/${name}/logs?tail=100&token=${encodeURIComponent(token)}`;
-    const socket = new WebSocket(wsUrl);
-    socket.onopen = () => {
-      setModalContent((prev) => (prev ? `${prev}\n` : '') + '[log stream connected]\n');
-    };
-    socket.onmessage = (event) => {
-      if (!logPausedRef.current) {
-        setModalContent((prev) => `${prev}${event.data}`);
-      }
-    };
-    socket.onerror = () => {
-      setModalContent((prev) => `${prev}\n[log stream error]\n`);
-    };
-    socket.onclose = (event) => {
-      if (event.code !== 1000) {
-        setModalContent((prev) => `${prev}\n[log stream closed: ${event.code}]\n`);
-      }
-    };
-    logSocketRef.current = socket;
+    const previous = previousContainer ? `&previous=true&container=${encodeURIComponent(previousContainer)}` : '';
+    const wsUrl = `${protocol}://${window.location.host}/ws/namespaces/${namespace}/pods/${name}/logs?tail=100${previous}&token=${encodeURIComponent(token)}`;
+    streamLogs(wsUrl);
   };
 
-  const openLogModal = (namespace: string, name: string) => {
+  const openLogModal = (namespace: string, name: string, previousContainer?: string) => {
     setModalOpen(true);
     setModalTitle(`Pod Logs - ${name}`);
     setModalContent('');
     setAutoScroll(true);
     setLogPaused(false);
-    connectLogs(namespace, name);
+    setLogPrevious(previousContainer ?? null);
+    connectLogs(namespace, name, previousContainer);
   };
 
   const openEventsModal = async (type: 'pods' | 'deployments', namespace: string, name: string) => {
@@ -888,6 +893,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="h-9 w-64 pl-8"
                 data-shortcut="dashboard-search"
+                aria-label={activeTab ? t('dashboard.search', { resource: activeTab }) : t('dashboard.searchGeneric')}
                 title={t('dashboard.searchHint')}
               />
             </div>
@@ -994,6 +1000,12 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
           </div>
         </div>
 
+        {(activeTab === 'pods' || isWorkloadTab) && metrics && !metrics.available &&
+          ['metrics_server_missing', 'forbidden'].includes(metrics.reason ?? '') && (
+            <p className="px-5 pt-3 text-xs text-slate-500 dark:text-slate-400">
+              {t(`dashboard.usage.unavailable.${metrics.reason}`)}
+            </p>
+          )}
         {/* Items — card or list view */}
         {viewMode === 'list' && (
           <ResourceListView
@@ -1009,6 +1021,9 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
             openYamlModal={openYamlModal}
             openEventsModal={openEventsModal}
             openLogModal={openLogModal}
+            onOpen={openDetail}
+            metrics={metrics}
+            failingByOwner={failingByOwner}
             openConfigMapDataModal={openConfigMapDataModal}
             openSecretModal={(name) => setSecretTarget(name)}
             canEditSecrets={canEditSecrets}
@@ -1051,19 +1066,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
 
           {filteredItems.map((item, index) => {
             const name = (item.metadata as { name?: string })?.name ?? 'Unnamed';
-            const containerStatuses = (
-              item.status as {
-                containerStatuses?: Array<{ ready?: boolean; restartCount?: number }>;
-              }
-            )?.containerStatuses ?? [];
-            const restartCount = containerStatuses.reduce(
-              (sum, s) => sum + (s.restartCount ?? 0),
-              0
-            );
-            const allReady =
-              containerStatuses.length > 0 && containerStatuses.every((s) => s.ready);
-            const isRunning = (item.status as { phase?: string })?.phase === 'Running';
-            const isHealthy = allReady && isRunning;
+            const pod = activeTab === 'pods' ? podStatus(item) : null;
 
             const desiredReplicas = (item.spec as { replicas?: number })?.replicas ?? 0;
             const readyReplicas = (item.status as { readyReplicas?: number })?.readyReplicas ?? 0;
@@ -1093,28 +1096,13 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
             // Compute status indicator
             let dotClass = '';
             let statusLabel: React.ReactNode = null;
-            if (activeTab === 'pods') {
-              if (isHealthy) {
-                // Badge is always a plain green "Running". The outer status
-                // dot (left of the pod name) grows an amber ring when the
-                // pod has restarted; that's the only visual tell, so the
-                // badge looks identical regardless of restart count.
-                dotClass =
-                  restartCount > 0
-                    ? 'status-dot bg-emerald-500 ring-1 ring-amber-400/50 ring-offset-2 ring-offset-white dark:ring-offset-slate-900'
-                    : 'status-dot status-dot-success';
-                statusLabel = (
-                  <Badge variant="success">
-                    <span className="h-1.5 w-1.5 animate-live rounded-full bg-emerald-500" />
-                    {t('dashboard.status.running')}
-                  </Badge>
-                );
-              } else {
-                dotClass = 'status-dot status-dot-warning';
-                statusLabel = (
-                  <PodNotReadyBadge namespace={selectedNamespace ?? ''} podName={name} />
-                );
-              }
+            if (pod) {
+              // A healthy pod that has restarted keeps its green dot with an amber ring.
+              dotClass =
+                pod.tone === 'ok' && pod.restarts > 0
+                  ? 'status-dot bg-emerald-500 ring-1 ring-amber-400/50 ring-offset-2 ring-offset-white dark:ring-offset-slate-900'
+                  : STATUS_DOT[pod.tone];
+              statusLabel = <PodStatusBadge namespace={selectedNamespace ?? ''} podName={name} status={pod} />;
             } else if (activeTab === 'deployments') {
               if (desiredReplicas === 0) {
                 dotClass = 'status-dot status-dot-idle';
@@ -1204,6 +1192,17 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
               }
             }
 
+            // A workload whose pods are failing says so, whatever its rollout status.
+            const failingPods = isWorkloadTab ? failingByOwner.get(`${KIND[activeTab as WorkloadKind]}/${name}`) ?? 0 : 0;
+            if (failingPods > 0) {
+              dotClass = STATUS_DOT.error;
+              statusLabel = (
+                <span className="inline-flex items-center gap-1 whitespace-nowrap">
+                  {statusLabel}
+                  <Badge variant="error">{t('dashboard.detail.podsFailing', { count: failingPods })}</Badge>
+                </span>
+              );
+            }
             const showDot = ['pods', 'deployments', 'daemonsets', 'statefulsets', 'hpas', 'cronjobs', 'jobs'].includes(activeTab);
             const createdAt = (item.metadata as { creationTimestamp?: string })?.creationTimestamp;
 
@@ -1215,12 +1214,23 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex min-w-0 flex-1 items-center gap-2">
                     {showDot && <span className={`shrink-0 ${dotClass}`} />}
-                    <span
-                      className="truncate font-mono text-[13px] font-semibold text-slate-900 dark:text-slate-100"
-                      title={name}
-                    >
-                      {name}
-                    </span>
+                    {activeTab === 'pods' || isWorkloadTab ? (
+                      <button
+                        type="button"
+                        onClick={() => openDetail(item)}
+                        className="truncate rounded font-mono text-[13px] font-semibold text-slate-900 underline-offset-2 hover:text-brand-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/60 dark:text-slate-100 dark:hover:text-brand-300"
+                        title={name}
+                      >
+                        {name}
+                      </button>
+                    ) : (
+                      <span
+                        className="truncate font-mono text-[13px] font-semibold text-slate-900 dark:text-slate-100"
+                        title={name}
+                      >
+                        {name}
+                      </span>
+                    )}
                   </div>
                   <div className="shrink-0 whitespace-nowrap">{statusLabel}</div>
                 </div>
@@ -1231,12 +1241,31 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                     <span>{formatAge(createdAt)}</span>
                   </div>
 
-                  {activeTab === 'pods' && (
+                  {pod && (
                     <div className="flex items-center gap-1.5">
                       <RefreshCw size={11} className="text-slate-500 dark:text-slate-400" />
-                      <span>Restarts: <span className="font-medium text-slate-700 dark:text-slate-200">{restartCount}</span></span>
+                      <span>Restarts:</span>
+                      <PodRestarts status={pod} />
                     </div>
                   )}
+                  {metrics?.available && (activeTab === 'pods' || isWorkloadTab) && (() => {
+                    const owner = isWorkloadTab ? `${KIND[activeTab as WorkloadKind]}/${name}` : '';
+                    const used = activeTab === 'pods' ? usageOf(name) : ownerUsage(metrics.items, owner);
+                    const budget =
+                      activeTab === 'pods'
+                        ? podResources((item.spec as any)?.containers)
+                        : scaleResources(
+                            podResources((item.spec as any)?.template?.spec?.containers),
+                            ownerUsage(metrics.items, owner).pods,
+                          );
+                    if (!used || (isWorkloadTab && !(used as { pods: number }).pods)) return null;
+                    return (
+                      <div className="grid grid-cols-2 gap-3 pt-0.5">
+                        <UsageBar kind="cpu" used={used.cpu} limit={budget.cpu.limit} request={budget.cpu.request} />
+                        <UsageBar kind="mem" used={used.memory} limit={budget.mem.limit} request={budget.mem.request} />
+                      </div>
+                    );
+                  })()}
                   {activeTab === 'deployments' && (
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                       <span className="rounded-md bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-slate-700 dark:text-slate-200">
@@ -1597,7 +1626,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                   } else if (modalTitle.startsWith('Job Logs')) {
                     openJobLogs(selectedNamespace ?? '', name);
                   } else {
-                    connectLogs(selectedNamespace ?? '', name);
+                    connectLogs(selectedNamespace ?? '', name, logPrevious);
                   }
                 }}
               >
@@ -1633,7 +1662,26 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                 />
                 <Toggle checked={autoScroll} onChange={setAutoScroll} label="Auto-scroll" />
                 <Toggle checked={wordWrap} onChange={setWordWrap} label="Word wrap" />
-                {!logPaused && (
+                {(() => {
+                  if (!modalTitle.startsWith('Pod Logs')) return null;
+                  const podName = modalTitle.split(' - ')[1] ?? '';
+                  const pod = items.find((it) => (it.metadata as { name?: string })?.name === podName);
+                  const crashed = pod && podStatus(pod).lastTermination;
+                  if (!crashed) return null;
+                  return (
+                    <Toggle
+                      checked={logPrevious !== null}
+                      onChange={(on) => {
+                        const container = on ? crashed.container : null;
+                        setLogPrevious(container);
+                        setModalContent('');
+                        connectLogs(selectedNamespace ?? '', podName, container);
+                      }}
+                      label={t('dashboard.podStatus.previousLog', { container: crashed.container })}
+                    />
+                  );
+                })()}
+                {!logPaused && logPrevious === null && (
                   <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] text-emerald-600">
                     <span className="h-1.5 w-1.5 animate-live rounded-full bg-emerald-500" />
                     Streaming
@@ -1651,6 +1699,44 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
           </div>
         )}
       </Modal>
+
+      {detail?.kind === 'pods' && (
+        <PodDrawer
+          pod={detailObj}
+          namespace={selectedNamespace ?? ''}
+          canExec={canExecPods}
+          onClose={() => setDetail(null)}
+          onLogs={(name, previous) => openLogModal(selectedNamespace ?? '', name, previous)}
+          onShell={(name, containers) => setExecTarget({ name, containers })}
+          onYaml={(name) => openYamlModal('pods', selectedNamespace ?? '', name)}
+          metrics={metrics}
+          onOpenOwner={(kind, name) =>
+            getWorkload(kind, selectedNamespace ?? '', name)
+              .then((obj) => setDetail({ kind, name, obj }))
+              .catch(() => undefined)
+          }
+        />
+      )}
+      {detail && detail.kind !== 'pods' && (
+        <WorkloadDrawer
+          kind={detail.kind}
+          workload={detailObj}
+          namespace={selectedNamespace ?? ''}
+          canRestart={canRestartDeployments}
+          canScale={detail.kind === 'statefulsets' ? canScaleStatefulSets : canScaleDeployments}
+          metrics={metrics}
+          onClose={() => setDetail(null)}
+          onOpenPod={(pod) => setDetail({ kind: 'pods', name: pod.metadata?.name, obj: pod })}
+          onLogs={(name) => openDeploymentLogs(selectedNamespace ?? '', name)}
+          onYaml={(name) => openYamlModal(detail.kind, selectedNamespace ?? '', name)}
+          onRestart={(name) => setRestartTarget(name)}
+          onScale={(name, current) => {
+            setScaleTarget(detail.kind === 'statefulsets' ? { name, current, kind: 'statefulsets' } : { name, current });
+            setScaleReplicas(current);
+            setActionError(null);
+          }}
+        />
+      )}
 
       {/* ── Restart confirm modal ─────────────────────────────────── */}
       {restartTarget && (

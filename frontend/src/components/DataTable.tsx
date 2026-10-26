@@ -12,6 +12,8 @@ export type Column<T> = {
   align?: 'left' | 'right' | 'center';
   /** Opt a column into sort. Return any Comparable (string | number | Date-ish). */
   sortValue?: (row: T) => string | number | undefined | null;
+  /** First click sorts highest first (usage, restarts: the interesting rows are the big ones). */
+  descFirst?: boolean;
 };
 
 type Props<T> = {
@@ -107,8 +109,8 @@ export function DataTable<T>({
       const va = col.sortValue!(a);
       const vb = col.sortValue!(b);
       if (va == null && vb == null) return 0;
-      if (va == null) return 1 * dir; // nulls last on asc, first on desc
-      if (vb == null) return -1 * dir;
+      if (va == null) return vb == null ? 0 : 1; // empty values last, in both directions
+      if (vb == null) return -1;
       if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
       return String(va).localeCompare(String(vb)) * dir;
     };
@@ -128,8 +130,9 @@ export function DataTable<T>({
 
   const toggleSort = (colKey: string) => {
     setSort((cur) => {
-      if (!cur || cur.key !== colKey) return { key: colKey, dir: 'asc' };
-      if (cur.dir === 'asc') return { key: colKey, dir: 'desc' };
+      const first = columns.find((c) => c.key === colKey)?.descFirst ? 'desc' : 'asc';
+      if (!cur || cur.key !== colKey) return { key: colKey, dir: first };
+      if (cur.dir === first) return { key: colKey, dir: first === 'asc' ? 'desc' : 'asc' };
       return null; // third click clears
     });
   };

@@ -10,11 +10,24 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Badge } from '../../components/ui';
-import { PodNotReadyBadge } from '../../components/PodNotReadyBadge';
+import { PodRestarts, PodStatusBadge } from '../../components/PodStatusBadge';
 import { Column, DataTable, IconButton } from '../../components/DataTable';
 import { ageShort } from '../../utils/age';
+import { podStatus, type PodStatus } from '../../utils/podStatus';
+import { UsageBar } from '../../components/Usage';
+import type { MetricsSnapshot } from '../../services/api';
+import { ownerUsage, podResources, scaleResources } from '../../utils/resources';
 
 type Item = Record<string, unknown>;
+
+// Items are replaced on every refresh, so a WeakMap caches one podStatus per row per refresh.
+const statusCache = new WeakMap<Item, PodStatus>();
+function statusOf(it: Item): PodStatus {
+  let s = statusCache.get(it);
+  if (!s) statusCache.set(it, (s = podStatus(it)));
+  return s;
+}
+const TONE_ORDER = { error: 0, warn: 1, idle: 2, ok: 3 } as const;
 
 type Props = {
   activeTab: string;
@@ -29,6 +42,12 @@ type Props = {
   openYamlModal: (type: string, ns: string, name: string) => void | Promise<void>;
   openEventsModal: (type: 'pods' | 'deployments', ns: string, name: string) => void | Promise<void>;
   openLogModal: (ns: string, name: string) => void;
+  /** Opens the detail drawer (pods, deployments); Enter on a selected row does the same. */
+  onOpen: (item: Item) => void;
+  /** Pod CPU / memory; the usage columns show only when metrics-server answered. */
+  metrics: MetricsSnapshot | null;
+  /** Failing (red) pods per owner ("Deployment/web"), flagged next to the workload's status. */
+  failingByOwner: Map<string, number>;
   openConfigMapDataModal: (ns: string, name: string) => void | Promise<void>;
   openSecretModal: (name: string) => void;
   canEditSecrets: boolean;
@@ -56,6 +75,9 @@ export const ResourceListView: React.FC<Props> = ({
   openYamlModal,
   openEventsModal,
   openLogModal,
+  onOpen,
+  metrics,
+  failingByOwner,
   openConfigMapDataModal,
   openSecretModal,
   canEditSecrets,
@@ -69,6 +91,51 @@ export const ResourceListView: React.FC<Props> = ({
   const { t } = useTranslation();
   // Column assembly per-tab. Name always left; actions always right; age is
   // the last data column before actions so it's where operators expect it.
+  const usage = React.useMemo(
+    () => new Map((metrics?.available ? metrics.items : []).map((p) => [p.name, p])),
+    [metrics],
+  );
+  const usageCols = (
+    used: (it: Item) => { cpu: number; memory: number } | undefined,
+    budget: (it: Item) => ReturnType<typeof podResources>,
+  ): Column<Item>[] =>
+    metrics?.available
+      ? (['cpu', 'mem'] as const).map((kind) => ({
+          key: kind,
+          header: kind === 'cpu' ? 'CPU' : t('dashboard.usage.memory'),
+          width: '120px',
+          // By share of the limit, like the meter's colour, so "close to its limit" sorts to the top.
+          // Pods without a limit (or usage) have no value and go last either way.
+          descFirst: true,
+          sortValue: (it: Item) => {
+            const u = kind === 'cpu' ? used(it)?.cpu : used(it)?.memory;
+            const limit = budget(it)[kind].limit;
+            return u === undefined || !(limit > 0) ? null : u / limit;
+          },
+          cell: (it: Item) => {
+            const u = used(it);
+            const b = budget(it)[kind];
+            return <UsageBar kind={kind} used={kind === 'cpu' ? u?.cpu : u?.memory} limit={b.limit} request={b.request} className="w-full" compact />;
+          },
+        }))
+      : [];
+  const podUsageCols = usageCols(
+    (it) => usage.get(nameOf(it)),
+    (it) => podResources((it.spec as any)?.containers),
+  );
+  const ownerUsageCols = (kind: string) =>
+    usageCols(
+      (it) => {
+        const d = ownerUsage(metrics?.items ?? [], `${kind}/${nameOf(it)}`);
+        return d.pods ? d : undefined;
+      },
+      (it) =>
+        scaleResources(
+          podResources((it.spec as any)?.template?.spec?.containers),
+          ownerUsage(metrics?.items ?? [], `${kind}/${nameOf(it)}`).pods,
+        ),
+    );
+
   const columns: Column<Item>[] = React.useMemo(() => {
     const nameCol: Column<Item> = {
       key: 'name',
@@ -107,39 +174,18 @@ export const ResourceListView: React.FC<Props> = ({
         {
           key: 'status',
           header: 'Status',
-          sortValue: (it) => {
-            const cs = ((it.status as any)?.containerStatuses as Array<{ ready?: boolean }>) ?? [];
-            const allReady = cs.length > 0 && cs.every((c) => c.ready);
-            const running = (it.status as any)?.phase === 'Running';
-            return allReady && running ? 1 : 0;
-          },
+          sortValue: (it) => TONE_ORDER[statusOf(it).tone],
           cell: (it) => {
-            const cs =
-              ((it.status as any)?.containerStatuses as Array<{ ready?: boolean }>) ?? [];
-            const allReady = cs.length > 0 && cs.every((c) => c.ready);
-            const running = (it.status as any)?.phase === 'Running';
-            const healthy = allReady && running;
-            if (healthy) return <Badge variant="success">{t("dashboard.status.running")}</Badge>;
+            const st = statusOf(it);
+            // Ready count lives here (no column of its own): "Not ready 1/2" already carries it for Running.
             return (
-              <PodNotReadyBadge namespace={selectedNamespace} podName={nameOf(it)} />
-            );
-          },
-        },
-        {
-          key: 'ready',
-          header: 'Ready',
-          align: 'center',
-          width: '80px',
-          sortValue: (it) => {
-            const cs = ((it.status as any)?.containerStatuses as Array<{ ready?: boolean }>) ?? [];
-            return cs.filter((c) => c.ready).length;
-          },
-          cell: (it) => {
-            const cs = ((it.status as any)?.containerStatuses as Array<{ ready?: boolean }>) ?? [];
-            const ready = cs.filter((c) => c.ready).length;
-            return (
-              <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
-                {ready}/{cs.length}
+              <span className="inline-flex items-center gap-2">
+                <PodStatusBadge namespace={selectedNamespace} podName={nameOf(it)} status={st} />
+                {st.total > 1 && st.label !== 'Running' && (
+                  <span className="font-mono text-xs text-slate-500 dark:text-slate-400" title="Ready">
+                    {st.ready}/{st.total}
+                  </span>
+                )}
               </span>
             );
           },
@@ -147,26 +193,12 @@ export const ResourceListView: React.FC<Props> = ({
         {
           key: 'restarts',
           header: 'Restarts',
-          align: 'center',
-          width: '90px',
-          sortValue: (it) => {
-            const cs = ((it.status as any)?.containerStatuses as Array<{ restartCount?: number }>) ?? [];
-            return cs.reduce((s, c) => s + (c.restartCount ?? 0), 0);
-          },
-          cell: (it) => {
-            const cs = ((it.status as any)?.containerStatuses as Array<{ restartCount?: number }>) ?? [];
-            const r = cs.reduce((s, c) => s + (c.restartCount ?? 0), 0);
-            return (
-              <span
-                className={`font-mono text-xs ${
-                  r > 0 ? 'text-amber-600 dark:text-amber-300' : 'text-slate-500 dark:text-slate-400'
-                }`}
-              >
-                {r}
-              </span>
-            );
-          },
+          width: '200px',
+          descFirst: true,
+          sortValue: (it) => statusOf(it).restarts,
+          cell: (it) => <PodRestarts status={statusOf(it)} />,
         },
+        ...podUsageCols,
         ageCol,
         {
           key: 'actions',
@@ -244,6 +276,7 @@ export const ResourceListView: React.FC<Props> = ({
             );
           },
         },
+        ...ownerUsageCols('Deployment'),
         ageCol,
         {
           key: 'actions',
@@ -626,6 +659,7 @@ export const ResourceListView: React.FC<Props> = ({
             );
           },
         },
+        ...ownerUsageCols('DaemonSet'),
         ageCol,
         {
           key: 'actions',
@@ -681,6 +715,7 @@ export const ResourceListView: React.FC<Props> = ({
             );
           },
         },
+        ...ownerUsageCols('StatefulSet'),
         ageCol,
         {
           key: 'actions',
@@ -786,14 +821,41 @@ export const ResourceListView: React.FC<Props> = ({
     canScaleStatefulSets,
     canEditSecrets,
     t,
+    metrics,
   ]);
+
+  // Deployments / StatefulSets / DaemonSets: "2 pods failing" next to the status, from the pods' own status.
+  const ownerKind = ({ deployments: 'Deployment', statefulsets: 'StatefulSet', daemonsets: 'DaemonSet' } as Record<string, string>)[activeTab];
+  const withFailing = React.useMemo(
+    () =>
+      ownerKind
+        ? columns.map((c) =>
+            c.key === 'status'
+              ? {
+                  ...c,
+                  cell: (it: Item) => {
+                    const n = failingByOwner.get(`${ownerKind}/${nameOf(it)}`) ?? 0;
+                    return (
+                      <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                        {c.cell(it)}
+                        {n > 0 && <Badge variant="error">{t('dashboard.detail.podsFailing', { count: n })}</Badge>}
+                      </span>
+                    );
+                  },
+                }
+              : c,
+          )
+        : columns,
+    [columns, ownerKind, failingByOwner, t],
+  );
 
   return (
     <div className="p-5">
       <DataTable
         rows={items}
-        columns={columns}
+        columns={withFailing}
         rowKey={(it) => nameOf(it) || JSON.stringify((it.metadata as any)?.uid ?? Math.random())}
+        onRowClick={['pods', 'deployments', 'statefulsets', 'daemonsets'].includes(activeTab) ? onOpen : undefined}
         sortStorageKey={`dashboard:${activeTab}`}
         emptyMessage={
           loading
