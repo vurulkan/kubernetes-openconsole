@@ -61,6 +61,8 @@ automatically. Scripted: `POST /api/auth/login` → `POST /api/auth/change-passw
 Smoke test before a PR: `docker build -t kubernetes-openconsole:local .`, run it, check `/healthz` + `/readyz`.
 End to end: throwaway `k3d cluster create oc-smoke --kubeconfig-switch-context=false`, always use
 `kubectl --context k3d-oc-smoke`, never touch other contexts, delete the cluster afterwards.
+Fixtures: `kubectl --context k3d-oc-smoke apply -f hack/k3d/crashlab.yaml` (pods failing every common way, workloads of
+each kind) and `hack/k3d/prometheus.yaml` (a Prometheus for the "in the cluster" mode); k3s ships metrics-server.
 Don't pipe `go test` into grep in a chain that pushes: the pipe hides the failure.
 Screenshots: Playwright's `chromium.launch` dies on this Mac; start Chrome yourself with `--headless
 --remote-debugging-port=9333` and use `chromium.connectOverCDP`. The dashboard reads `authToken`,
