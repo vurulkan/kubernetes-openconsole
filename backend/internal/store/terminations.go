@@ -88,6 +88,27 @@ func (s *Store) ListTerminations(ctx context.Context, clusterID int, namespace, 
 	return out, rows.Err()
 }
 
+// ClusterTerminations returns every restart row of a cluster whose last exit is since or later.
+func (s *Store) ClusterTerminations(ctx context.Context, clusterID int, since time.Time) ([]models.ContainerTermination, error) {
+	rows, err := s.conn.QueryContext(ctx,
+		`SELECT namespace, pod, container, owner, exit_code, signal, reason, first_at, last_at, count
+		 FROM restart_history WHERE cluster_id = ? AND last_at >= ?`, clusterID, since.UTC())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []models.ContainerTermination{}
+	for rows.Next() {
+		var t models.ContainerTermination
+		if err := rows.Scan(&t.Namespace, &t.Pod, &t.Container, &t.Owner, &t.ExitCode, &t.Signal, &t.Reason,
+			&t.FirstAt, &t.LastAt, &t.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 // PurgeTerminations drops history whose last exit is older than before.
 func (s *Store) PurgeTerminations(ctx context.Context, before time.Time) error {
 	_, err := s.conn.ExecContext(ctx, `DELETE FROM restart_history WHERE last_at < ?`, before.UTC())

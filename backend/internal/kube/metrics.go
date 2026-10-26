@@ -106,6 +106,7 @@ type MetricsSampler struct {
 	mu        sync.RWMutex
 	latest    map[string]map[string]PodUsage // namespace → pod → usage
 	series    map[string]*series             // namespace/pod
+	cluster   *series                        // every pod summed (admin overview)
 	updatedAt time.Time
 	available bool
 	reason    string
@@ -113,7 +114,7 @@ type MetricsSampler struct {
 }
 
 func NewMetricsSampler(fetch func(ctx context.Context) ([]PodUsage, error)) *MetricsSampler {
-	return &MetricsSampler{fetch: fetch, series: map[string]*series{}, stop: make(chan struct{})}
+	return &MetricsSampler{fetch: fetch, series: map[string]*series{}, cluster: &series{}, stop: make(chan struct{})}
 }
 
 func newMetricsServerSampler(client kubernetes.Interface) *MetricsSampler {
@@ -233,7 +234,10 @@ func (m *MetricsSampler) Sample(now time.Time) {
 	}
 	t := now.Unix()
 	latest := map[string]map[string]PodUsage{}
+	var total Usage
 	for _, p := range pods {
+		total.CPU += p.CPU
+		total.Mem += p.Mem
 		if latest[p.Namespace] == nil {
 			latest[p.Namespace] = map[string]PodUsage{}
 		}
@@ -246,6 +250,7 @@ func (m *MetricsSampler) Sample(now time.Time) {
 		}
 		s.add(t, p.Usage)
 	}
+	m.cluster.add(t, total)
 	for key, s := range m.series {
 		if t-s.lastSeen > int64(historyWindow/time.Second) {
 			delete(m.series, key)
@@ -327,4 +332,57 @@ func (m *MetricsSampler) OwnerHistory(ns, owner string, rng time.Duration, now t
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].T < out[j].T })
 	return out
+}
+
+// ClusterHistory is every pod's usage summed, over the last rng (at most 24 h).
+func (m *MetricsSampler) ClusterHistory(rng time.Duration, now time.Time) []Point {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.cluster.points(now.Add(-rng).Unix())
+}
+
+// All is the latest sample of every pod in the cluster (PodUsage.Namespace set).
+func (m *MetricsSampler) All() Snapshot {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	snap := Snapshot{Available: m.available, Reason: m.reason, Items: []PodUsage{}}
+	if m.updatedAt.IsZero() {
+		if m.reason == "" {
+			snap.Reason = "warming_up"
+		}
+		return snap
+	}
+	at := m.updatedAt
+	snap.UpdatedAt = &at
+	for _, pods := range m.latest {
+		for _, p := range pods {
+			snap.Items = append(snap.Items, p)
+		}
+	}
+	return snap
+}
+
+// NodeUsage reads every node's current usage from metrics.k8s.io (node name → usage).
+// Not sampled: only the admin overview asks, and it caches the answer.
+func NodeUsage(ctx context.Context, client kubernetes.Interface) (map[string]Usage, error) {
+	raw, err := client.CoreV1().RESTClient().Get().AbsPath("/apis/metrics.k8s.io/v1beta1/nodes").DoRaw(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var list struct {
+		Items []struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+			Usage map[string]string `json:"usage"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &list); err != nil {
+		return nil, fmt.Errorf("decode node metrics: %w", err)
+	}
+	out := make(map[string]Usage, len(list.Items))
+	for _, it := range list.Items {
+		out[it.Metadata.Name] = Usage{CPU: quantity(it.Usage["cpu"], true), Mem: quantity(it.Usage["memory"], false)}
+	}
+	return out, nil
 }

@@ -5,8 +5,9 @@ Modern, production-ready Kubernetes visibility and operations console with stric
 ## Highlights
 
 ### Observability & live data
+- **Admin overview** (`/overview`, admins only; admins land here after sign-in) — the selected cluster at a glance: pods running, pods needing attention (red / amber), restarts in 24 h, ready Deployments, CPU and memory as % of allocatable (each with a 24 h trend), cluster usage over 24 h against allocatable (Prometheus when configured, else the in-memory samples), the pods needing attention, the workloads restarting most with their usual exit code, restarts per hour, the busiest namespaces (pods near their limits), Warning events of the last 15 minutes and a node strip. `GET /api/admin/overview` (cached 15 s per cluster) draws the page without waiting for Prometheus; the 24 h usage comes from `GET /api/admin/overview/history` (a Prometheus answer is kept 5 minutes and refreshed in the background). Opening the page is audited as `cluster.view_overview`, its own refreshes are not. Needs `nodes` and `metrics.k8s.io` `nodes` in the ClusterRole for the node data.
 - **Informer-driven lister cache** — list endpoints read from a `client-go` SharedInformerFactory, so the UI is instant and the API server isn't hammered by polling.
-- **Live Events side panel** — streams `added` / `updated` / `deleted` plus native `corev1.Event` objects over a WebSocket. Filter by All / K8s events / Warnings.
+- **Live Events side panel** (header button or `e`, on the Dashboard and the Overview) — streams `added` / `updated` / `deleted` plus native `corev1.Event` objects (new ones and each repeat of a recurring one) over a WebSocket. Filter by All / K8s events / Warnings. A user sees only objects they may `list` in that namespace (Kubernetes Events by the object they are about); node and other cluster-scoped events are for admins. On Admin → Overview the panel opens for the whole cluster, on Warnings.
 - **Prometheus `/metrics`**, dedicated `/livez` (process) and `/readyz` (DB) endpoints. Clusters are left out of readiness, so one unreachable cluster can't take the console down. See [Metrics](#metrics).
 - **Pod health like `kubectl`, and why it restarted** — the STATUS `kubectl get pods` prints (CrashLoopBackOff, OOMKilled, ImagePullBackOff, Init:Error, Unschedulable …) in red / amber / green, and the last exit of a restarted container (`137 OOMKilled · 2m`) with a plain-language explanation; the log of the container before its last restart. See [Pod health, usage and restart history](#pod-health-usage-and-restart-history).
 - **Detail drawers** for pods, Deployments, StatefulSets and DaemonSets — containers, requests / limits, probes, conditions, events; rollout, the workload's pods, usage, restart history, and a Deployment's revisions (read only). Workload lists flag workloads whose pods are failing.
@@ -24,7 +25,7 @@ Pods, Deployments, **DaemonSets**, **StatefulSets**, **HorizontalPodAutoscalers 
 - **Pod shell** (`pods:exec`) over WebSocket with xterm.js.
 - **Pod shell session recording** — every shell is saved as an asciicast v2 file and can be replayed by admins (Admin → Recordings) with an in-browser player. See [Session Recording](#session-recording).
 - **Secrets** (`secrets:list`, `secrets:get`, `secrets:reveal`, `secrets:edit`) — names, types and key names by default; values are revealed one key at a time, and secrets can be edited in the YAML editor (diff + dry-run). Every reveal and every YAML open is audited. See [Secrets](#secrets).
-- **Pod / Deployment logs** (`pods:logs`) with rate limiting.
+- **Pod / Deployment / Job logs** (`pods:logs`): container picker (init containers included; opens on the `kubectl.kubernetes.io/default-container` annotation, else the container named after the workload, so a sidecar listed first is not the default), live or the instance before the last restart, follows a restarting container and resumes after a dropped connection without losing or repeating lines; find, pause, wrap, copy, download; keeps the last 10,000 lines. Per user: 10 new log streams at once, then one per second.
 
 Every read and write is an audit event with its own fields: `action` (`deployment.restart`), `verb`, `outcome` (`success` / `denied` / `failed` / `rate_limited` / `locked`), the target cluster, namespace and resource, details such as `restarted_at` or `replicas_from` / `replicas_to`, and who / from where. See [Audit events](#audit-events). The HTTP response carries `X-Request-Id` for correlation with the audit line in stdout.
 
@@ -71,14 +72,14 @@ docker build -t kubernetes-openconsole:local .
 ### Option B — prebuilt image (GHCR)
 
 ```yaml
-image: ghcr.io/vurulkan/kubernetes-openconsole:2.18.0   # pin a release
+image: ghcr.io/vurulkan/kubernetes-openconsole:2.19.0   # pin a release
 ```
 
 Images are multi-arch (**linux/amd64** and **linux/arm64**: Graviton, Ampere, Apple silicon); the runtime picks the right one. CI is the only publisher. Release tags:
 
 | Tag | Points to | Moves? |
 |---|---|---|
-| `X.Y.Z` (e.g. `2.18.0`) | that release | no — use this in production |
+| `X.Y.Z` (e.g. `2.19.0`) | that release | no — use this in production |
 | `latest` | the newest release, same image (same digest) as its `X.Y.Z` | yes, on each release |
 
 Releasing = push the `vX.Y.Z` git tag; CI builds once and pushes `:X.Y.Z` and `:latest`. Pushes to `main` are built and tested but not published. Pushes to other branches publish pre-release test images as `:dev-<build number>` and `:dev-latest`; never run those in production, and `:latest` never points to one.
@@ -89,12 +90,12 @@ Every release image has a signed SLSA **build provenance** and an SPDX **SBOM** 
 
 ```bash
 # Provenance: built by this repository's CI from a release tag
-gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.18.0 \
+gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.19.0 \
   --repo vurulkan/kubernetes-openconsole \
   --signer-workflow vurulkan/kubernetes-openconsole/.github/workflows/ci.yml
 
 # SBOM (packages in the image)
-gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.18.0 \
+gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.19.0 \
   --repo vurulkan/kubernetes-openconsole \
   --predicate-type https://spdx.dev/Document/v2.3 --format json \
   --jq '.[0].verificationResult.statement.predicate.packages | length'
@@ -122,7 +123,7 @@ cd frontend && npx tsc --noEmit -p . && npm test && npm run build
 docker run --rm -p 8080:8080 \
   -e TIMEZONE=Europe/Istanbul \
   -v kubernetes-openconsole-data:/data \
-  ghcr.io/vurulkan/kubernetes-openconsole:2.18.0
+  ghcr.io/vurulkan/kubernetes-openconsole:2.19.0
 ```
 
 The image defaults to `DATA_PATH=/data/app.db` and `STATIC_DIR=/app/public`; the SQLite DB and session recordings live under `/data`. Drop the `-v` for a throwaway instance. Then open http://localhost:8080 and add a cluster ([Connecting clusters](#connecting-clusters)).
@@ -149,7 +150,7 @@ Then:
 1. Open the UI and log in as `admin` / `admin` ([First login](#first-login)).
 2. Add the cluster in **Admin → Clusters** ([Connecting clusters](#connecting-clusters)). The backend never picks up a cluster on its own.
 
-To upgrade, run `kubectl -n kubernetes-openconsole rollout restart deploy/kubernetes-openconsole`. The pod pulls `:latest`, i.e. the newest release. To stay on a fixed version, set a release tag (e.g. `2.18.0`) in `deployment.yaml` or through the `images:` override in `kustomization.yaml`, then re-apply.
+To upgrade, run `kubectl -n kubernetes-openconsole rollout restart deploy/kubernetes-openconsole`. The pod pulls `:latest`, i.e. the newest release. To stay on a fixed version, set a release tag (e.g. `2.19.0`) in `deployment.yaml` or through the `images:` override in `kustomization.yaml`, then re-apply.
 
 ## Environment variables
 
@@ -273,7 +274,7 @@ Every audited action is one event, stored in the database (Admin → Audit Logs,
 | Field (`json` / DB) | `ecs` | Meaning |
 |---|---|---|
 | `event` / `action` | `event.action` | `<resource type>.<verb>`: `deployment.list`, `deployment.restart`, `pod.exec`, `secret.reveal`, `user.login`, `permission.create` |
-| `verb` | `openconsole.verb` | `list` `get` `logs` `exec` `restart` `scale` `apply` `view_yaml` `reveal` `view` `download` `create` `update` `delete` `share` `select` `activate` `deactivate` `revoke` `export` `import` `login` `change_password` `reset_password` `evict` `purge` |
+| `verb` | `openconsole.verb` | `list` `get` `logs` `exec` `restart` `scale` `apply` `view_yaml` `reveal` `view` `download` `create` `update` `delete` `share` `select` `activate` `deactivate` `revoke` `export` `import` `login` `change_password` `reset_password` `evict` `purge` `view_overview` |
 | `outcome` | `openconsole.outcome`, `event.outcome` | `success` `denied` `failed` `rate_limited` `locked` (`event.outcome` is `success` / `failure`) |
 | `reason` | `event.reason` | why it was denied or failed: `forbidden`, `feature_disabled`, `admin_only`, `k8s_forbidden`, `not_found`, `conflict`, `bad_password`, … |
 | `user`, `auth_source` | `user.name`, `openconsole.auth_source` | who, and where the account signs in (`local` / `ldap` / `azure`) |
@@ -422,6 +423,7 @@ What the ClusterRole allows, and which application permission needs it. Delete t
 | `horizontalpodautoscalers, ingresses, cronjobs, jobs`: get / list / watch / update | tabs + `edit` |
 | `replicasets`: get / list | deployment revisions in the detail drawer |
 | `metrics.k8s.io` `pods`: get / list | CPU / memory (needs metrics-server in the cluster) |
+| `nodes`, `metrics.k8s.io` `nodes`: get / list | Admin → Overview: node count, CPU / memory as % of allocatable, node strip. Without them the overview still works, with absolute CPU / memory and no node strip |
 | `services/proxy`: get on your Prometheus Service (commented out; optional) | Prometheus "in the cluster" mode |
 
 ### Read-only mode
@@ -573,7 +575,7 @@ Queries use the cAdvisor metrics `container_cpu_usage_seconds_total` and `contai
 Interactive shell into a running container, gated by application permission `pods:exec`. Off by default on every role; admins opt in per role, per namespace.
 
 - Endpoint: `GET /ws/namespaces/{namespace}/pods/{name}/exec?container=<c>&command=/bin/sh` (WebSocket).
-- xterm.js UI with container picker on multi-container pods and shell picker (`/bin/sh`, `/bin/bash`, `/bin/ash`).
+- xterm.js UI with a shell picker (`/bin/sh`, `/bin/bash`, `/bin/ash`). For a pod with several containers the Shell button first opens a small menu: the main container on top and focused (the `kubectl.kubernetes.io/default-container` annotation, else the one named after the workload, so a sidecar listed first is not the default; Enter opens it), containers that are not running greyed out. The terminal can still switch container.
 - Idle timeout: **5 minutes** without input closes the session (`EXEC_IDLE_TIMEOUT`).
 - At most **3** open shells per user (`MAX_EXEC_SESSIONS_PER_USER`); the next one is refused with 429 and audited as `pod.exec.rate_limited`.
 - Each session writes two `pod.exec` audit events, `phase: start` (container, command) and `phase: end`. The end event carries `exit_code` (the shell's exit status; `-1` when the session was cut — idle timeout, closed tab, network), `bytes_in`, `bytes_out` and `duration_ms`. A shell that ends with a non-zero status, e.g. after a failed last command, is a normal end (outcome `success`).
@@ -694,7 +696,7 @@ Every issued token lives in `session_tokens` and is checked on every request.
 Open the full cheat sheet with `?`. The core set:
 
 - Global: `⌘K` / `Ctrl+K` command palette, `?` cheat sheet, `Esc` close active modal.
-- Navigate: `g d` → Dashboard, `g a` → Admin.
+- Navigate: `g o` → Overview, `g d` → Dashboard, `g a` → Admin (Overview and Admin for admins only).
 - Theme: `t l` light, `t d` dark, `t s` system.
 - Dashboard: `[` / `]` (or `ğ` / `ü` on a TR Q layout) previous / next resource tab, `r` refresh, `/` (or `.`) focus the search box, `n` focus the namespace filter, `e` toggle Live Events, `c` open the cluster switcher, `v` open Saved Views.
 - Cluster switcher / Saved Views when open: `1`–`9` pick by index, `↑/↓` move focus, `Enter` activate, `Esc` close.
@@ -907,6 +909,7 @@ Every user works on **their own** cluster:
 - If LDAP bind password is already configured, toggle **Update Bind Password** only when actually changing it.
 - Audit log filters combine user / action / outcome / namespace / date range.
 - Pod logs stream via WebSocket; verify connectivity from the backend pod to the API server.
+- WebSockets (logs, shell, live events) sign in with a single-use ticket: the page calls `POST /api/ws-ticket` `{"path"}` and opens `/ws/…?ticket=<t>`. A ticket works once, for that path, within 30 s; the JWT never appears in a URL, so proxy access logs can't leak it. `?token=` is no longer accepted.
 - The YAML modal is read-only by default — the Edit button only appears when the viewer has `{resource}:edit`.
 - Monaco loads from `cdn.jsdelivr.net`. In air-gapped deployments, self-host the `vs` folder and point `@monaco-editor/react`'s `loader.config({ paths: { vs: '/vs' } })` at the local path, then tighten CSP back to `self`.
 

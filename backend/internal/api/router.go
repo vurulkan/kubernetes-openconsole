@@ -24,12 +24,10 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/gorilla/websocket"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/time/rate"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
 
@@ -71,6 +69,12 @@ type Server struct {
 	// prom caches each cluster's Prometheus client (cluster id → *prom.Client,
 	// nil when none is configured); dropped when the cluster or its settings change.
 	prom sync.Map
+	// overview caches the admin overview per cluster id (overviewEntry, 15 s).
+	overview sync.Map
+	// overviewHistory caches the overview's Prometheus history per cluster (historyEntry, 5 min).
+	overviewHistory sync.Map
+	// overviewHistoryBusy marks a cluster whose history is being refreshed in the background.
+	overviewHistoryBusy sync.Map
 }
 
 // sessionValidator is the AuthMiddleware adapter around *store.Store. Returning
@@ -186,6 +190,10 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/cluster/active", s.handleGetActiveCluster)
 		r.Post("/api/cluster/select", s.handleSelectCluster)
 		r.Get("/api/features", s.handleFeatures)
+		r.Post("/api/ws-ticket", s.handleWSTicket)
+		// Admin only; checked in the handler so a refusal is audited.
+		r.Get("/api/admin/overview", s.handleOverview)
+		r.Get("/api/admin/overview/history", s.handleOverviewHistory)
 		// Signed-in users only: the version isn't shown before login.
 		r.Get("/api/version", func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]string{"version": version.Version})
@@ -976,7 +984,7 @@ func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(fmt.Sprintf(`<!doctype html><html><body><script nonce=%q>
 try { localStorage.setItem('authToken', %q); } catch (e) {}
-window.location.replace('/');
+window.location.replace('/overview'); // admins land on the overview, the route sends others to the dashboard
 </script></body></html>`, nonce, token)))
 }
 
@@ -1232,110 +1240,6 @@ func (s *Server) handleConfigMap(w http.ResponseWriter, r *http.Request) {
 	}
 	s.auditRead(r, audit.VerbGet, "configmaps", namespace, item.Name)
 	writeJSON(w, http.StatusOK, item)
-}
-
-func (s *Server) handlePodLogsWS(w http.ResponseWriter, r *http.Request) {
-	claims, ok := auth.FromContext(r.Context())
-	if !ok {
-		logWarnf("logs ws unauthorized")
-		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
-	namespace := chi.URLParam(r, "namespace")
-	podName := chi.URLParam(r, "name")
-	previous := r.URL.Query().Get("previous") == "true"
-	container := r.URL.Query().Get("container")
-	if container == "" {
-		// Kubernetes refuses a log request without a container when the pod has several.
-		if pod, err := s.resources.GetPod(r.Context(), namespace, podName); err == nil {
-			container = defaultContainer(pod)
-		}
-	}
-	podLogs := models.AuditLog{
-		Verb:         audit.VerbLogs,
-		ResourceType: "pod",
-		Namespace:    namespace,
-		ResourceName: podName,
-		Details:      audit.D{"container": container},
-	}
-	if previous {
-		podLogs.Details["previous"] = true
-	}
-	if !s.can(r.Context(), claims.UserID, namespace, "pods", "logs") {
-		podLogs.Outcome, podLogs.Reason = audit.Denied, reasonForbidden
-		s.auditEvent(r, podLogs)
-		w.WriteHeader(http.StatusForbidden)
-		return
-	}
-	if !s.allowLogStream(claims.UserID) {
-		podLogs.Outcome, podLogs.Reason = audit.RateLimited, reasonRateLimited
-		s.auditEvent(r, podLogs)
-		w.WriteHeader(http.StatusTooManyRequests)
-		return
-	}
-
-	s.auditEvent(r, podLogs)
-
-	client, ok := kubeFor(r).Client()
-	if !ok {
-		logWarnf("logs ws client not ready")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		return
-	}
-
-	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		logWarnf("logs ws upgrade failed: %v", err)
-		return
-	}
-	defer conn.Close()
-	MetricsLogStreamIncr()
-
-	tail := int64(100)
-	if value := r.URL.Query().Get("tail"); value != "" {
-		if parsed, err := strconv.ParseInt(value, 10, 64); err == nil && parsed > 0 {
-			tail = parsed
-		}
-	}
-	logOptions := &models.PodLogOptions{Container: container, TailLines: tail, Previous: previous}
-
-	stream, err := client.CoreV1().Pods(namespace).GetLogs(podName, logOptions.ToKube()).Stream(r.Context())
-	if err != nil {
-		logWarnf("logs ws stream error: %v", err)
-		_ = conn.WriteMessage(websocket.TextMessage, []byte("log stream unavailable"))
-		return
-	}
-	defer stream.Close()
-
-	buffer := make([]byte, 2048)
-	for {
-		count, err := stream.Read(buffer)
-		if count > 0 {
-			_ = conn.WriteMessage(websocket.TextMessage, buffer[:count])
-		}
-		if err != nil {
-			break
-		}
-	}
-	// The log ended (previous instance fully read, or the container stopped): say so, instead of a 1006 drop.
-	_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-}
-
-// defaultContainer picks the container kubectl would: the one named by the
-// kubectl.kubernetes.io/default-container annotation, else the first.
-func defaultContainer(pod *corev1.Pod) string {
-	if name := pod.Annotations["kubectl.kubernetes.io/default-container"]; name != "" {
-		for _, c := range pod.Spec.Containers {
-			if c.Name == name {
-				return name
-			}
-		}
-	}
-	if len(pod.Spec.Containers) > 0 {
-		return pod.Spec.Containers[0].Name
-	}
-	return ""
 }
 
 // Typed client-go objects return with an empty TypeMeta (apiVersion/kind are
@@ -2628,7 +2532,9 @@ func (s *Server) allowLogStream(userID int) bool {
 	defer s.logLimiterMu.Unlock()
 	limiter, ok := s.logLimiters[userID]
 	if !ok {
-		limiter = rate.NewLimiter(rate.Every(5*time.Second), 2)
+		// Loose enough for flipping container / live / previous in the log viewer;
+		// it still stops a client from opening streams in a tight loop.
+		limiter = rate.NewLimiter(rate.Every(time.Second), 10)
 		s.logLimiters[userID] = limiter
 	}
 	return limiter.Allow()

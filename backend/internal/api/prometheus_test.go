@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,9 +18,12 @@ import (
 func TestPrometheusSettingsAndHistory(t *testing.T) {
 	e := newTestEnv(t)
 	_, admin := e.user("root", true)
+	var mu sync.Mutex // CPU and memory are asked at once
 	var gotAuth, gotQuery string
 	promSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		gotAuth, gotQuery = r.Header.Get("Authorization"), r.URL.Query().Get("query")
+		mu.Unlock()
 		_, _ = fmt.Fprint(w, `{"status":"success","data":{"resultType":"matrix","result":[{"values":[[100,"0.5"],[130,"0.5"]]}]}}`)
 	}))
 	defer promSrv.Close()
@@ -55,6 +59,8 @@ func TestPrometheusSettingsAndHistory(t *testing.T) {
 	if hist.Source != "prometheus" || len(hist.Ranges) != 4 || len(hist.Points) != 2 || hist.Points[0].CPU != 500 {
 		t.Fatalf("history = %s", out)
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	if gotAuth != "Bearer t0ken" || !strings.Contains(gotQuery, `pod=~"api-1"`) || !strings.Contains(gotQuery, `namespace="team-a"`) {
 		t.Fatalf("query %q auth %q", gotQuery, gotAuth)
 	}

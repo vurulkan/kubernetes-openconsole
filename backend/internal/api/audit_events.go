@@ -26,7 +26,7 @@ const refreshHeader = "X-OpenConsole-Refresh"
 // the caller set none. Everything else (cluster of non-Kubernetes targets,
 // details) is the caller's. The write happens in the background.
 func (s *Server) auditEvent(r *http.Request, e models.AuditLog) {
-	if r.Header.Get(refreshHeader) == "auto" && (e.Verb == audit.VerbList || e.Verb == audit.VerbGet) {
+	if r.Header.Get(refreshHeader) == "auto" && (e.Verb == audit.VerbList || e.Verb == audit.VerbGet || e.Verb == audit.VerbViewOverview) {
 		return
 	}
 	userID := 0

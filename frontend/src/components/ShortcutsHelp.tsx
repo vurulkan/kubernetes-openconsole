@@ -17,6 +17,7 @@ const GROUPS: Group[] = [
     { keys: ['Esc'], descKey: 'closeModal' },
   ]},
   { titleKey: 'navigate', rows: [
+    { keys: ['g', 'o'], descKey: 'goOverview' },
     { keys: ['g', 'd'], descKey: 'goDashboard' },
     { keys: ['g', 'a'], descKey: 'goAdmin' },
   ]},
@@ -55,6 +56,7 @@ const GROUPS: Group[] = [
   { titleKey: 'logs', rows: [
     { keys: ['p'], descKey: 'togglePause' },
     { keys: ['w'], descKey: 'toggleWrap' },
+    { keys: ['⌘', 'F'], descKey: 'findInLog' },
   ]},
   { titleKey: 'scale', rows: [
     { keys: ['↑', '↓'], descKey: 'replPlusMinus' },

@@ -53,7 +53,7 @@ type Props = {
   canEditSecrets: boolean;
   openDeploymentLogs: (ns: string, name: string) => void;
   openJobLogs: (ns: string, name: string) => void;
-  onExec: (name: string, containers: string[]) => void;
+  onExec: (pod: Record<string, unknown>, anchor: HTMLElement) => void;
   onRestart: (name: string) => void;
   onScale: (name: string, current: number) => void;
   onScaleStatefulSet: (name: string, current: number) => void;
@@ -207,9 +207,6 @@ export const ResourceListView: React.FC<Props> = ({
           width: canExecPods ? '140px' : '100px',
           cell: (it) => {
             const name = nameOf(it);
-            const containers = (((it.spec as any)?.containers as Array<{ name?: string }>) ?? [])
-              .map((c) => c.name)
-              .filter(Boolean) as string[];
             return (
               <div className="flex justify-end gap-1">
                 <IconButton label="Logs" onClick={() => openLogModal(selectedNamespace, name)}>
@@ -219,7 +216,7 @@ export const ResourceListView: React.FC<Props> = ({
                   <Activity size={13} />
                 </IconButton>
                 {canExecPods && (
-                  <IconButton label="Shell" onClick={() => onExec(name, containers)}>
+                  <IconButton label="Shell" onClick={(e) => onExec(it, e.currentTarget)}>
                     <Terminal size={13} />
                   </IconButton>
                 )}

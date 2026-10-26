@@ -24,6 +24,8 @@ import {
 import Layout from '../components/Layout';
 import LiveEventsPanel from '../components/LiveEventsPanel';
 import PodExecModal from '../components/PodExecModal';
+import { ContainerPicker } from '../components/ContainerPicker';
+import { LogViewer, type LogTarget } from '../components/LogViewer';
 import SecretModal from '../components/SecretModal';
 import { PodRestarts, PodStatusBadge, STATUS_DOT } from '../components/PodStatusBadge';
 import { podOwner, podStatus } from '../utils/podStatus';
@@ -36,7 +38,7 @@ import YamlEditModal, { YamlEditTarget } from '../components/YamlEditModal';
 import { useTheme } from '../components/ThemeProvider';
 import SavedViewsMenu from '../components/SavedViewsMenu';
 import { useTranslation } from 'react-i18next';
-import { Alert, Badge, Button, Input, Modal, Spinner, Toggle } from '../components/ui';
+import { Alert, Badge, Button, Input, Modal, Spinner } from '../components/ui';
 import { useScopedShortcuts } from '../hooks/useScopedShortcuts';
 import { EVENTS_PANEL_EVENT_NAME } from '../hooks/useGlobalShortcuts';
 import { formatAge } from '../utils/age';
@@ -151,11 +153,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   const [modalTitle, setModalTitle] = useState('');
   const [modalContent, setModalContent] = useState('');
   const [modalLoading, setModalLoading] = useState(false);
-  const [logPaused, setLogPaused] = useState(false);
-  const [autoScroll, setAutoScroll] = useState(false);
-  const [wordWrap, setWordWrap] = useState(false);
-  // Container whose previous (pre-restart) instance the pod log modal shows; null = live log.
-  const [logPrevious, setLogPrevious] = useState<string | null>(null);
+  const [logTarget, setLogTarget] = useState<(LogTarget & { namespace: string }) | null>(null);
   const [scaleTarget, setScaleTarget] = useState<{
     name: string;
     current: number;
@@ -177,10 +175,24 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   const canEditSecrets = (allowedResources.secrets ?? []).includes('edit');
   // Secret whose keys modal is open (null = closed).
   const [secretTarget, setSecretTarget] = useState<string | null>(null);
-  const [execTarget, setExecTarget] = useState<{ name: string; containers: string[] } | null>(null);
+  const [execTarget, setExecTarget] = useState<{ name: string; containers: string[]; container?: string } | null>(null);
+  // A pod with sidecars asks which container first, in a small menu under the Shell button.
+  const [shellPick, setShellPick] = useState<{ pod: Record<string, any>; anchor: HTMLElement } | null>(null);
+  const openShell = (pod: Record<string, any>, anchor: HTMLElement) => {
+    const containers: string[] = (pod.spec?.containers ?? []).map((c: { name: string }) => c.name);
+    if (containers.length > 1) setShellPick({ pod, anchor });
+    else setExecTarget({ name: pod.metadata?.name ?? '', containers, container: containers[0] });
+  };
   // Detail drawer. obj is a snapshot for objects not in the current tab (a pod opened from its deployment).
   const [detail, setDetail] = useState<{ kind: 'pods' | WorkloadKind; name: string; obj?: Record<string, any> } | null>(null);
   useEffect(() => setDetail(null), [selectedNamespace]);
+  // Admin → Overview opens a pod's drawer here; it stages the pod like a saved view stages its search.
+  const pendingPod = useRef(localStorage.getItem('dashboardPendingPod'));
+  useEffect(() => {
+    if (!pendingPod.current) return;
+    setDetail({ kind: 'pods', name: pendingPod.current });
+    localStorage.removeItem('dashboardPendingPod');
+  }, []);
   const detailObj = detail
     ? (activeTab === detail.kind ? items.find((it) => (it.metadata as { name?: string })?.name === detail.name) : undefined) ??
       detail.obj ??
@@ -230,6 +242,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
       return false;
     }
   });
+  const [eventsLive, setEventsLive] = useState(false);
   useEffect(() => {
     try {
       localStorage.setItem('dashboardEventsOpen', eventsOpen ? '1' : '0');
@@ -248,73 +261,11 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
     setTimeout(() => setActionNotice((v) => (v === msg ? null : v)), 4000);
   };
 
-  // One log stream at a time. A replaced or closed socket keeps firing events for a
-  // while (close / error arrive after the next stream started); only the current
-  // socket may write to the modal, so a switch never shows the old stream's end.
-  const streamLogs = (wsUrl: string) => {
-    const old = logSocketRef.current;
-    logSocketRef.current = null;
-    old?.close(1000);
-    const socket = new WebSocket(wsUrl);
-    const current = () => logSocketRef.current === socket;
-    socket.onopen = () => {
-      if (current()) setModalContent((prev) => (prev ? `${prev}\n` : '') + '[log stream connected]\n');
-    };
-    socket.onmessage = (event) => {
-      if (current() && !logPausedRef.current) setModalContent((prev) => `${prev}${event.data}`);
-    };
-    socket.onerror = () => {
-      if (current()) setModalContent((prev) => `${prev}\n[log stream error]\n`);
-    };
-    socket.onclose = (event) => {
-      if (current() && event.code !== 1000) setModalContent((prev) => `${prev}\n[log stream closed: ${event.code}]\n`);
-    };
-    logSocketRef.current = socket;
-  };
-
-  // Job "Logs" opens one WebSocket to the backend fan-out that follows every
-  // pod of the job (label-selected by job-name). Same visual as deployment
-  // logs; the modal title prefix drives the Reconnect handler.
-  const openJobLogs = (ns: string, jobName: string) => {
-    setModalOpen(true);
-    setModalTitle(`Job Logs - ${jobName}`);
-    setModalContent('');
-    setAutoScroll(true);
-    setLogPaused(false);
-
-    const token = localStorage.getItem('authToken') ?? '';
-    if (!token) {
-      setModalContent('[log stream error] Missing auth token.\n');
-      return;
-    }
-    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const wsUrl = `${protocol}://${window.location.host}/ws/namespaces/${ns}/jobs/${jobName}/logs?tail=100&token=${encodeURIComponent(token)}`;
-    streamLogs(wsUrl);
-  };
-
-  // Deployment "Logs" opens one WebSocket to a backend fan-out that follows
-  // every pod × container of the deployment and prefixes each line with
-  // `[pod/container]`, matching the behavior of
-  //    kubectl logs -f -l <selector> --all-containers --prefix
-  const openDeploymentLogs = (ns: string, deploymentName: string) => {
-    setModalOpen(true);
-    setModalTitle(`Deployment Logs - ${deploymentName}`);
-    setModalContent('');
-    setAutoScroll(true);
-    setLogPaused(false);
-
-    const token = localStorage.getItem('authToken') ?? '';
-    if (!token) {
-      setModalContent('[log stream error] Missing auth token.\n');
-      return;
-    }
-    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const wsUrl = `${protocol}://${window.location.host}/ws/namespaces/${ns}/deployments/${deploymentName}/logs?tail=100&token=${encodeURIComponent(token)}`;
-    streamLogs(wsUrl);
-  };
+  const openJobLogs = (namespace: string, name: string) => setLogTarget({ kind: 'jobs', namespace, name });
+  const openDeploymentLogs = (namespace: string, name: string) => setLogTarget({ kind: 'deployments', namespace, name });
+  const openLogModal = (namespace: string, name: string, previous?: string) =>
+    setLogTarget({ kind: 'pods', namespace, name, previous });
   const logContainerRef = React.useRef<HTMLPreElement | null>(null);
-  const logSocketRef = React.useRef<WebSocket | null>(null);
-  const logPausedRef = React.useRef(false);
 
   const orderedResources = useMemo(
     () => resourceOrder.filter((resource) => Object.keys(allowedResources).includes(resource)),
@@ -507,32 +458,6 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
     pendingSearch.current = null;
   }, [activeTab, selectedNamespace]);
 
-  // Log modal shortcuts: p toggles pause, w toggles word-wrap. Must run even
-  // though a modal is open, so we attach via a dedicated effect that only
-  // listens while the log modal is visible.
-  useEffect(() => {
-    const isLog =
-      modalOpen &&
-      (modalTitle.startsWith('Pod Logs') ||
-        modalTitle.startsWith('Deployment Logs') ||
-        modalTitle.startsWith('Job Logs'));
-    if (!isLog) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      const tgt = e.target as HTMLElement | null;
-      if (tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.isContentEditable)) return;
-      if (e.key === 'p' || e.key === 'P') {
-        e.preventDefault();
-        setLogPaused((v) => !v);
-      } else if (e.key === 'w' || e.key === 'W') {
-        e.preventDefault();
-        setWordWrap((v) => !v);
-      }
-    };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [modalOpen, modalTitle]);
-
   // ─── Page shortcuts ───────────────────────────────────────────────────────
   // [ / ] cycle resource tabs, r refresh, / focus the search box, n open the
   // command palette with the namespace list in view. Suspended while any
@@ -588,33 +513,8 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
     return () => clearInterval(interval);
   }, [activeTab, loadResources, selectedNamespace]);
 
-  useEffect(() => {
-    if (!logContainerRef.current) return;
-    if (autoScroll) {
-      logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
-    }
-  }, [modalContent, autoScroll]);
-
-  useEffect(() => {
-    if (!modalOpen || !logContainerRef.current) return;
-    if (modalTitle.startsWith('Pod Logs')) {
-      logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
-    }
-  }, [modalOpen, modalTitle]);
-
-  useEffect(() => {
-    logPausedRef.current = logPaused;
-  }, [logPaused]);
-
   const closeModal = () => {
     setModalOpen(false);
-    setLogPaused(false);
-    setAutoScroll(false);
-    setWordWrap(false);
-    if (logSocketRef.current) {
-      logSocketRef.current.close();
-      logSocketRef.current = null;
-    }
     setTimeout(() => {
       setModalTitle('');
       setModalContent('');
@@ -684,7 +584,6 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   const openConfigMapDataModal = async (namespace: string, name: string) => {
     setModalOpen(true);
     setModalTitle(`ConfigMap Data - ${name}`);
-    setAutoScroll(false);
     setModalLoading(true);
     setModalContent('');
     try {
@@ -695,28 +594,6 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
     } finally {
       setModalLoading(false);
     }
-  };
-
-  const connectLogs = (namespace: string, name: string, previousContainer?: string | null) => {
-    const token = localStorage.getItem('authToken') ?? '';
-    if (!token) {
-      setModalContent('[log stream error] Missing auth token.\n');
-      return;
-    }
-    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const previous = previousContainer ? `&previous=true&container=${encodeURIComponent(previousContainer)}` : '';
-    const wsUrl = `${protocol}://${window.location.host}/ws/namespaces/${namespace}/pods/${name}/logs?tail=100${previous}&token=${encodeURIComponent(token)}`;
-    streamLogs(wsUrl);
-  };
-
-  const openLogModal = (namespace: string, name: string, previousContainer?: string) => {
-    setModalOpen(true);
-    setModalTitle(`Pod Logs - ${name}`);
-    setModalContent('');
-    setAutoScroll(true);
-    setLogPaused(false);
-    setLogPrevious(previousContainer ?? null);
-    connectLogs(namespace, name, previousContainer);
   };
 
   const openEventsModal = async (type: 'pods' | 'deployments', namespace: string, name: string) => {
@@ -825,7 +702,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <Layout user={user} panel={namespacePanel} panelTitle="Namespaces">
+    <Layout user={user} panel={namespacePanel} panelTitle="Namespaces" liveEvents={{ open: eventsOpen, connected: eventsLive }}>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400">
@@ -1029,7 +906,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
             canEditSecrets={canEditSecrets}
             openDeploymentLogs={openDeploymentLogs}
             openJobLogs={openJobLogs}
-            onExec={(name, containers) => setExecTarget({ name, containers })}
+            onExec={openShell}
             onRestart={(name) => setRestartTarget(name)}
             onScale={(name, current) => {
               setScaleTarget({ name, current });
@@ -1369,16 +1246,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => {
-                            const containers = (
-                              (item.spec as {
-                                containers?: Array<{ name?: string }>;
-                              })?.containers ?? []
-                            )
-                              .map((c) => c.name)
-                              .filter(Boolean) as string[];
-                            setExecTarget({ name, containers });
-                          }}
+                          onClick={(e) => openShell(item, e.currentTarget)}
                         >
                           <Terminal size={13} />
                           {t('dashboard.actions.shell')}
@@ -1600,9 +1468,6 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
           const kind = modalTitle.slice(0, dashAt);
           const name = modalTitle.slice(dashAt + 3);
           const map: Record<string, string> = {
-            'Pod Logs': 'podLogs',
-            'Deployment Logs': 'deploymentLogs',
-            'Job Logs': 'jobLogs',
             'ConfigMap Data': 'configmapData',
             'PODS Events': 'podEvents',
             'DEPLOYMENTS Events': 'deploymentEvents',
@@ -1613,32 +1478,10 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
         onKeyDown={handleModalSelectAll}
         footer={
           <>
-            {modalTitle.startsWith('Pod Logs') ||
-            modalTitle.startsWith('Deployment Logs') ||
-            modalTitle.startsWith('Job Logs') ? (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  const name = modalTitle.split(' - ')[1] ?? '';
-                  if (modalTitle.startsWith('Deployment Logs')) {
-                    openDeploymentLogs(selectedNamespace ?? '', name);
-                  } else if (modalTitle.startsWith('Job Logs')) {
-                    openJobLogs(selectedNamespace ?? '', name);
-                  } else {
-                    connectLogs(selectedNamespace ?? '', name, logPrevious);
-                  }
-                }}
-              >
-                <RefreshCw size={14} />
-                Reconnect
-              </Button>
-            ) : (
-              <Button variant="outline" size="sm" onClick={refreshModal}>
-                <RefreshCw size={14} />
-                Refresh
-              </Button>
-            )}
+            <Button variant="outline" size="sm" onClick={refreshModal}>
+              <RefreshCw size={14} />
+              Refresh
+            </Button>
             <Button variant="primary" size="sm" onClick={closeModal}>
               Close
             </Button>
@@ -1651,54 +1494,29 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
           </div>
         ) : (
           <div className="flex h-full flex-col gap-3">
-            {(modalTitle.startsWith('Pod Logs') ||
-              modalTitle.startsWith('Deployment Logs') ||
-              modalTitle.startsWith('Job Logs')) && (
-              <div className="flex flex-wrap items-center gap-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 px-3 py-2">
-                <Toggle
-                  checked={!logPaused}
-                  onChange={(v) => setLogPaused(!v)}
-                  label={logPaused ? 'Paused' : 'Live'}
-                />
-                <Toggle checked={autoScroll} onChange={setAutoScroll} label="Auto-scroll" />
-                <Toggle checked={wordWrap} onChange={setWordWrap} label="Word wrap" />
-                {(() => {
-                  if (!modalTitle.startsWith('Pod Logs')) return null;
-                  const podName = modalTitle.split(' - ')[1] ?? '';
-                  const pod = items.find((it) => (it.metadata as { name?: string })?.name === podName);
-                  const crashed = pod && podStatus(pod).lastTermination;
-                  if (!crashed) return null;
-                  return (
-                    <Toggle
-                      checked={logPrevious !== null}
-                      onChange={(on) => {
-                        const container = on ? crashed.container : null;
-                        setLogPrevious(container);
-                        setModalContent('');
-                        connectLogs(selectedNamespace ?? '', podName, container);
-                      }}
-                      label={t('dashboard.podStatus.previousLog', { container: crashed.container })}
-                    />
-                  );
-                })()}
-                {!logPaused && logPrevious === null && (
-                  <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] text-emerald-600">
-                    <span className="h-1.5 w-1.5 animate-live rounded-full bg-emerald-500" />
-                    Streaming
-                  </span>
-                )}
-              </div>
-            )}
             <pre
               ref={logContainerRef}
               className="flex-1 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-4 font-mono text-xs leading-5 text-slate-100 shadow-inner"
-              style={{ whiteSpace: wordWrap ? 'pre-wrap' : 'pre' }}
+              style={{ whiteSpace: 'pre' }}
             >
               {modalContent || 'No data'}
             </pre>
           </div>
         )}
       </Modal>
+
+      <LogViewer
+        namespace={logTarget?.namespace ?? ''}
+        target={logTarget}
+        pod={
+          logTarget?.kind === 'pods'
+            ? [...(activeTab === 'pods' ? items : []), detailObj ?? {}].find(
+                (it) => (it.metadata as { name?: string } | undefined)?.name === logTarget.name,
+              )
+            : undefined
+        }
+        onClose={() => setLogTarget(null)}
+      />
 
       {detail?.kind === 'pods' && (
         <PodDrawer
@@ -1707,7 +1525,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
           canExec={canExecPods}
           onClose={() => setDetail(null)}
           onLogs={(name, previous) => openLogModal(selectedNamespace ?? '', name, previous)}
-          onShell={(name, containers) => setExecTarget({ name, containers })}
+          onShell={openShell}
           onYaml={(name) => openYamlModal('pods', selectedNamespace ?? '', name)}
           metrics={metrics}
           onOpenOwner={(kind, name) =>
@@ -1797,12 +1615,26 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
       />
 
       {/* ── Pod exec (shell) modal ─────────────────────────────────── */}
+      {shellPick && (
+        <ContainerPicker
+          pod={shellPick.pod}
+          anchor={shellPick.anchor}
+          onClose={() => setShellPick(null)}
+          onPick={(container) => {
+            const containers = (shellPick.pod.spec?.containers ?? []).map((c: { name: string }) => c.name);
+            setExecTarget({ name: shellPick.pod.metadata?.name ?? '', containers, container });
+            setShellPick(null);
+          }}
+        />
+      )}
       <PodExecModal
+        key={execTarget ? `${execTarget.name}/${execTarget.container}` : ''}
         open={execTarget !== null}
         onClose={() => setExecTarget(null)}
         namespace={selectedNamespace ?? ''}
         pod={execTarget?.name ?? ''}
         containers={execTarget?.containers ?? []}
+        container={execTarget?.container}
       />
 
       {/* ── Scale modal ───────────────────────────────────────────── */}
@@ -1925,8 +1757,8 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
       <LiveEventsPanel
         namespace={selectedNamespace}
         open={eventsOpen}
-        onToggle={() => setEventsOpen(true)}
         onClose={() => setEventsOpen(false)}
+        onConnectedChange={setEventsLive}
       />
 
       <YamlEditModal

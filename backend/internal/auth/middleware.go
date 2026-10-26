@@ -49,15 +49,23 @@ func AuthMiddleware(secret []byte, sessions SessionValidator) func(http.Handler)
 					token = parts[1]
 				}
 			}
-			if token == "" {
-				token = r.URL.Query().Get("token")
-			}
-			if token == "" {
-				w.WriteHeader(http.StatusUnauthorized)
-				return
-			}
-			claims, err := ParseToken(secret, token)
-			if err != nil {
+			var claims *Claims
+			if token != "" {
+				parsed, err := ParseToken(secret, token)
+				if err != nil {
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+				claims = parsed
+			} else if id := r.URL.Query().Get("ticket"); id != "" {
+				// WebSockets: the JWT never goes into a URL (see ticket.go).
+				redeemed, ok := RedeemTicket(id, r.URL.Path)
+				if !ok {
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+				claims = redeemed
+			} else {
 				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}

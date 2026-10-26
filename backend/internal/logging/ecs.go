@@ -200,7 +200,7 @@ func enrich(doc *object, msg string, raw map[string]any) {
 // auditEventTypes maps an audit verb to ECS event.type.
 var auditEventTypes = map[string]string{
 	"list": "access", "get": "access", "logs": "access", "view_yaml": "access",
-	"reveal": "access", "view": "access", "download": "access", "export": "access",
+	"reveal": "access", "view": "access", "view_overview": "access", "download": "access", "export": "access",
 	"restart": "change", "scale": "change", "apply": "change", "update": "change",
 	"share": "change", "select": "change", "activate": "change", "deactivate": "change",
 	"change_password": "change", "reset_password": "change",

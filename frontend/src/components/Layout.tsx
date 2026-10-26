@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { Github, Home, KeyRound, Keyboard, LogOut, Menu, Settings, ShieldCheck, X } from 'lucide-react';
+import { Gauge, Github, Home, KeyRound, Keyboard, LogOut, Menu, Radio, Settings, ShieldCheck, X } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button } from './ui';
 import { ThemeToggle } from './ThemeProvider';
 import ClusterSwitcher from './ClusterSwitcher';
 import LocaleSwitcher from './LocaleSwitcher';
-import { dispatchOpenShortcuts } from '../hooks/useGlobalShortcuts';
+import { dispatchOpenShortcuts, dispatchToggleEvents } from '../hooks/useGlobalShortcuts';
 import { getVersion, PROJECT_URL, User } from '../services/api';
 
 type Props = {
@@ -15,6 +15,8 @@ type Props = {
   panel?: React.ReactNode;
   /** Optional panel heading, shown above the panel content. */
   panelTitle?: string;
+  /** Pages with a Live Events panel get its toggle in the header (it toggles via `e` too). */
+  liveEvents?: { open: boolean; connected: boolean };
   children: React.ReactNode;
 };
 
@@ -27,6 +29,7 @@ type RailItem = {
 };
 
 const RAIL: RailItem[] = [
+  { key: 'overview', label: 'Overview', icon: Gauge, path: '/overview', adminOnly: true },
   { key: 'dashboard', label: 'Dashboard', icon: Home, path: '/' },
   { key: 'admin', label: 'Admin', icon: Settings, path: '/admin', adminOnly: true },
 ];
@@ -62,7 +65,7 @@ const LogoMark: React.FC<{ compact?: boolean }> = ({ compact = false }) => (
   </div>
 );
 
-const Layout: React.FC<Props> = ({ user, panel, panelTitle, children }) => {
+const Layout: React.FC<Props> = ({ user, panel, panelTitle, liveEvents, children }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -72,6 +75,7 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, children }) => {
     void getVersion().then(setVersion);
   }, []);
   const RAIL_LABELS: Record<string, string> = {
+    overview: t('nav.overview'),
     dashboard: t('nav.dashboard'),
     admin: t('nav.admin'),
   };
@@ -106,6 +110,28 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, children }) => {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
+          {liveEvents && (
+            <button
+              type="button"
+              onClick={() => dispatchToggleEvents()}
+              aria-pressed={liveEvents.open}
+              aria-label={t('dashboard.events.panelLabel')}
+              title={`${t('dashboard.events.panelLabel')} (e)`}
+              className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[10px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 ${
+                liveEvents.open
+                  ? 'border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-500/40 dark:bg-brand-500/15 dark:text-brand-200'
+                  : 'border-slate-200 bg-white/60 text-slate-500 hover:border-slate-300 hover:bg-slate-100 hover:text-slate-700 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200'
+              }`}
+            >
+              <span className="relative">
+                <Radio size={12} className="shrink-0" />
+                {liveEvents.open && liveEvents.connected && (
+                  <span className="absolute -right-1 -top-1 h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
+                )}
+              </span>
+              <span className="hidden md:inline">{t('dashboard.events.panelLabel')}</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={() => dispatchOpenShortcuts()}
@@ -227,7 +253,8 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, children }) => {
         </div>
       </aside>
 
-      {/* ── Section panel ──────────────────────────────────────────── */}
+      {/* ── Section panel (pages without one, e.g. Overview, use the full width) ── */}
+      {panel !== undefined && (
       <aside
         aria-label={panelTitle || t('nav.section')}
         className={`fixed bottom-0 left-[64px] top-14 z-40 hidden w-[240px] flex-col border-r border-slate-200 dark:border-slate-800/70 bg-white dark:bg-slate-900/80 backdrop-blur-sm lg:flex`}
@@ -241,6 +268,7 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, children }) => {
         )}
         <div className="scrollbar-thin flex-1 overflow-auto">{panel}</div>
       </aside>
+      )}
 
       {/* ── Mobile panel inside drawer ─────────────────────────────── */}
       {drawerOpen && panel && (
@@ -264,7 +292,7 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, children }) => {
       )}
 
       {/* ── Main content ───────────────────────────────────────────── */}
-      <main className="min-h-screen pt-14 pl-[64px] lg:pl-[304px]">
+      <main className={`min-h-screen pt-14 pl-[64px] ${panel !== undefined ? 'lg:pl-[304px]' : ''}`}>
         <div className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8">{children}</div>
       </main>
     </div>

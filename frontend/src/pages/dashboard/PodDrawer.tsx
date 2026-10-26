@@ -19,7 +19,7 @@ type Props = {
   canExec: boolean;
   onClose: () => void;
   onLogs: (name: string, previousContainer?: string) => void;
-  onShell: (name: string, containers: string[]) => void;
+  onShell: (pod: Item, anchor: HTMLElement) => void;
   onYaml: (name: string) => void;
   /** Opens the owning Deployment's / StatefulSet's / DaemonSet's drawer. */
   onOpenOwner: (kind: WorkloadKind, name: string) => void;
@@ -75,7 +75,6 @@ export const PodDrawer: React.FC<Props> = ({ pod, namespace, canExec, onClose, o
     ...(pod.spec?.containers ?? []),
   ];
   const statuses: Item[] = [...(pod.status?.initContainerStatuses ?? []), ...(pod.status?.containerStatuses ?? [])];
-  const containerNames = (pod.spec?.containers ?? []).map((c: Item) => c.name as string);
   const usage = metrics?.available ? metrics.items.find((p) => p.name === name) : undefined;
   const budget = podResources(pod.spec?.containers);
 
@@ -99,7 +98,7 @@ export const PodDrawer: React.FC<Props> = ({ pod, namespace, canExec, onClose, o
             </Button>
           )}
           {canExec && (
-            <Button variant="outline" size="sm" onClick={() => onShell(name, containerNames)}>
+            <Button variant="outline" size="sm" onClick={(e) => onShell(pod, e.currentTarget)}>
               <Terminal size={13} />
               {t('dashboard.actions.shell')}
             </Button>

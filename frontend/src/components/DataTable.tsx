@@ -364,7 +364,7 @@ export default DataTable;
 
 /** IconButton primitive for row actions (edit, delete, etc.). */
 export const IconButton: React.FC<{
-  onClick: () => void;
+  onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
   label: string;
   children: React.ReactNode;
   variant?: 'default' | 'danger';
@@ -373,7 +373,7 @@ export const IconButton: React.FC<{
     type="button"
     onClick={(e) => {
       e.stopPropagation();
-      onClick();
+      onClick(e);
     }}
     data-variant={variant}
     title={label}

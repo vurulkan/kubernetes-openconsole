@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"golang.org/x/time/rate"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -21,6 +23,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 
@@ -57,6 +60,10 @@ func newTestEnv(t *testing.T) *testEnv {
 	}
 	t.Cleanup(func() { closeAfterPendingWrites(database.Conn) })
 	resetGlobalLimiters()
+	// The fake clientset has no REST client for metrics.k8s.io.
+	fetchNodeUsage = func(context.Context, kubernetes.Interface) (map[string]kube.Usage, error) {
+		return nil, errors.New("no node metrics in tests")
+	}
 	st, err := store.New(database.Conn)
 	if err != nil {
 		t.Fatal(err)
@@ -307,7 +314,7 @@ func TestAdminEndpointsRequireAdmin(t *testing.T) {
 	adminGets := []string{
 		"/api/admin/users", "/api/admin/groups", "/api/admin/roles", "/api/admin/ldap",
 		"/api/admin/azure-ad", "/api/admin/clusters", "/api/admin/audit-logs",
-		"/api/admin/sessions", "/api/admin/recordings", "/api/admin/recordings/settings",
+		"/api/admin/sessions", "/api/admin/recordings", "/api/admin/recordings/settings", "/api/admin/overview",
 	}
 	for _, p := range adminGets {
 		e.expect("GET", p, bob, nil, http.StatusForbidden)
@@ -406,6 +413,84 @@ func TestExecRequiresPermission(t *testing.T) {
 	e.grant(bobID, [4]any{0, "team-a", "pods", "list"}, [4]any{0, "team-a", "pods", "get"})
 	e.expect("GET", "/ws/namespaces/team-a/pods/api-1/exec", bob, nil, http.StatusForbidden)
 	e.waitAudit("pod.exec.denied", "api-1")
+}
+
+// WebSocket URLs carry a single-use ticket bound to the path, never the JWT.
+func TestWSTicket(t *testing.T) {
+	e := newTestEnv(t)
+	_, admin := e.user("root", true)
+	e.expect("POST", "/api/ws-ticket", "", map[string]string{"path": "/ws/events"}, http.StatusUnauthorized)
+	e.expect("POST", "/api/ws-ticket", admin, map[string]string{"path": "/api/admin/users"}, http.StatusBadRequest)
+
+	path := "/ws/namespaces/team-a/pods/api-1/logs"
+	var out struct{ Ticket string }
+	_ = json.Unmarshal([]byte(e.expect("POST", "/api/ws-ticket", admin, map[string]string{"path": path}, http.StatusOK)), &out)
+	e.expect("GET", "/ws/namespaces/team-a/pods/api-2/logs?ticket="+out.Ticket, "", nil, http.StatusUnauthorized)
+	// The failed attempt above burned it.
+	e.expect("GET", path+"?ticket="+out.Ticket, "", nil, http.StatusUnauthorized)
+	e.expect("GET", path+"?token="+admin, "", nil, http.StatusUnauthorized)
+
+	_ = json.Unmarshal([]byte(e.expect("POST", "/api/ws-ticket", admin, map[string]string{"path": path}, http.StatusOK)), &out)
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(e.http.URL, "http")+path+"?container=app&ticket="+out.Ticket, nil)
+	if err != nil {
+		t.Fatalf("dial with ticket: %v", err)
+	}
+	conn.Close()
+	e.waitAudit("pod.logs.success", "api-1")
+}
+
+// The live events feed shows a non-admin only what they may list; an admin sees it all.
+func TestEventsFeedFollowsGrants(t *testing.T) {
+	e := newTestEnv(t)
+	_, admin := e.user("root", true)
+	bobID, bob := e.user("bob", false)
+	e.grant(bobID, [4]any{0, "team-a", "pods", "list"})
+
+	listen := func(token string) *websocket.Conn {
+		conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(e.http.URL, "http")+"/ws/events",
+			http.Header{"Authorization": {"Bearer " + token}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { conn.Close() })
+		return conn
+	}
+	bobConn, adminConn := listen(bob), listen(admin)
+	time.Sleep(100 * time.Millisecond) // both subscribed
+
+	events := []kube.ResourceEvent{
+		{Verb: "updated", Kind: "Pod", Namespace: "team-a", Name: "a-visible"},
+		{Verb: "updated", Kind: "Pod", Namespace: "team-b", Name: "other-ns"},
+		{Verb: "updated", Kind: "ConfigMap", Namespace: "team-a", Name: "no-configmap-grant"},
+		{Verb: "event", Kind: "Event", Namespace: "team-a", Name: "e1", InvolvedKind: "Pod", InvolvedName: "b-visible", Type: "Warning"},
+		{Verb: "event", Kind: "Event", Name: "e2", InvolvedKind: "Node", InvolvedName: "node-1"},
+		{Verb: "added", Kind: "Namespace", Name: "team-a"},
+		{Verb: "added", Kind: "Namespace", Name: "team-c"},
+	}
+	for _, ev := range events {
+		e.alpha.EventBus().Publish(ev)
+	}
+	read := func(conn *websocket.Conn) []string {
+		var names []string
+		_ = conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+		for {
+			var ev kube.ResourceEvent
+			if err := conn.ReadJSON(&ev); err != nil {
+				return names
+			}
+			if ev.Verb == "event" {
+				names = append(names, ev.InvolvedName)
+			} else {
+				names = append(names, ev.Name)
+			}
+		}
+	}
+	if got := strings.Join(read(bobConn), ","); got != "a-visible,b-visible,team-a" {
+		t.Fatalf("bob saw %s", got)
+	}
+	if got := read(adminConn); len(got) != len(events) {
+		t.Fatalf("admin saw %v", got)
+	}
 }
 
 // ─── Secrets ────────────────────────────────────────────────────────────────

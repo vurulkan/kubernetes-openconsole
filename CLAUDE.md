@@ -10,7 +10,7 @@ manual (long, read only the section you need); this file is for working on the c
 `backend/` (Go, chi, client-go, slog, modernc sqlite) — entry point `cmd/server`.
 | Path | What |
 |---|---|
-| `internal/api` | HTTP + WebSocket handlers. `router.go` holds the routes, `requirePermission`, most handlers; features split out (`workloads.go`, `deployment_actions.go`, `secrets.go`, `pod_exec.go`, `yaml_apply.go`, `clusters.go`, `views.go`, `exports.go`, …). `authz_test.go` = authorization suite |
+| `internal/api` | HTTP + WebSocket handlers. `router.go` holds the routes, `requirePermission`, most handlers; features split out (`workloads.go`, `deployment_actions.go`, `secrets.go`, `pod_exec.go`, `logs.go` (pod / deployment / job log sockets, JSON frames), `ws_ticket.go`, `overview.go` (admin overview, 15 s cache), `yaml_apply.go`, `clusters.go`, `views.go`, `exports.go`, …). `authz_test.go` = authorization suite |
 | `internal/audit` | audit events: `Verb*` constants, `DetailKeys` registry (`event.go`), DB + console mirror (`logger.go`), 2.16 legacy upgrade (`legacy.go`). Handlers call `s.auditEvent` / `s.auditRead` / `s.auditReadDenied` (`api/audit_events.go`) |
 | `internal/rbac` | permission engine (role → namespace / resource / action, cluster-scoped grants) |
 | `internal/auth` | local passwords + policy, JWT sessions, LDAP, Azure AD |
@@ -27,10 +27,11 @@ manual (long, read only the section you need); this file is for working on the c
 | Path | What |
 |---|---|
 | `src/pages/DashboardPage.tsx` | workloads screen (cards + table, tabs per kind); `pages/dashboard/ResourceListView.tsx` table columns; `PodDrawer` / `WorkloadDrawer` (Deployment, StatefulSet, DaemonSet; + `DetailParts`, `RestartHistory`) detail views |
+| `src/pages/OverviewPage.tsx` | admin overview (`/overview`, admins land here); charts in `pages/overview/Charts.tsx`, line chart = `components/Usage` `LineChart`. A page without a Layout `panel` gets the full width |
 | `src/pages/AdminPage.tsx` | admin shell + audit, clusters, LDAP, Azure; `pages/admin/*` users, groups, roles, sessions, recordings, `PrometheusSettings` |
-| `src/components` | `ui.tsx` (Button, Badge, …), `DataTable`, `Drawer`, `ConfirmDialog`, `Combobox`, modals, `CommandPalette`, `LiveEventsPanel`, `PodStatusBadge` (+ `PodRestarts`), `Usage` (meter + SVG line charts) |
+| `src/components` | `ui.tsx` (Button, Badge, …), `DataTable`, `Drawer`, `ConfirmDialog`, `Combobox`, modals, `CommandPalette`, `LiveEventsPanel`, `LogViewer` (+ `utils/logStream.ts`: reconnect / resume), `ContainerPicker` (shell: which container), `PodStatusBadge` (+ `PodRestarts`), `Usage` (meter + SVG line charts) |
 | `src/hooks` | global / scoped keyboard shortcuts, modal scopes |
-| `src/services/api.ts` | every API call |
+| `src/services/api.ts` | every API call; `wsUrl()` = WebSocket URL with a single-use ticket (never the JWT) |
 | `src/i18n.ts` | EN + TR dictionaries (one file) |
 | `src/utils` | `formatAge`, `formatBytes`, `formatDuration`, Kubernetes quantities (`parseCpu` / `parseMem` / `formatCpu` / `formatMem`); `podStatus.ts` = kubectl STATUS logic, last container termination, exit code hints, `podOwner` ("Deployment/web"); use it, don't re-derive pod health or ownership; `resources.ts` requests / limits sums |
 

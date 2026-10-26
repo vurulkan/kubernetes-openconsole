@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import i18n from '../i18n';
-import { exitCodeHint, podStatus, type PodLike } from './podStatus';
+import { exitCodeHint, mainContainer, podStatus, type PodLike } from './podStatus';
 
 const running = (name: string, extra: object = {}) => ({
   name,
@@ -203,5 +203,26 @@ describe('exitCodeHint', () => {
     for (const lng of ['en', 'tr']) {
       for (const key of keys) expect(i18n.exists(key, { lng }), `${lng}: ${key}`).toBe(true);
     }
+  });
+});
+
+describe('mainContainer', () => {
+  const pod = (names: string[], owner?: { kind: string; name: string }, extra: Record<string, unknown> = {}) => ({
+    metadata: { ownerReferences: owner ? [{ ...owner, controller: true }] : [], ...extra },
+    spec: { containers: names.map((name) => ({ name })) },
+  });
+  it('skips a sidecar that comes first (real cases from a cluster)', () => {
+    const rs = (d: string) => ({ kind: 'ReplicaSet', name: `${d}-7d4f9` });
+    const hash = { labels: { 'pod-template-hash': '7d4f9' } };
+    expect(mainContainer(pod(['filebeat', 'digital-planet-integration'], rs('digital-planet-integration-bk'), hash))).toBe('digital-planet-integration');
+    expect(mainContainer(pod(['metrics-server-vpa', 'metrics-server'], rs('metrics-server'), hash))).toBe('metrics-server');
+    expect(mainContainer(pod(['liveness-probe', 'node-driver-registrar', 'azuredisk'], { kind: 'DaemonSet', name: 'csi-azuredisk-node' }))).toBe('azuredisk');
+    expect(mainContainer(pod(['redis', 'sentinel', 'metrics'], { kind: 'StatefulSet', name: 'redis-main-node' }))).toBe('redis');
+  });
+  it('takes the annotation first, else the first container when nothing matches', () => {
+    expect(mainContainer(pod(['proxy', 'web'], undefined, { annotations: { 'kubectl.kubernetes.io/default-container': 'web' } }))).toBe('web');
+    expect(mainContainer(pod(['topic-operator', 'user-operator'], { kind: 'ReplicaSet', name: 'kafka-entity-operator-1' }))).toBe('topic-operator');
+    expect(mainContainer(pod(['istio-proxy', 'api'], undefined, { labels: { app: 'api' } }))).toBe('api');
+    expect(mainContainer({})).toBe('');
   });
 });

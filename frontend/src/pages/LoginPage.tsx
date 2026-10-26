@@ -44,7 +44,7 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
       if (result.user.mustChangePassword) {
         navigate('/change-password');
       } else {
-        navigate('/');
+        navigate(result.user.isAdmin ? '/overview' : '/');
       }
     } catch (err) {
       setError(azureEnabled ? `${t('login.failed')} ${t('login.failedAzureHint')}` : t('login.failed'));

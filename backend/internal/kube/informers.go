@@ -2,10 +2,13 @@ package kube
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	appslisters "k8s.io/client-go/listers/apps/v1"
 	autoscalinglisters "k8s.io/client-go/listers/autoscaling/v2"
 	batchlisters "k8s.io/client-go/listers/batch/v1"
@@ -124,6 +127,10 @@ type InformerCache struct {
 	cronjobLister     batchlisters.CronJobLister
 	jobLister         batchlisters.JobLister
 	namespaceLister   corelisters.NamespaceLister
+	eventLister       corelisters.EventLister
+
+	countsMu sync.RWMutex
+	counts   []CountPoint // every 5 min, the last 24 h
 }
 
 func newInformerCache(client kubernetes.Interface, bus *EventBus, onTermination func(models.ContainerTermination)) *InformerCache {
@@ -159,6 +166,7 @@ func newInformerCache(client kubernetes.Interface, bus *EventBus, onTermination 
 	nsInf := factory.Core().V1().Namespaces()
 	ic.namespaceLister = nsInf.Lister()
 	evInf := factory.Core().V1().Events()
+	ic.eventLister = evInf.Lister()
 
 	attach := func(inf cache.SharedIndexInformer, kind string) {
 		inf.AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -208,31 +216,41 @@ func newInformerCache(client kubernetes.Interface, bus *EventBus, onTermination 
 	attach(nsInf.Informer(), "Namespace")
 
 	// Native K8s Events — carry Reason/Message/Type that the UI shows verbatim.
+	// A repeating event (a failing probe) is one object whose count goes up: each
+	// bump is published too, like `kubectl get events -w`; resyncs (same version) are not.
+	publishEvent := func(obj any) {
+		e, ok := obj.(*corev1.Event)
+		if !ok {
+			return
+		}
+		ic.bus.Publish(ResourceEvent{
+			Verb:         "event",
+			Kind:         "Event",
+			Namespace:    e.Namespace,
+			Name:         e.Name,
+			At:           EventTime(e),
+			Reason:       e.Reason,
+			Message:      e.Message,
+			Type:         e.Type,
+			InvolvedKind: e.InvolvedObject.Kind,
+			InvolvedName: e.InvolvedObject.Name,
+		})
+	}
 	evInf.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj any) {
-			e, ok := obj.(*corev1.Event)
-			if !ok {
+		AddFunc: publishEvent,
+		UpdateFunc: func(old, cur any) {
+			if o, ok := old.(*corev1.Event); ok && o.ResourceVersion == cur.(*corev1.Event).ResourceVersion {
 				return
 			}
-			ic.bus.Publish(ResourceEvent{
-				Verb:         "event",
-				Kind:         "Event",
-				Namespace:    e.Namespace,
-				Name:         e.Name,
-				At:           eventTime(e),
-				Reason:       e.Reason,
-				Message:      e.Message,
-				Type:         e.Type,
-				InvolvedKind: e.InvolvedObject.Kind,
-				InvolvedName: e.InvolvedObject.Name,
-			})
+			publishEvent(cur)
 		},
 	})
 
 	return ic
 }
 
-func eventTime(e *corev1.Event) time.Time {
+// EventTime is when an event last happened (Kubernetes fills one of three fields).
+func EventTime(e *corev1.Event) time.Time {
 	if !e.LastTimestamp.IsZero() {
 		return e.LastTimestamp.Time
 	}
@@ -268,6 +286,107 @@ func (c *InformerCache) start(ctx context.Context) {
 	c.syncedMu.Lock()
 	c.synced = true
 	c.syncedMu.Unlock()
+	go c.sampleCounts()
+}
+
+// CountPoint is the cluster's pod and deployment health at one moment (overview sparklines).
+type CountPoint struct {
+	T             int64 `json:"t"`
+	PodsRunning   int   `json:"podsRunning"`
+	Pods          int   `json:"pods"`
+	PodsAttention int   `json:"podsAttention"`
+	DeploysReady  int   `json:"deploysReady"`
+	Deploys       int   `json:"deploys"`
+}
+
+// PodNeedsAttention is true for a pod that the UI's status logic (frontend utils/podStatus.ts)
+// may paint red or amber: anything but a running pod with every container ready, or a finished one.
+// The UI classifies these candidates; this side only narrows 700 pods down to them.
+func PodNeedsAttention(p *corev1.Pod) bool {
+	if p.DeletionTimestamp != nil {
+		return true
+	}
+	switch p.Status.Phase {
+	case corev1.PodSucceeded:
+		return false
+	case corev1.PodRunning:
+		for _, c := range p.Status.ContainerStatuses {
+			if !c.Ready {
+				return true
+			}
+		}
+		return len(p.Status.ContainerStatuses) == 0
+	}
+	return true
+}
+
+// DeploymentReady: every desired replica is ready.
+func DeploymentReady(d *appsv1.Deployment) bool {
+	want := int32(1)
+	if d.Spec.Replicas != nil {
+		want = *d.Spec.Replicas
+	}
+	return d.Status.ReadyReplicas >= want
+}
+
+// CountsOf summarizes pods and deployments at time t.
+func CountsOf(t int64, pods []*corev1.Pod, deploys []*appsv1.Deployment) CountPoint {
+	cp := CountPoint{T: t, Pods: len(pods), Deploys: len(deploys)}
+	for _, p := range pods {
+		if p.Status.Phase == corev1.PodRunning {
+			cp.PodsRunning++
+		}
+		if PodNeedsAttention(p) {
+			cp.PodsAttention++
+		}
+	}
+	for _, d := range deploys {
+		if DeploymentReady(d) {
+			cp.DeploysReady++
+		}
+	}
+	return cp
+}
+
+func (c *InformerCache) sampleCounts() {
+	t := time.NewTicker(5 * time.Minute)
+	defer t.Stop()
+	for {
+		pods, _ := c.podLister.List(labels.Everything())
+		deploys, _ := c.deploymentLister.List(labels.Everything())
+		cp := CountsOf(time.Now().Unix(), pods, deploys)
+		c.countsMu.Lock()
+		c.counts = append(c.counts, cp)
+		if len(c.counts) > 288 {
+			c.counts = c.counts[len(c.counts)-288:]
+		}
+		c.countsMu.Unlock()
+		select {
+		case <-c.stop:
+			return
+		case <-t.C:
+		}
+	}
+}
+
+// CountHistory is the last 24 h of CountsOf, every 5 minutes since the cache started.
+func (c *InformerCache) CountHistory() []CountPoint {
+	c.countsMu.RLock()
+	defer c.countsMu.RUnlock()
+	return append([]CountPoint(nil), c.counts...)
+}
+
+// WarningEvents lists Warning events seen since (newest first) from the cache.
+func (c *InformerCache) WarningEvents(since time.Time) []corev1.Event {
+	evs, _ := c.eventLister.List(labels.Everything())
+	out := []corev1.Event{}
+	for _, e := range evs {
+		if e.Type == corev1.EventTypeWarning && !EventTime(e).Before(since) {
+			out = append(out, *e)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return EventTime(&out[i]).After(EventTime(&out[j])) })
+	return out
 }
 
 func (c *InformerCache) stopAll() {

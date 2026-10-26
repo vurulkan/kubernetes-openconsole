@@ -177,6 +177,33 @@ export function podOwner(pod: {
   return `${ref.kind}/${ref.name}`;
 }
 
+/**
+ * The container a pod's log opens on: the kubectl.kubernetes.io/default-container annotation, else the
+ * one named after the workload (a log shipper or proxy often comes first, e.g. [filebeat,
+ * digital-planet-integration] in Deployment digital-planet-integration-bk), else the first.
+ */
+export function mainContainer(pod: {
+  metadata?: {
+    annotations?: Record<string, string>;
+    labels?: Record<string, string>;
+    ownerReferences?: Array<{ kind?: string; name?: string; controller?: boolean }>;
+  };
+  spec?: { containers?: Array<{ name: string }> };
+}): string {
+  const names = pod.spec?.containers?.map((c) => c.name) ?? [];
+  const annotated = pod.metadata?.annotations?.['kubectl.kubernetes.io/default-container'];
+  if (annotated && names.includes(annotated)) return annotated;
+  const labels = pod.metadata?.labels ?? {};
+  const workload = [podOwner(pod)?.split('/')[1], labels['app.kubernetes.io/name'], labels.app].filter((w): w is string => !!w);
+  const score = (n: string) =>
+    Math.max(0, ...workload.map((w) => (n === w ? 3 : w.startsWith(n) || n.startsWith(w) ? 2 : n.length >= 3 && w.includes(n) ? 1 : 0)));
+  let best = names[0] ?? '';
+  names.forEach((n) => {
+    if (score(n) > score(best)) best = n;
+  });
+  return best;
+}
+
 /** "1 (Error)", "137 (OOMKilled)": the code first, so "1 Error" can't read as "one error". */
 export function exitLabel(t: { exitCode: number; reason?: string }): string {
   return `${t.exitCode}${t.reason ? ` (${t.reason})` : ''}`;

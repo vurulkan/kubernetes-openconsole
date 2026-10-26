@@ -38,6 +38,7 @@ const (
 	VerbResetPassword  = "reset_password"
 	VerbEvict          = "evict"
 	VerbPurge          = "purge"
+	VerbViewOverview   = "view_overview"
 )
 
 // Verbs lists every verb, for validation and the Admin → Audit filter.
@@ -46,7 +47,7 @@ var Verbs = []string{
 	VerbViewYAML, VerbReveal, VerbView, VerbDownload, VerbCreate, VerbUpdate,
 	VerbDelete, VerbShare, VerbSelect, VerbActivate, VerbDeactivate, VerbRevoke,
 	VerbExport, VerbImport, VerbLogin, VerbChangePassword, VerbResetPassword,
-	VerbEvict, VerbPurge,
+	VerbEvict, VerbPurge, VerbViewOverview,
 }
 
 // Outcomes: how it ended.

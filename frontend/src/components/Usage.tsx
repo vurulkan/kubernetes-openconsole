@@ -82,12 +82,14 @@ const clock = (t: number) =>
   new Date(t * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
 /** One series over time with an optional dashed limit line; crosshair + tooltip on hover / arrow keys. */
-const LineChart: React.FC<{ kind: Kind; title: string; points: Array<{ t: number; v: number }>; limit?: number }> = ({
-  kind,
-  title,
-  points,
-  limit,
-}) => {
+export const LineChart: React.FC<{
+  kind: Kind;
+  title: string;
+  points: Array<{ t: number; v: number }>;
+  limit?: number;
+  /** Text before the limit value; "limit" by default ("allocatable" on the overview). */
+  limitLabel?: string;
+}> = ({ kind, title, points, limit, limitLabel }) => {
   const { t } = useTranslation();
   const [hover, setHover] = useState<number | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -153,7 +155,7 @@ const LineChart: React.FC<{ kind: Kind; title: string; points: Array<{ t: number
             <g>
               <line x1={PAD.l} x2={W - PAD.r} y1={y(limit)} y2={y(limit)} className="stroke-slate-500 dark:stroke-slate-400" strokeWidth={1} strokeDasharray="4 3" />
               <text x={W - PAD.r} y={y(limit) - 3} textAnchor="end" className="fill-slate-500 dark:fill-slate-400" fontSize={10}>
-                {t('dashboard.usage.limit')} {fmt(kind, limit)}
+                {limitLabel ?? t('dashboard.usage.limit')} {fmt(kind, limit)}
               </text>
             </g>
           )}

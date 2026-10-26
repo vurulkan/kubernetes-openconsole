@@ -74,9 +74,14 @@ rules:
     resources: [replicasets]
     verbs: [get, list]
 
-  # Pod CPU / memory (metrics-server), sampled every 30 s.
+  # Pod CPU / memory (metrics-server), sampled every 30 s; node usage for Admin → Overview.
   - apiGroups: [metrics.k8s.io]
-    resources: [pods]
+    resources: [pods, nodes]
+    verbs: [get, list]
+
+  # Admin → Overview: node count, allocatable CPU / memory and the node strip.
+  - apiGroups: [""]
+    resources: [nodes]
     verbs: [get, list]
 
   # Optional: Prometheus "in the cluster (API server proxy)" mode (Admin →

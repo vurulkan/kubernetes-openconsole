@@ -110,6 +110,7 @@ func (s *Server) handlePutPrometheus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.prom.Delete(id)
+	s.overviewHistory.Delete(id)
 	name, _ := s.store.GetClusterName(r.Context(), id)
 	s.auditEvent(r, models.AuditLog{
 		Verb:         audit.VerbUpdate,

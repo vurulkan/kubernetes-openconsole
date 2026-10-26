@@ -1,5 +1,7 @@
 # Throwaway k3d fixtures: pods that fail on purpose (OOM, exit 1 with a sidecar, liveness kill,
-# bad image, missing ConfigMap, failing init container, unschedulable, completed job), a healthy
+# bad image, missing ConfigMap, failing init container, unschedulable, completed job, a chatty
+# container that exits every 15 s for log-follow checks), a Deployment whose sidecar comes
+# first (log-shipper before web, which logs and shells should default to), a healthy
 # Deployment, StatefulSets (healthy + crashing) and a DaemonSet. Never apply to a real cluster.
 apiVersion: v1
 kind: Namespace
@@ -39,6 +41,29 @@ spec:
       containers:
       - {name: app, image: busybox:1.36, command: [sh, -c, 'echo starting; echo "fatal: config missing" >&2; exit 1']}
       - {name: sidecar, image: busybox:1.36, command: [sh, -c, 'while true; do sleep 30; done']}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: flappy, namespace: crashlab}
+spec:
+  selector: {matchLabels: {app: flappy}}
+  template:
+    metadata: {labels: {app: flappy}}
+    spec:
+      containers:
+      - {name: app, image: busybox:1.36, command: [sh, -c, 'for i in $(seq 1 60); do echo "line $i $(date +%T)"; sleep 0.25; done; exit 1']}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: web, namespace: crashlab}
+spec:
+  selector: {matchLabels: {app: web}}
+  template:
+    metadata: {labels: {app: web}}
+    spec:
+      containers:
+      - {name: log-shipper, image: busybox:1.36, command: [sh, -c, 'while true; do echo shipping; sleep 10; done']}
+      - {name: web, image: busybox:1.36, command: [sh, -c, 'while true; do echo serving; sleep 5; done']}
 ---
 apiVersion: apps/v1
 kind: Deployment

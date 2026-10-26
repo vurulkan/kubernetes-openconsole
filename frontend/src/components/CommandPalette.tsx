@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Boxes, Home, Search, Settings, ShieldCheck } from 'lucide-react';
+import { Boxes, Gauge, Home, Search, Settings, ShieldCheck } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { User } from '../services/api';
 import { useTheme } from './ThemeProvider';
@@ -91,6 +91,13 @@ export const CommandPalette: React.FC<Props> = ({ user, namespaces, onPickNamesp
       },
     ];
     if (user.isAdmin) {
+      navs.unshift({
+        id: 'nav:overview',
+        label: 'Go to Overview',
+        kind: 'nav',
+        icon: Gauge,
+        onRun: () => navigate('/overview'),
+      });
       navs.push({
         id: 'nav:admin',
         label: 'Go to Admin',

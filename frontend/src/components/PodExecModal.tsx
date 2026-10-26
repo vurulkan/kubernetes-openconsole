@@ -6,6 +6,7 @@ import { CircleDot, RefreshCw, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button, NativeSelect, Spinner } from './ui';
 import { useTheme } from './ThemeProvider';
+import { wsUrl } from '../services/api';
 
 type Props = {
   open: boolean;
@@ -13,6 +14,8 @@ type Props = {
   namespace: string;
   pod: string;
   containers?: string[];
+  /** The container picked under the Shell button; else the first. */
+  container?: string;
 };
 
 const SHELLS: Array<{ value: string; label: string }> = [
@@ -35,16 +38,17 @@ const darkTheme = {
   selectionBackground: 'rgba(99,102,241,0.35)',
 };
 
-const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containers = [] }) => {
+const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containers = [], container: initialContainer }) => {
   const { t } = useTranslation();
   const terminalRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
+  const connectSeq = useRef(0);
   const containerSetRef = useRef<string>('');
 
   const [status, setStatus] = useState<'idle' | 'connecting' | 'open' | 'closed' | 'error'>('idle');
-  const [container, setContainer] = useState<string>(containers[0] ?? '');
+  const [container, setContainer] = useState<string>(initialContainer ?? containers[0] ?? '');
   const [shell, setShell] = useState<string>('auto');
   const [note, setNote] = useState<string | null>(null);
   // Set when the server confirms this session is being recorded (it sends a
@@ -60,7 +64,7 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
 
   const theme = effective === 'dark' ? darkTheme : lightTheme;
 
-  const connect = useCallback(() => {
+  const connect = useCallback(async () => {
     if (!terminalRef.current) return;
     if (socketRef.current) {
       socketRef.current.close();
@@ -98,16 +102,23 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
       });
     }
 
-    const token = localStorage.getItem('authToken') ?? '';
-    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const params = new URLSearchParams();
     if (container) params.set('container', container);
     if (shell) params.set('command', shell);
     // Seeds the recording header size; the first resize frame refines it.
     params.set('cols', String(Math.max(termRef.current?.cols ?? 0, 80)));
     params.set('rows', String(Math.max(termRef.current?.rows ?? 0, 24)));
-    params.set('token', token);
-    const url = `${protocol}://${window.location.host}/ws/namespaces/${namespace}/pods/${pod}/exec?${params.toString()}`;
+    const attempt = ++connectSeq.current;
+    let url: string;
+    try {
+      url = await wsUrl(`/ws/namespaces/${namespace}/pods/${pod}/exec`, params);
+    } catch {
+      setStatus('error');
+      setNote(t('podExec.connectionError'));
+      return;
+    }
+    // Closed or reconnected while the ticket was on its way.
+    if (attempt !== connectSeq.current) return;
     const socket = new WebSocket(url);
     socket.binaryType = 'arraybuffer';
     socketRef.current = socket;
@@ -264,9 +275,20 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
     return () => observer.disconnect();
   }, [open]);
 
+  // Unmount closes the session too: the page remounts this modal for each pod / container.
+  useEffect(
+    () => () => {
+      connectSeq.current++;
+      socketRef.current?.close();
+      termRef.current?.dispose();
+    },
+    [],
+  );
+
   // Cleanup on close
   useEffect(() => {
     if (open) return;
+    connectSeq.current++;
     socketRef.current?.close();
     socketRef.current = null;
     termRef.current?.dispose();
@@ -359,7 +381,7 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
             <Button
               variant="outline"
               size="sm"
-              onClick={() => connect()}
+              onClick={() => void connect()}
               disabled={status === 'connecting'}
             >
               <RefreshCw size={13} />

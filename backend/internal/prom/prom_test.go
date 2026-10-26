@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -44,7 +45,8 @@ func TestSelectorAndRegex(t *testing.T) {
 }
 
 func TestHistoryURLModeWithAuthAndHeaders(t *testing.T) {
-	var queries []string
+	var mu sync.Mutex
+	var queries []string // CPU and memory are asked at once
 	srv := fakeProm(t, func(r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer tok" || r.Header.Get("X-Scope-OrgID") != "team" {
 			t.Errorf("headers = %v", r.Header)
@@ -53,7 +55,9 @@ func TestHistoryURLModeWithAuthAndHeaders(t *testing.T) {
 			t.Errorf("path = %s (the URL's path prefix must be kept)", r.URL.Path)
 		}
 	}, func(path, q string) any {
+		mu.Lock()
 		queries = append(queries, q)
+		mu.Unlock()
 		v := "0.25" // cores
 		if strings.Contains(q, "memory") {
 			v = "1048576"
@@ -74,8 +78,12 @@ func TestHistoryURLModeWithAuthAndHeaders(t *testing.T) {
 	if len(pts) != 2 || pts[0].CPU != 250 || pts[0].Mem != 1<<20 {
 		t.Fatalf("points = %+v", pts)
 	}
-	if !strings.Contains(queries[0], "[480s]") || !strings.Contains(queries[0], "max by (namespace, pod, container)") {
-		t.Fatalf("cpu query = %s (6h step 2m → 8m window, max by against double scrapes)", queries[0])
+	cpuQ := queries[0]
+	if strings.Contains(cpuQ, "memory") {
+		cpuQ = queries[1]
+	}
+	if !strings.Contains(cpuQ, "[480s]") || !strings.Contains(cpuQ, "max by (namespace, pod, container)") {
+		t.Fatalf("cpu query = %s (6h step 2m → 8m window, max by against double scrapes)", cpuQ)
 	}
 }
 

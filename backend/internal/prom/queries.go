@@ -36,10 +36,15 @@ func quote(s string) string {
 }
 
 // Selector builds the label matchers for container series of the given pods.
-// podRegex is an RE2 pattern (anchored by Prometheus).
+// podRegex is an RE2 pattern (anchored by Prometheus). An empty namespace means every
+// namespace (the whole cluster).
 func (c *Client) selector(namespace, podRegex string) string {
+	ns := "namespace=" + quote(namespace)
+	if namespace == "" {
+		ns = `namespace!=""`
+	}
 	m := []string{
-		"namespace=" + quote(namespace),
+		ns,
 		"pod=~" + quote(podRegex),
 		`container!=""`,
 		`container!="POD"`,
@@ -90,13 +95,21 @@ func (c *Client) History(ctx context.Context, namespace, podRegex, rng string, n
 	cpuQ := fmt.Sprintf("sum(max by (namespace, pod, container) (rate(container_cpu_usage_seconds_total%s[%s])))", sel, window(r.Step))
 	memQ := fmt.Sprintf("sum(max by (namespace, pod, container) (container_memory_working_set_bytes%s))", sel)
 	start := now.Add(-r.Span)
+	// Both at once: a cluster-wide 24 h range takes seconds each.
+	var mem [][]Sample
+	var memErr error
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		mem, memErr = c.QueryRange(ctx, memQ, start, now, r.Step)
+	}()
 	cpu, err := c.QueryRange(ctx, cpuQ, start, now, r.Step)
+	<-done
 	if err != nil {
 		return nil, err
 	}
-	mem, err := c.QueryRange(ctx, memQ, start, now, r.Step)
-	if err != nil {
-		return nil, err
+	if memErr != nil {
+		return nil, memErr
 	}
 	byT := map[int64]*Point{}
 	at := func(t int64) *Point {

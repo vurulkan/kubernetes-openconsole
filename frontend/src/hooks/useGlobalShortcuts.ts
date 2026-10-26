@@ -104,6 +104,12 @@ export const useGlobalShortcuts = ({ isAdmin, setTheme }: Options) => {
           resetPending();
           return;
         }
+        if (key === 'o' && isAdmin) {
+          e.preventDefault();
+          navigate('/overview');
+          resetPending();
+          return;
+        }
         resetPending();
         return;
       }

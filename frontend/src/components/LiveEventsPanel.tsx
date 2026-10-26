@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, Pause, Play, Radio, Trash2, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from './ui';
+import { wsUrl } from '../services/api';
 
 export type LiveEvent = {
   verb: string;
@@ -18,10 +19,13 @@ export type LiveEvent = {
 
 type Props = {
   namespace: string | null;
-  /** When false, panel renders only the floating toggle button. */
+  /** Opened from the header button (Layout liveEvents), `e`, or the page. */
   open: boolean;
-  onToggle: () => void;
   onClose: () => void;
+  /** The filter the panel starts with (the Overview opens on warnings). */
+  initialFilter?: 'all' | 'events' | 'warnings';
+  /** The header button shows the stream is live. */
+  onConnectedChange?: (connected: boolean) => void;
 };
 
 const MAX_EVENTS = 200;
@@ -32,18 +36,21 @@ const MAX_EVENTS = 200;
  * in memory. Pause stops appending without dropping the socket, so unpause
  * resumes with the live stream.
  */
-const LiveEventsPanel: React.FC<Props> = ({ namespace, open, onToggle, onClose }) => {
+const LiveEventsPanel: React.FC<Props> = ({ namespace, open, onClose, initialFilter = 'all', onConnectedChange }) => {
   const { t } = useTranslation();
   const [events, setEvents] = useState<LiveEvent[]>([]);
   const [connected, setConnected] = useState(false);
   const [paused, setPaused] = useState(false);
-  const [filter, setFilter] = useState<'all' | 'events' | 'warnings'>('all');
+  const [filter, setFilter] = useState<'all' | 'events' | 'warnings'>(initialFilter);
   const pausedRef = useRef(paused);
   const socketRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     pausedRef.current = paused;
   }, [paused]);
+  useEffect(() => {
+    onConnectedChange?.(connected);
+  }, [connected, onConnectedChange]);
 
   // ESC closes the panel when it's open. Scoped to document; skipped while
   // typing in an input so filter boxes elsewhere don't lose their escape.
@@ -70,30 +77,34 @@ const LiveEventsPanel: React.FC<Props> = ({ namespace, open, onToggle, onClose }
       setConnected(false);
       return;
     }
-    const token = localStorage.getItem('authToken') ?? '';
-    if (!token) return;
-    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const ns = namespace ?? '';
-    const url = `${protocol}://${window.location.host}/ws/events?namespace=${encodeURIComponent(ns)}&token=${encodeURIComponent(token)}`;
-    const ws = new WebSocket(url);
-    socketRef.current = ws;
-    ws.onopen = () => setConnected(true);
-    ws.onclose = () => setConnected(false);
-    ws.onerror = () => setConnected(false);
-    ws.onmessage = (msg) => {
-      if (pausedRef.current) return;
-      try {
-        const ev = JSON.parse(msg.data) as LiveEvent;
-        setEvents((prev) => {
-          const next = [ev, ...prev];
-          return next.length > MAX_EVENTS ? next.slice(0, MAX_EVENTS) : next;
-        });
-      } catch {
-        /* ignore malformed */
-      }
-    };
+    let ws: WebSocket | null = null;
+    let cancelled = false;
+    void wsUrl('/ws/events', new URLSearchParams({ namespace: namespace ?? '' }))
+      .then((url) => {
+        if (cancelled) return;
+        const socket = new WebSocket(url);
+        ws = socket;
+        socketRef.current = socket;
+        socket.onopen = () => setConnected(true);
+        socket.onclose = () => setConnected(false);
+        socket.onerror = () => setConnected(false);
+        socket.onmessage = (msg) => {
+          if (pausedRef.current) return;
+          try {
+            const ev = JSON.parse(msg.data) as LiveEvent;
+            setEvents((prev) => {
+              const next = [ev, ...prev];
+              return next.length > MAX_EVENTS ? next.slice(0, MAX_EVENTS) : next;
+            });
+          } catch {
+            /* ignore malformed */
+          }
+        };
+      })
+      .catch(() => setConnected(false));
     return () => {
-      ws.close();
+      cancelled = true;
+      ws?.close();
       socketRef.current = null;
       setConnected(false);
     };
@@ -105,23 +116,11 @@ const LiveEventsPanel: React.FC<Props> = ({ namespace, open, onToggle, onClose }
     return events.filter((e) => e.verb === 'event' && e.type === 'Warning');
   }, [events, filter]);
 
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={onToggle}
-        className="fixed bottom-6 right-6 z-30 flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-xs font-medium text-slate-700 shadow-lg transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
-        title={t('dashboard.events.panelLabel')}
-      >
-        <Radio size={14} className="text-brand-500" />
-        {t('dashboard.events.panelLabel')}
-      </button>
-    );
-  }
+  if (!open) return null;
 
   return (
     <aside
-      className="fixed right-0 top-0 bottom-0 z-40 flex w-96 flex-col border-l border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900"
+      className="fixed right-0 top-14 bottom-0 z-40 flex w-full sm:w-96 flex-col border-l border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900"
       aria-label="Live events"
     >
       <header className="flex items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-slate-800">
@@ -156,6 +155,7 @@ const LiveEventsPanel: React.FC<Props> = ({ namespace, open, onToggle, onClose }
             <button
               key={k}
               type="button"
+              aria-pressed={filter === k}
               onClick={() => setFilter(k)}
               className={`rounded-md px-2 py-1 text-[11px] font-medium transition ${
                 filter === k

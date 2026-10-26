@@ -5,6 +5,7 @@ import LoginPage from './pages/LoginPage';
 import ChangePasswordPage from './pages/ChangePasswordPage';
 import DashboardPage from './pages/DashboardPage';
 import AdminPage from './pages/AdminPage';
+import OverviewPage from './pages/OverviewPage';
 import CommandPalette from './components/CommandPalette';
 import ShortcutsHelp from './components/ShortcutsHelp';
 import { ConfirmProvider } from './components/ConfirmDialog';
@@ -64,6 +65,10 @@ const App: React.FC = () => {
         <Route
           path="/"
           element={user ? <DashboardPage user={user} /> : <Navigate to="/login" />}
+        />
+        <Route
+          path="/overview"
+          element={user ? user.isAdmin ? <OverviewPage user={user} /> : <Navigate to="/" /> : <Navigate to="/login" />}
         />
         <Route
           path="/admin"

@@ -217,6 +217,19 @@ export const changePassword = (currentPassword: string, newPassword: string) =>
 // Lists the UI fetches on its own (the dashboard's periodic refresh, the
 // namespace list behind the command palette and the role editor) carry this
 // header so the server doesn't audit each one; the lists the user opens are.
+// A WebSocket can't carry the Authorization header, and the JWT must not go into a URL:
+// trade it for a single-use ticket (30 s, valid for this path only).
+export const wsUrl = async (path: string, params?: URLSearchParams) => {
+  const { ticket } = await apiRequest<{ ticket: string }>('/api/ws-ticket', {
+    method: 'POST',
+    body: JSON.stringify({ path }),
+  });
+  const query = new URLSearchParams(params);
+  query.set('ticket', ticket);
+  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${protocol}://${window.location.host}${path}?${query.toString()}`;
+};
+
 const autoRefresh = (auto?: boolean): RequestInit => (auto ? { headers: { 'X-OpenConsole-Refresh': 'auto' } } : {});
 
 export const listNamespaces = (auto?: boolean) => apiRequest<{ namespaces: string[] }>('/api/namespaces', autoRefresh(auto));
@@ -327,6 +340,45 @@ export type UsageHistory = {
   /** Ranges the source can answer (7d only from Prometheus). */
   ranges?: string[];
 };
+
+/** Admin → Overview (GET /api/admin/overview, cached 15 s per cluster on the server). */
+export type Overview = {
+  generatedAt: string;
+  cluster: { name: string; version: string; nodes: number };
+  /** Current usage (metrics-server); the 24 h history is getOverviewHistory. */
+  metricsSource: 'memory' | 'none';
+  metricsNote?: string;
+  pods: { running: number; total: number };
+  deployments: { ready: number; total: number };
+  /** Pods that may need attention, trimmed; classify with podStatus(). */
+  attention: Array<Record<string, unknown>>;
+  attentionTotal: number;
+  /** Every 5 min since OpenConsole started watching the cluster (24 h at most). */
+  counts: Array<{ t: number; podsRunning: number; pods: number; podsAttention: number; deploysReady: number; deploys: number }>;
+  usage: (Usage & { cpuAllocatable: number; memoryAllocatable: number }) | null;
+  restarts24h: number;
+  restartsHourly: number[];
+  hourStart: number;
+  topRestarts: Array<{ namespace: string; owner: string; restarts: number; exitCode: number; reason?: string; share: number }>;
+  namespaces: Array<{ name: string; cpu: number; memory: number; pods: number; nearLimit: number }>;
+  warnings: Array<{ namespace: string; kind: string; name: string; reason: string; message: string; at: string; count: number }>;
+  warningsTotal: number;
+  nodes: Array<{
+    name: string;
+    ready: boolean;
+    unschedulable?: boolean;
+    pressure: string[];
+    cpu?: number;
+    memory?: number;
+    cpuAllocatable: number;
+    memoryAllocatable: number;
+  }>;
+  nodesNote?: string;
+};
+
+export const getOverview = (auto?: boolean) => apiRequest<Overview>('/api/admin/overview', autoRefresh(auto));
+/** The overview's 24 h cluster CPU / memory; Prometheus can take seconds, so it comes apart. */
+export const getOverviewHistory = () => apiRequest<UsageHistory>('/api/admin/overview/history', autoRefresh(true));
 
 // Polled every 30 s next to the lists; never audited server-side.
 export const getPodMetrics = (namespace: string) =>
