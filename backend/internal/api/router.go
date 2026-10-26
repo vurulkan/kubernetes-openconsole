@@ -75,6 +75,10 @@ type Server struct {
 	overviewHistory sync.Map
 	// overviewHistoryBusy marks a cluster whose history is being refreshed in the background.
 	overviewHistoryBusy sync.Map
+	// nodes caches the node list per cluster id (nodesEntry, 15 s).
+	nodes sync.Map
+	// nodeHistory caches a node's Prometheus history (nodeHistoryKey → historyEntry, one step).
+	nodeHistory sync.Map
 }
 
 // sessionValidator is the AuthMiddleware adapter around *store.Store. Returning
@@ -194,6 +198,9 @@ func (s *Server) Router() http.Handler {
 		// Admin only; checked in the handler so a refusal is audited.
 		r.Get("/api/admin/overview", s.handleOverview)
 		r.Get("/api/admin/overview/history", s.handleOverviewHistory)
+		r.Get("/api/admin/nodes", s.handleNodes)
+		r.Get("/api/admin/nodes/{name}", s.handleNode)
+		r.Get("/api/admin/nodes/{name}/metrics/history", s.handleNodeHistory)
 		// Signed-in users only: the version isn't shown before login.
 		r.Get("/api/version", func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]string{"version": version.Version})

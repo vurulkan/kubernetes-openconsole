@@ -95,6 +95,7 @@ func (m *Manager) ApplyCredentials(creds models.KubeCredentials) error {
 	go ic.start(context.Background())
 	m.informers = ic
 	m.metrics = newMetricsServerSampler(client)
+	m.metrics.nodeOf = ic.PodNode
 	go m.metrics.run()
 
 	return nil

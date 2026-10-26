@@ -38,17 +38,20 @@ export const Empty: React.FC<{ children: React.ReactNode }> = ({ children }) => 
 
 type Condition = { type?: string; status?: string; reason?: string; message?: string; lastTransitionTime?: string };
 
-export const Conditions: React.FC<{ items?: Condition[] }> = ({ items }) => {
+/** okWhenFalse: condition types that are healthy when False (a node's MemoryPressure, DiskPressure, …). */
+export const Conditions: React.FC<{ items?: Condition[]; okWhenFalse?: (type?: string) => boolean }> = ({ items, okWhenFalse }) => {
   const { t } = useTranslation();
   if (!items?.length) return <Empty>{t('dashboard.detail.none')}</Empty>;
   return (
     <ul className="flex flex-col gap-1.5 text-xs">
       {items.map((c) => (
         <li key={c.type} className="flex items-start gap-2">
-          {c.status === 'True' ? (
-            <CheckCircle2 size={14} aria-label="True" className="mt-px shrink-0 text-emerald-500" />
-          ) : c.status === 'False' ? (
-            <XCircle size={14} aria-label="False" className="mt-px shrink-0 text-rose-500" />
+          {c.status === 'True' || c.status === 'False' ? (
+            (c.status === 'True') !== Boolean(okWhenFalse?.(c.type)) ? (
+              <CheckCircle2 size={14} aria-label={c.status} className="mt-px shrink-0 text-emerald-500" />
+            ) : (
+              <XCircle size={14} aria-label={c.status} className="mt-px shrink-0 text-rose-500" />
+            )
           ) : (
             <CircleDashed size={14} aria-label="Unknown" className="mt-px shrink-0 text-slate-400" />
           )}

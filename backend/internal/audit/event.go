@@ -79,6 +79,7 @@ const (
 // the singular resource type audit records carry.
 var kubeKinds = map[string]string{
 	"namespaces":   "namespace",
+	"nodes":        "node",
 	"pods":         "pod",
 	"deployments":  "deployment",
 	"daemonsets":   "daemonset",

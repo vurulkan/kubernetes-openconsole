@@ -58,15 +58,16 @@ rules:
     resources: [replicasets]
     verbs: [get, list]
 
-  # Pod CPU / memory (metrics-server), sampled every 30 s; node usage for Admin → Overview.
+  # Pod CPU / memory (metrics-server), sampled every 30 s; node usage for Overview and Nodes.
   - apiGroups: [metrics.k8s.io]
     resources: [pods, nodes]
     verbs: [get, list]
 
-  # Admin → Overview: node count, allocatable CPU / memory and the node strip.
+  # Admin → Overview (node strip) and Nodes. watch keeps nodes in the informer cache;
+  # without it OpenConsole lists them on each request.
   - apiGroups: [""]
     resources: [nodes]
-    verbs: [get, list]
+    verbs: [get, list, watch]
 
   # Optional: Prometheus "in the cluster (API server proxy)" mode (Admin →
   # Clusters → Prometheus). Off by default: services/proxy lets the token send

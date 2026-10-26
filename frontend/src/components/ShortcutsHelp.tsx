@@ -18,6 +18,7 @@ const GROUPS: Group[] = [
   ]},
   { titleKey: 'navigate', rows: [
     { keys: ['g', 'o'], descKey: 'goOverview' },
+    { keys: ['g', 'n'], descKey: 'goNodes' },
     { keys: ['g', 'd'], descKey: 'goDashboard' },
     { keys: ['g', 'a'], descKey: 'goAdmin' },
   ]},

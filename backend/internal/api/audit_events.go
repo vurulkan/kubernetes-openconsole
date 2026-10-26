@@ -89,6 +89,8 @@ const (
 	reasonRateLimited     = "rate_limited"
 )
 
+var errNotConnected = errors.New("no cluster connected")
+
 // failReason classifies an error for a failed outcome; the message itself
 // goes into the "error" detail.
 func failReason(err error) string {
@@ -96,6 +98,8 @@ func failReason(err error) string {
 	switch {
 	case err == nil:
 		return ""
+	case errors.Is(err, errNotConnected):
+		return "not_connected"
 	case apierrors.IsForbidden(err):
 		return "k8s_forbidden"
 	case apierrors.IsNotFound(err):

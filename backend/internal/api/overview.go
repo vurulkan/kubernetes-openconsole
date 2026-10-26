@@ -192,7 +192,7 @@ func (s *Server) buildOverview(r *http.Request, client kubernetes.Interface, clu
 		out.Counts = ic.CountHistory()
 	}
 
-	nodes, nodesNote := overviewNodes(ctx, client)
+	nodes, nodesNote := overviewNodes(ctx, kubeFor(r), client)
 	out.Nodes, out.NodesNote = nodes, nodesNote
 	out.Cluster.Nodes = len(nodes)
 	var alloc overviewUsage
@@ -305,24 +305,28 @@ func (s *Server) handleOverviewHistory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// attentionPods trims the pods the UI may flag to what utils/podStatus.ts reads.
+// trimPod keeps what utils/podStatus.ts and podOwner read.
+func trimPod(p *corev1.Pod) corev1.Pod {
+	t := corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Name: p.Name, Namespace: p.Namespace, DeletionTimestamp: p.DeletionTimestamp,
+		OwnerReferences: p.OwnerReferences, Labels: map[string]string{},
+	}, Status: p.Status}
+	if h := p.Labels["pod-template-hash"]; h != "" {
+		t.Labels["pod-template-hash"] = h
+	}
+	for _, c := range p.Spec.InitContainers {
+		t.Spec.InitContainers = append(t.Spec.InitContainers, corev1.Container{Name: c.Name})
+	}
+	return t
+}
+
+// attentionPods trims the pods the UI may flag.
 func attentionPods(pods []*corev1.Pod, limit int) []corev1.Pod {
 	out := []corev1.Pod{}
 	for _, p := range pods {
-		if !kube.PodNeedsAttention(p) {
-			continue
+		if kube.PodNeedsAttention(p) {
+			out = append(out, trimPod(p))
 		}
-		t := corev1.Pod{ObjectMeta: metav1.ObjectMeta{
-			Name: p.Name, Namespace: p.Namespace, DeletionTimestamp: p.DeletionTimestamp,
-			OwnerReferences: p.OwnerReferences, Labels: map[string]string{},
-		}, Status: p.Status}
-		if h := p.Labels["pod-template-hash"]; h != "" {
-			t.Labels["pod-template-hash"] = h
-		}
-		for _, c := range p.Spec.InitContainers {
-			t.Spec.InitContainers = append(t.Spec.InitContainers, corev1.Container{Name: c.Name})
-		}
-		out = append(out, t)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Namespace != out[j].Namespace {
@@ -336,8 +340,8 @@ func attentionPods(pods []*corev1.Pod, limit int) []corev1.Pod {
 	return out
 }
 
-func overviewNodes(ctx context.Context, client kubernetes.Interface) ([]overviewNode, string) {
-	list, err := client.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+func overviewNodes(ctx context.Context, m *kube.Manager, client kubernetes.Interface) ([]overviewNode, string) {
+	list, err := listNodes(ctx, m, client)
 	if err != nil {
 		if apierrors.IsForbidden(err) {
 			return []overviewNode{}, "forbidden"
@@ -348,25 +352,9 @@ func overviewNodes(ctx context.Context, client kubernetes.Interface) ([]overview
 	if err != nil {
 		usage = nil // the strip still shows readiness and pressure
 	}
-	out := make([]overviewNode, 0, len(list.Items))
-	for _, n := range list.Items {
-		node := overviewNode{
-			Name: n.Name, Unschedulable: n.Spec.Unschedulable, Pressure: []string{},
-			CPUAllocatable: n.Status.Allocatable.Cpu().MilliValue(),
-			MemAllocatable: n.Status.Allocatable.Memory().Value(),
-		}
-		for _, c := range n.Status.Conditions {
-			switch {
-			case c.Type == corev1.NodeReady:
-				node.Ready = c.Status == corev1.ConditionTrue
-			case c.Status == corev1.ConditionTrue:
-				node.Pressure = append(node.Pressure, string(c.Type))
-			}
-		}
-		if u, ok := usage[n.Name]; ok {
-			node.CPU, node.Mem = &u.CPU, &u.Mem
-		}
-		out = append(out, node)
+	out := make([]overviewNode, 0, len(list))
+	for _, n := range list {
+		out = append(out, nodeState(n, usage))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, ""

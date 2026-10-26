@@ -26,6 +26,7 @@ import { exitLabel, podStatus, type PodLike } from '../utils/podStatus';
 import { formatCpu, formatMem } from '../utils/format';
 import { ageShort } from '../utils/age';
 import { HourlyBars, Sparkline } from './overview/Charts';
+import { openDashboard, openPod } from '../utils/openDashboard';
 
 const REFRESH_MS = 15000;
 
@@ -37,15 +38,6 @@ const pct = (used: number, of: number) => (of > 0 ? Math.round((used / of) * 100
 // Status colors carry state only: >= 90 % red, >= 70 % amber.
 const meterTone = (p: number) => (p >= 90 ? 'bg-rose-500' : p >= 70 ? 'bg-amber-500' : 'bg-brand-500');
 
-/** Stage a Dashboard view (as saved views do) and go there. */
-const openDashboard = (navigate: (p: string) => void, stage: Record<string, string>) => {
-  try {
-    Object.entries(stage).forEach(([k, v]) => localStorage.setItem(k, v));
-  } catch {
-    /* ignore */
-  }
-  navigate('/');
-};
 
 const ownerTab: Record<string, string> = { Deployment: 'deployments', StatefulSet: 'statefulsets', DaemonSet: 'daemonsets', Job: 'jobs' };
 
@@ -330,7 +322,7 @@ const OverviewPage: React.FC<{ user: User }> = ({ user }) => {
                       <PodStatusBadge namespace={namespace} podName={name} status={st} />
                       <button
                         type="button"
-                        onClick={() => openDashboard(navigate, { dashboardNamespace: namespace, dashboardResourceTab: 'pods', dashboardPendingSearch: name, dashboardPendingPod: name })}
+                        onClick={() => openPod(navigate, namespace, name)}
                         className="min-w-0 flex-1 cursor-pointer truncate text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/60"
                         title={`${namespace}/${name}`}
                       >
@@ -508,7 +500,20 @@ const OverviewPage: React.FC<{ user: User }> = ({ user }) => {
               )}
             </Section>
 
-            <Section id="ov-nodes" title={t('overview.nodesTitle')} icon={<Server size={16} />}>
+            <Section
+              id="ov-nodes"
+              title={t('overview.nodesTitle')}
+              icon={<Server size={16} />}
+              aside={
+                <button
+                  type="button"
+                  onClick={() => navigate('/nodes')}
+                  className="cursor-pointer text-[11px] font-medium text-brand-700 underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/60 dark:text-brand-300"
+                >
+                  {t('overview.allNodes')}
+                </button>
+              }
+            >
               {data.nodesNote || data.nodes.length === 0 ? (
                 <Empty>{t('overview.nodesUnavailable')}</Empty>
               ) : (
@@ -518,28 +523,34 @@ const OverviewPage: React.FC<{ user: User }> = ({ user }) => {
                     const m = n.memory !== undefined ? pct(n.memory, n.memoryAllocatable) : null;
                     const state = !n.ready ? 'notReady' : n.pressure.length ? 'pressure' : 'ready';
                     return (
-                      <li key={n.name} className="flex flex-col gap-1 rounded-lg px-2 py-1.5">
-                        <span className="flex items-center justify-between gap-2 text-xs">
-                          <span className="min-w-0 truncate font-mono text-slate-800 dark:text-slate-100">{n.name}</span>
-                          <span
-                            className={`inline-flex shrink-0 items-center gap-1 text-[11px] ${
-                              state === 'ready' ? 'text-emerald-700 dark:text-emerald-400' : state === 'pressure' ? 'text-amber-700 dark:text-amber-400' : 'text-rose-700 dark:text-rose-400'
-                            }`}
-                          >
-                            {state === 'ready' ? <CheckCircle2 size={12} aria-hidden="true" /> : state === 'pressure' ? <AlertTriangle size={12} aria-hidden="true" /> : <XCircle size={12} aria-hidden="true" />}
-                            {state === 'pressure' ? n.pressure.join(', ') : t(`overview.node.${state}`)}
-                            {n.unschedulable && ` · ${t('overview.node.cordoned')}`}
-                          </span>
-                        </span>
-                        {[['CPU', c], [t('overview.kpi.memory'), m]].map(([label, p]) => (
-                          <span key={label as string} className="flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
-                            <span className="w-12 shrink-0">{label}</span>
-                            <span className="block h-1 flex-1 rounded-full bg-slate-100 dark:bg-slate-800" aria-hidden="true">
-                              {p !== null && <span className={`block h-full rounded-full ${meterTone(p as number)}`} style={{ width: `${Math.min(p as number, 100)}%` }} />}
+                      <li key={n.name}>
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/nodes?node=${encodeURIComponent(n.name)}`)}
+                          className="flex w-full cursor-pointer flex-col gap-1 rounded-lg px-2 py-1.5 text-left hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/60 dark:hover:bg-slate-800/60"
+                        >
+                          <span className="flex items-center justify-between gap-2 text-xs">
+                            <span className="min-w-0 truncate font-mono text-slate-800 dark:text-slate-100">{n.name}</span>
+                            <span
+                              className={`inline-flex shrink-0 items-center gap-1 text-[11px] ${
+                                state === 'ready' ? 'text-emerald-700 dark:text-emerald-400' : state === 'pressure' ? 'text-amber-700 dark:text-amber-400' : 'text-rose-700 dark:text-rose-400'
+                              }`}
+                            >
+                              {state === 'ready' ? <CheckCircle2 size={12} aria-hidden="true" /> : state === 'pressure' ? <AlertTriangle size={12} aria-hidden="true" /> : <XCircle size={12} aria-hidden="true" />}
+                              {state === 'pressure' ? n.pressure.join(', ') : t(`overview.node.${state}`)}
+                              {n.unschedulable && ` · ${t('overview.node.cordoned')}`}
                             </span>
-                            <span className="w-9 shrink-0 text-right font-mono">{p === null ? '—' : `${p}%`}</span>
                           </span>
-                        ))}
+                          {[['CPU', c], [t('overview.kpi.memory'), m]].map(([label, p]) => (
+                            <span key={label as string} className="flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+                              <span className="w-12 shrink-0">{label}</span>
+                              <span className="block h-1 flex-1 rounded-full bg-slate-100 dark:bg-slate-800" aria-hidden="true">
+                                {p !== null && <span className={`block h-full rounded-full ${meterTone(p as number)}`} style={{ width: `${Math.min(p as number, 100)}%` }} />}
+                              </span>
+                              <span className="w-9 shrink-0 text-right font-mono">{p === null ? '—' : `${p}%`}</span>
+                            </span>
+                          ))}
+                        </button>
                       </li>
                     );
                   })}

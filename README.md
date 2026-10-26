@@ -5,7 +5,8 @@ Modern, production-ready Kubernetes visibility and operations console with stric
 ## Highlights
 
 ### Observability & live data
-- **Admin overview** (`/overview`, admins only; admins land here after sign-in) — the selected cluster at a glance: pods running, pods needing attention (red / amber), restarts in 24 h, ready Deployments, CPU and memory as % of allocatable (each with a 24 h trend), cluster usage over 24 h against allocatable (Prometheus when configured, else the in-memory samples), the pods needing attention, the workloads restarting most with their usual exit code, restarts per hour, the busiest namespaces (pods near their limits), Warning events of the last 15 minutes and a node strip. `GET /api/admin/overview` (cached 15 s per cluster) draws the page without waiting for Prometheus; the 24 h usage comes from `GET /api/admin/overview/history` (a Prometheus answer is kept 5 minutes and refreshed in the background). Opening the page is audited as `cluster.view_overview`, its own refreshes are not. Needs `nodes` and `metrics.k8s.io` `nodes` in the ClusterRole for the node data.
+- **Admin overview** (`/overview`, admins only; admins land here after sign-in) — the selected cluster at a glance: pods running, pods needing attention (red / amber), restarts in 24 h, ready Deployments, CPU and memory as % of allocatable (each with a 24 h trend), cluster usage over 24 h against allocatable (Prometheus when configured, else the in-memory samples), the pods needing attention, the workloads restarting most with their usual exit code, restarts per hour, the busiest namespaces (pods near their limits), Warning events of the last 15 minutes and a node strip (a node opens its drawer on Nodes; "All nodes" opens the list). `GET /api/admin/overview` (cached 15 s per cluster) draws the page without waiting for Prometheus; the 24 h usage comes from `GET /api/admin/overview/history` (a Prometheus answer is kept 5 minutes and refreshed in the background). Opening the page is audited as `cluster.view_overview`, its own refreshes are not. Needs `nodes` and `metrics.k8s.io` `nodes` in the ClusterRole for the node data.
+- **Nodes** (`/nodes`, admins only, read only; rail item under Overview, `g n`, command palette; `/nodes?node=<name>` opens a node, as the overview strip and the node name in a pod drawer do) — every node of the selected cluster: status (Ready / NotReady / pressure, cordoned), roles, kubelet version, OS / architecture, age, pods against capacity, and CPU / memory used, requested and limited as % of allocatable. `GET /api/admin/nodes` (cached 15 s per cluster), `GET /api/admin/nodes/{name}` (the node, its pods with requests and usage, its events; from the informer cache, pods by a `spec.nodeName` index), `GET /api/admin/nodes/{name}/metrics/history?range=` (Prometheus: the node's containers by the `node` or `instance` label, else its pods summed; without Prometheus, the in-memory samples of its pods). Click a node (or `j` / `k` and Enter) for its drawer: summary (OS image, kernel, runtime, IPs, cordoned), capacity / allocatable / requests / limits / used for CPU, memory, pods and ephemeral storage, usage history (1 h / 6 h / 24 h, 7 d with Prometheus), its top pods by CPU or memory, every pod on it (all or only those needing attention; a pod opens on the Dashboard), conditions, taints, labels, annotations and events. Search matches the name, a role or a label (`key=value`). Audited as `node.list` / `node.get` (ECS `event.type: access`); a non-admin gets 403 and a `denied` event; the page's refreshes are not audited.
 - **Informer-driven lister cache** — list endpoints read from a `client-go` SharedInformerFactory, so the UI is instant and the API server isn't hammered by polling.
 - **Live Events side panel** (header button or `e`, on the Dashboard and the Overview) — streams `added` / `updated` / `deleted` plus native `corev1.Event` objects (new ones and each repeat of a recurring one) over a WebSocket. Filter by All / K8s events / Warnings. A user sees only objects they may `list` in that namespace (Kubernetes Events by the object they are about); node and other cluster-scoped events are for admins. On Admin → Overview the panel opens for the whole cluster, on Warnings.
 - **Prometheus `/metrics`**, dedicated `/livez` (process) and `/readyz` (DB) endpoints. Clusters are left out of readiness, so one unreachable cluster can't take the console down. See [Metrics](#metrics).
@@ -72,14 +73,14 @@ docker build -t kubernetes-openconsole:local .
 ### Option B — prebuilt image (GHCR)
 
 ```yaml
-image: ghcr.io/vurulkan/kubernetes-openconsole:2.19.0   # pin a release
+image: ghcr.io/vurulkan/kubernetes-openconsole:2.20.0   # pin a release
 ```
 
 Images are multi-arch (**linux/amd64** and **linux/arm64**: Graviton, Ampere, Apple silicon); the runtime picks the right one. CI is the only publisher. Release tags:
 
 | Tag | Points to | Moves? |
 |---|---|---|
-| `X.Y.Z` (e.g. `2.19.0`) | that release | no — use this in production |
+| `X.Y.Z` (e.g. `2.20.0`) | that release | no — use this in production |
 | `latest` | the newest release, same image (same digest) as its `X.Y.Z` | yes, on each release |
 
 Releasing = push the `vX.Y.Z` git tag; CI builds once and pushes `:X.Y.Z` and `:latest`. Pushes to `main` are built and tested but not published. Pushes to other branches publish pre-release test images as `:dev-<build number>` and `:dev-latest`; never run those in production, and `:latest` never points to one.
@@ -90,12 +91,12 @@ Every release image has a signed SLSA **build provenance** and an SPDX **SBOM** 
 
 ```bash
 # Provenance: built by this repository's CI from a release tag
-gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.19.0 \
+gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.20.0 \
   --repo vurulkan/kubernetes-openconsole \
   --signer-workflow vurulkan/kubernetes-openconsole/.github/workflows/ci.yml
 
 # SBOM (packages in the image)
-gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.19.0 \
+gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.20.0 \
   --repo vurulkan/kubernetes-openconsole \
   --predicate-type https://spdx.dev/Document/v2.3 --format json \
   --jq '.[0].verificationResult.statement.predicate.packages | length'
@@ -123,7 +124,7 @@ cd frontend && npx tsc --noEmit -p . && npm test && npm run build
 docker run --rm -p 8080:8080 \
   -e TIMEZONE=Europe/Istanbul \
   -v kubernetes-openconsole-data:/data \
-  ghcr.io/vurulkan/kubernetes-openconsole:2.19.0
+  ghcr.io/vurulkan/kubernetes-openconsole:2.20.0
 ```
 
 The image defaults to `DATA_PATH=/data/app.db` and `STATIC_DIR=/app/public`; the SQLite DB and session recordings live under `/data`. Drop the `-v` for a throwaway instance. Then open http://localhost:8080 and add a cluster ([Connecting clusters](#connecting-clusters)).
@@ -150,7 +151,7 @@ Then:
 1. Open the UI and log in as `admin` / `admin` ([First login](#first-login)).
 2. Add the cluster in **Admin → Clusters** ([Connecting clusters](#connecting-clusters)). The backend never picks up a cluster on its own.
 
-To upgrade, run `kubectl -n kubernetes-openconsole rollout restart deploy/kubernetes-openconsole`. The pod pulls `:latest`, i.e. the newest release. To stay on a fixed version, set a release tag (e.g. `2.19.0`) in `deployment.yaml` or through the `images:` override in `kustomization.yaml`, then re-apply.
+To upgrade, run `kubectl -n kubernetes-openconsole rollout restart deploy/kubernetes-openconsole`. The pod pulls `:latest`, i.e. the newest release. To stay on a fixed version, set a release tag (e.g. `2.20.0`) in `deployment.yaml` or through the `images:` override in `kustomization.yaml`, then re-apply.
 
 ## Environment variables
 
@@ -273,7 +274,7 @@ Every audited action is one event, stored in the database (Admin → Audit Logs,
 
 | Field (`json` / DB) | `ecs` | Meaning |
 |---|---|---|
-| `event` / `action` | `event.action` | `<resource type>.<verb>`: `deployment.list`, `deployment.restart`, `pod.exec`, `secret.reveal`, `user.login`, `permission.create` |
+| `event` / `action` | `event.action` | `<resource type>.<verb>`: `deployment.list`, `deployment.restart`, `pod.exec`, `secret.reveal`, `node.get`, `user.login`, `permission.create` |
 | `verb` | `openconsole.verb` | `list` `get` `logs` `exec` `restart` `scale` `apply` `view_yaml` `reveal` `view` `download` `create` `update` `delete` `share` `select` `activate` `deactivate` `revoke` `export` `import` `login` `change_password` `reset_password` `evict` `purge` `view_overview` |
 | `outcome` | `openconsole.outcome`, `event.outcome` | `success` `denied` `failed` `rate_limited` `locked` (`event.outcome` is `success` / `failure`) |
 | `reason` | `event.reason` | why it was denied or failed: `forbidden`, `feature_disabled`, `admin_only`, `k8s_forbidden`, `not_found`, `conflict`, `bad_password`, … |
@@ -423,7 +424,7 @@ What the ClusterRole allows, and which application permission needs it. Delete t
 | `horizontalpodautoscalers, ingresses, cronjobs, jobs`: get / list / watch / update | tabs + `edit` |
 | `replicasets`: get / list | deployment revisions in the detail drawer |
 | `metrics.k8s.io` `pods`: get / list | CPU / memory (needs metrics-server in the cluster) |
-| `nodes`, `metrics.k8s.io` `nodes`: get / list | Admin → Overview: node count, CPU / memory as % of allocatable, node strip. Without them the overview still works, with absolute CPU / memory and no node strip |
+| `nodes`: get / list / watch, `metrics.k8s.io` `nodes`: get / list | Overview (node count, CPU / memory as % of allocatable, node strip) and Nodes. Without them the overview still works, with absolute CPU / memory and no node strip, and Nodes says the token can't list nodes. Without `watch` (ClusterRole from 2.19 or older) nodes are listed on each request instead of read from the cache |
 | `services/proxy`: get on your Prometheus Service (commented out; optional) | Prometheus "in the cluster" mode |
 
 ### Read-only mode
@@ -545,7 +546,7 @@ Templates in the Add Permissions modal: Viewer (read only, including secret *met
 
 **Previous log.** For a restarted container the log window has *Before the last restart*, the log of the container instance that exited (`kubectl logs --previous`). It is audited as `pod.logs` with `previous: true`. Some runtimes drop the log of a container that died within a second; the API then answers "unable to retrieve container logs", as `kubectl` does.
 
-**Detail drawers.** Click a pod, Deployment, StatefulSet or DaemonSet (or press Enter on a selected row): a pod shows status, node, IP, QoS class, owner (a link to the workload), every container with its state, requests / limits, probes, usage and last exit code; conditions; events, warnings first. A workload shows its rollout (red on `ProgressDeadlineExceeded`, and how many pods are failing), its pods, usage, restart history, conditions and events; a Deployment also its revisions with their images and restarts (read only: no rollback). Logs, shell, YAML, scale and restart are there for users allowed to use them. In the Deployments, StatefulSets and DaemonSets lists a red *N pods failing* badge sits next to the status of any workload with a crashing pod.
+**Detail drawers.** Click a pod, Deployment, StatefulSet or DaemonSet (or press Enter on a selected row): a pod shows status, node (for admins a link to the node on Nodes), IP, QoS class, owner (a link to the workload), every container with its state, requests / limits, probes, usage and last exit code; conditions; events, warnings first. A workload shows its rollout (red on `ProgressDeadlineExceeded`, and how many pods are failing), its pods, usage, restart history, conditions and events; a Deployment also its revisions with their images and restarts (read only: no rollback). Logs, shell, YAML, scale and restart are there for users allowed to use them. In the Deployments, StatefulSets and DaemonSets lists a red *N pods failing* badge sits next to the status of any workload with a crashing pod.
 
 **CPU / memory.** With metrics-server in the cluster, pods and deployments show usage against the limit (or the request when there is no limit): amber from 70 %, red from 90 %. OpenConsole reads every pod of every connected cluster every 30 s and keeps, in memory, the last hour at 30 s and up to 24 hours as 5-minute averages (about 10 KB per pod). That history starts over when OpenConsole restarts; for longer, persistent history configure the cluster's Prometheus. Each chart says where its data comes from.
 
@@ -696,7 +697,7 @@ Every issued token lives in `session_tokens` and is checked on every request.
 Open the full cheat sheet with `?`. The core set:
 
 - Global: `⌘K` / `Ctrl+K` command palette, `?` cheat sheet, `Esc` close active modal.
-- Navigate: `g o` → Overview, `g d` → Dashboard, `g a` → Admin (Overview and Admin for admins only).
+- Navigate: `g o` → Overview, `g n` → Nodes, `g d` → Dashboard, `g a` → Admin (Overview, Nodes and Admin for admins only).
 - Theme: `t l` light, `t d` dark, `t s` system.
 - Dashboard: `[` / `]` (or `ğ` / `ü` on a TR Q layout) previous / next resource tab, `r` refresh, `/` (or `.`) focus the search box, `n` focus the namespace filter, `e` toggle Live Events, `c` open the cluster switcher, `v` open Saved Views.
 - Cluster switcher / Saved Views when open: `1`–`9` pick by index, `↑/↓` move focus, `Enter` activate, `Esc` close.

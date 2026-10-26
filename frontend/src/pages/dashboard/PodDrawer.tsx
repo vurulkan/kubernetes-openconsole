@@ -23,6 +23,8 @@ type Props = {
   onYaml: (name: string) => void;
   /** Opens the owning Deployment's / StatefulSet's / DaemonSet's drawer. */
   onOpenOwner: (kind: WorkloadKind, name: string) => void;
+  /** Opens the node's drawer on the Nodes screen; admins only (unset otherwise). */
+  onOpenNode?: (name: string) => void;
   metrics: MetricsSnapshot | null;
 };
 
@@ -62,7 +64,7 @@ const TerminationBox: React.FC<{ term: Termination }> = ({ term }) => {
   );
 };
 
-export const PodDrawer: React.FC<Props> = ({ pod, namespace, canExec, onClose, onLogs, onShell, onYaml, onOpenOwner, metrics }) => {
+export const PodDrawer: React.FC<Props> = ({ pod, namespace, canExec, onClose, onLogs, onShell, onYaml, onOpenOwner, onOpenNode, metrics }) => {
   const { t } = useTranslation();
   if (!pod) return null;
   const name: string = pod.metadata?.name ?? '';
@@ -117,7 +119,21 @@ export const PodDrawer: React.FC<Props> = ({ pod, namespace, canExec, onClose, o
               [t('dashboard.detail.status'), <PodStatusBadge key="s" namespace={namespace} podName={name} status={status} />],
               [t('dashboard.detail.ready'), `${status.ready}/${status.total}`],
               [t('dashboard.detail.restarts'), String(status.restarts)],
-              [t('dashboard.detail.node'), pod.spec?.nodeName],
+              [
+                t('dashboard.detail.node'),
+                onOpenNode && pod.spec?.nodeName ? (
+                  <button
+                    key="n"
+                    type="button"
+                    onClick={() => onOpenNode(pod.spec.nodeName)}
+                    className="text-brand-600 underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/60 dark:text-brand-300"
+                  >
+                    {pod.spec.nodeName}
+                  </button>
+                ) : (
+                  pod.spec?.nodeName
+                ),
+              ],
               [t('dashboard.detail.podIP'), pod.status?.podIP],
               [t('dashboard.detail.qos'), pod.status?.qosClass],
               [

@@ -315,6 +315,7 @@ func TestAdminEndpointsRequireAdmin(t *testing.T) {
 		"/api/admin/users", "/api/admin/groups", "/api/admin/roles", "/api/admin/ldap",
 		"/api/admin/azure-ad", "/api/admin/clusters", "/api/admin/audit-logs",
 		"/api/admin/sessions", "/api/admin/recordings", "/api/admin/recordings/settings", "/api/admin/overview",
+		"/api/admin/nodes",
 	}
 	for _, p := range adminGets {
 		e.expect("GET", p, bob, nil, http.StatusForbidden)
@@ -322,6 +323,26 @@ func TestAdminEndpointsRequireAdmin(t *testing.T) {
 	}
 	e.expect("POST", "/api/admin/users", bob, map[string]string{"username": "eve", "password": "Passw0rd!x"}, http.StatusForbidden)
 	e.expect("DELETE", "/api/admin/clusters/1", bob, nil, http.StatusForbidden)
+}
+
+func TestNodesAdminOnly(t *testing.T) {
+	e := newTestEnv(t)
+	_, admin := e.user("root", true)
+	bobID, bob := e.user("bob", false)
+	// A namespace permission is no node permission: nodes are for admins.
+	e.grant(bobID, [4]any{0, "team-a", "pods", "list"}, [4]any{0, "team-a", "pods", "get"})
+	_, _ = e.client.CoreV1().Nodes().Create(context.Background(), &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"}}, metav1.CreateOptions{})
+
+	e.expect("GET", "/api/admin/nodes", bob, nil, http.StatusForbidden)
+	e.waitAudit("node.list.denied", "admin_only")
+	e.expect("GET", "/api/admin/nodes/n1", bob, nil, http.StatusForbidden)
+	e.waitAudit("node.get.denied", "n1")
+	e.expect("GET", "/api/admin/nodes/n1/metrics/history?range=1h", bob, nil, http.StatusForbidden)
+	e.expect("GET", "/api/admin/nodes", "", nil, http.StatusUnauthorized)
+
+	e.expect("GET", "/api/admin/nodes/n1", admin, nil, http.StatusOK)
+	e.expect("GET", "/api/admin/nodes/missing", admin, nil, http.StatusNotFound)
+	e.waitAudit("node.get.failed", "not_found")
 }
 
 func TestAdminMustChangePasswordIsBlocked(t *testing.T) {

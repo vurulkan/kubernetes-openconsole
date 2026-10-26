@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Boxes, Gauge, Home, Search, Settings, ShieldCheck } from 'lucide-react';
+import { Boxes, Gauge, Home, Search, Server, Settings, ShieldCheck } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { User } from '../services/api';
 import { useTheme } from './ThemeProvider';
@@ -97,6 +97,13 @@ export const CommandPalette: React.FC<Props> = ({ user, namespaces, onPickNamesp
         kind: 'nav',
         icon: Gauge,
         onRun: () => navigate('/overview'),
+      });
+      navs.splice(1, 0, {
+        id: 'nav:nodes',
+        label: 'Go to Nodes',
+        kind: 'nav',
+        icon: Server,
+        onRun: () => navigate('/nodes'),
       });
       navs.push({
         id: 'nav:admin',

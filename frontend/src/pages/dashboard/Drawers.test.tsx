@@ -57,6 +57,7 @@ describe('PodDrawer', () => {
       ],
     ]);
     const onOpenOwner = vi.fn();
+    const onOpenNode = vi.fn();
     const onLogs = vi.fn();
     render(
       <PodDrawer
@@ -68,6 +69,7 @@ describe('PodDrawer', () => {
         onShell={() => {}}
         onYaml={() => {}}
         onOpenOwner={onOpenOwner}
+        onOpenNode={onOpenNode}
         metrics={{
           available: true,
           updatedAt: '2026-10-26T08:00:00Z',
@@ -85,6 +87,9 @@ describe('PodDrawer', () => {
     expect(await screen.findByText('Last 24 hours: 3 restarts. Exit codes: 3× 137 (OOMKilled).')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Deployment/web' }));
     expect(onOpenOwner).toHaveBeenCalledWith('deployments', 'web');
+    // Admins get the node as a link to its drawer on the Nodes screen.
+    fireEvent.click(screen.getByRole('button', { name: 'node-1' }));
+    expect(onOpenNode).toHaveBeenCalledWith('node-1');
     fireEvent.click(screen.getByRole('button', { name: /Previous logs/ }));
     expect(onLogs).toHaveBeenCalledWith('web-7d4f-abcde', 'app');
     expect(screen.queryByRole('button', { name: /Shell/ })).not.toBeInTheDocument();

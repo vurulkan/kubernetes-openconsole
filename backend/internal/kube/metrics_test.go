@@ -42,6 +42,12 @@ func TestSamplerHistory(t *testing.T) {
 		}
 	}
 	m := NewMetricsSampler(func(context.Context) ([]PodUsage, error) { return pods(), nil })
+	m.nodeOf = func(ns, pod string) string {
+		if ns == "shop" {
+			return "node-a"
+		}
+		return "" // not in the cache (yet): counts for no node
+	}
 	start := time.Unix(1_800_000_000, 0) // a 5-minute boundary
 	// 3 hours of samples every 30 s; CPU steps up by 1 every sample.
 	var now time.Time
@@ -68,6 +74,10 @@ func TestSamplerHistory(t *testing.T) {
 		t.Fatalf("deployment sum = %+v (other namespaces must not count)", last)
 	}
 
+	if node := m.NodeHistory("node-a", time.Hour, now); len(node) != 121 || node[len(node)-1].CPU != 2*cpu {
+		t.Fatalf("node sum = %d points, last %+v", len(node), node[len(node)-1])
+	}
+
 	snap := m.Namespace("shop")
 	if !snap.Available || len(snap.Items) != 2 || snap.Items[0].Name != "web-h-1" {
 		t.Fatalf("snapshot = %+v", snap)
@@ -78,6 +88,9 @@ func TestSamplerHistory(t *testing.T) {
 	m.Sample(now.Add(historyWindow + time.Minute))
 	if h := m.PodHistory("shop", "web-h-1", 24*time.Hour, now); len(h) != 0 {
 		t.Fatalf("stale series kept: %d points", len(h))
+	}
+	if h := m.NodeHistory("node-a", 24*time.Hour, now); len(h) != 0 {
+		t.Fatalf("stale node series kept: %d points", len(h))
 	}
 }
 

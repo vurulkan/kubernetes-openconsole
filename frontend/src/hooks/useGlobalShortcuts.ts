@@ -110,6 +110,12 @@ export const useGlobalShortcuts = ({ isAdmin, setTheme }: Options) => {
           resetPending();
           return;
         }
+        if (key === 'n' && isAdmin) {
+          e.preventDefault();
+          navigate('/nodes');
+          resetPending();
+          return;
+        }
         resetPending();
         return;
       }

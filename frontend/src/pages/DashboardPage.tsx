@@ -1528,6 +1528,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
           onShell={openShell}
           onYaml={(name) => openYamlModal('pods', selectedNamespace ?? '', name)}
           metrics={metrics}
+          onOpenNode={user.isAdmin ? (node) => navigate(`/nodes?node=${encodeURIComponent(node)}`) : undefined}
           onOpenOwner={(kind, name) =>
             getWorkload(kind, selectedNamespace ?? '', name)
               .then((obj) => setDetail({ kind, name, obj }))

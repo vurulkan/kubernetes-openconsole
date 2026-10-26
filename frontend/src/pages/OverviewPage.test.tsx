@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import OverviewPage from './OverviewPage';
 
 // The shell (header, theme, cluster switcher) is not what this test is about.
@@ -9,6 +9,8 @@ vi.mock('../components/Layout', () => ({ default: ({ children }: { children: Rea
 import { mockFetch } from '../test/fetchMock';
 import { expectNoA11yViolations } from '../test/a11y';
 import type { Overview, User } from '../services/api';
+
+const NodesSearch = () => <p>nodes:{useLocation().search}</p>;
 
 const pod = (name: string, status: Record<string, unknown>) => ({ metadata: { name, namespace: 'shop' }, status });
 
@@ -48,7 +50,14 @@ describe('OverviewPage', () => {
       ['GET /api/admin/overview', () => overview],
     ]);
     const user = { id: 1, username: 'root', isAdmin: true } as User;
-    render(<MemoryRouter><OverviewPage user={user} /></MemoryRouter>);
+    render(
+      <MemoryRouter initialEntries={['/overview']}>
+        <Routes>
+          <Route path="/overview" element={<OverviewPage user={user} />} />
+          <Route path="/nodes" element={<NodesSearch />} />
+        </Routes>
+      </MemoryRouter>,
+    );
 
     expect(await screen.findByRole('heading', { name: 'prod-eu' })).toBeInTheDocument();
 
@@ -75,5 +84,9 @@ describe('OverviewPage', () => {
     expect(within(panel).getByRole('button', { name: 'Warnings' })).toHaveAttribute('aria-pressed', 'true');
 
     await expectNoA11yViolations(document.body);
+
+    // A node in the strip opens its drawer on the Nodes screen.
+    fireEvent.click(within(screen.getByRole('region', { name: 'Nodes' })).getByRole('button', { name: /n1/ }));
+    expect(await screen.findByText('nodes:?node=n1')).toBeInTheDocument();
   });
 });

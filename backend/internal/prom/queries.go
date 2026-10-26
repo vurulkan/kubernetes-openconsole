@@ -43,12 +43,12 @@ func (c *Client) selector(namespace, podRegex string) string {
 	if namespace == "" {
 		ns = `namespace!=""`
 	}
-	m := []string{
-		ns,
-		"pod=~" + quote(podRegex),
-		`container!=""`,
-		`container!="POD"`,
-	}
+	return c.matchers(ns, "pod=~"+quote(podRegex))
+}
+
+// matchers adds the container filters and the cluster filter to m.
+func (c *Client) matchers(m ...string) string {
+	m = append(m, `container!=""`, `container!="POD"`)
 	if c.cfg.ClusterLabel != "" && c.cfg.ClusterValue != "" {
 		m = append(m, c.cfg.ClusterLabel+"="+quote(c.cfg.ClusterValue))
 	}
@@ -85,13 +85,34 @@ type Point struct {
 }
 
 // History returns CPU and memory of the pods podRegex matches, summed.
-// "max by" per container guards against setups that scrape cAdvisor twice.
 func (c *Client) History(ctx context.Context, namespace, podRegex, rng string, now time.Time) ([]Point, error) {
+	return c.usage(ctx, c.selector(namespace, podRegex), rng, now)
+}
+
+// NodeHistory sums the containers on a node. cAdvisor series name the node in a "node" label
+// (kube-prometheus) or in "instance": the node name (API server proxy scrape, AKS) or its
+// address with the kubelet port (plain kubernetes_sd). Tried in that order, not with "or":
+// where both fit they select the same series, and "or" would compute them twice. No points:
+// neither label fits this Prometheus, and the caller sums the node's pods instead.
+func (c *Client) NodeHistory(ctx context.Context, node string, addresses []string, rng string, now time.Time) ([]Point, error) {
+	pts, err := c.usage(ctx, c.matchers(`namespace!=""`, "node="+quote(node)), rng, now)
+	if err != nil || len(pts) > 0 {
+		return pts, err
+	}
+	names := []string{regexp.QuoteMeta(node)}
+	for _, a := range addresses {
+		names = append(names, regexp.QuoteMeta(a))
+	}
+	return c.usage(ctx, c.matchers(`namespace!=""`, "instance=~"+quote("("+strings.Join(names, "|")+")(:[0-9]+)?")), rng, now)
+}
+
+// usage sums CPU and memory of the series sel selects. "max by" per container guards against
+// setups that scrape cAdvisor twice.
+func (c *Client) usage(ctx context.Context, sel string, rng string, now time.Time) ([]Point, error) {
 	r, ok := Ranges[rng]
 	if !ok {
 		r = Ranges["1h"]
 	}
-	sel := c.selector(namespace, podRegex)
 	cpuQ := fmt.Sprintf("sum(max by (namespace, pod, container) (rate(container_cpu_usage_seconds_total%s[%s])))", sel, window(r.Step))
 	memQ := fmt.Sprintf("sum(max by (namespace, pod, container) (container_memory_working_set_bytes%s))", sel)
 	start := now.Add(-r.Span)

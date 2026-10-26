@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Gauge, Github, Home, KeyRound, Keyboard, LogOut, Menu, Radio, Settings, ShieldCheck, X } from 'lucide-react';
+import { Gauge, Github, Home, KeyRound, Keyboard, LogOut, Menu, Radio, Server, Settings, ShieldCheck, X } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button } from './ui';
@@ -30,6 +30,7 @@ type RailItem = {
 
 const RAIL: RailItem[] = [
   { key: 'overview', label: 'Overview', icon: Gauge, path: '/overview', adminOnly: true },
+  { key: 'nodes', label: 'Nodes', icon: Server, path: '/nodes', adminOnly: true },
   { key: 'dashboard', label: 'Dashboard', icon: Home, path: '/' },
   { key: 'admin', label: 'Admin', icon: Settings, path: '/admin', adminOnly: true },
 ];
@@ -76,6 +77,7 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, liveEvents, children
   }, []);
   const RAIL_LABELS: Record<string, string> = {
     overview: t('nav.overview'),
+    nodes: t('nav.nodes'),
     dashboard: t('nav.dashboard'),
     admin: t('nav.admin'),
   };

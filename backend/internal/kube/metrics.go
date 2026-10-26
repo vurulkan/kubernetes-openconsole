@@ -103,10 +103,13 @@ func (s *series) points(from int64) []Point {
 type MetricsSampler struct {
 	fetch func(ctx context.Context) ([]PodUsage, error)
 
-	mu        sync.RWMutex
-	latest    map[string]map[string]PodUsage // namespace → pod → usage
-	series    map[string]*series             // namespace/pod
-	cluster   *series                        // every pod summed (admin overview)
+	mu      sync.RWMutex
+	latest  map[string]map[string]PodUsage // namespace → pod → usage
+	series  map[string]*series             // namespace/pod
+	cluster *series                        // every pod summed (admin overview)
+	nodes   map[string]*series             // pods summed per node (node screen without Prometheus)
+	// nodeOf names a pod's node (the informer cache); nil leaves the node series empty.
+	nodeOf    func(namespace, pod string) string
 	updatedAt time.Time
 	available bool
 	reason    string
@@ -114,7 +117,7 @@ type MetricsSampler struct {
 }
 
 func NewMetricsSampler(fetch func(ctx context.Context) ([]PodUsage, error)) *MetricsSampler {
-	return &MetricsSampler{fetch: fetch, series: map[string]*series{}, cluster: &series{}, stop: make(chan struct{})}
+	return &MetricsSampler{fetch: fetch, series: map[string]*series{}, cluster: &series{}, nodes: map[string]*series{}, stop: make(chan struct{})}
 }
 
 func newMetricsServerSampler(client kubernetes.Interface) *MetricsSampler {
@@ -235,9 +238,18 @@ func (m *MetricsSampler) Sample(now time.Time) {
 	t := now.Unix()
 	latest := map[string]map[string]PodUsage{}
 	var total Usage
+	perNode := map[string]Usage{}
 	for _, p := range pods {
 		total.CPU += p.CPU
 		total.Mem += p.Mem
+		if m.nodeOf != nil {
+			if n := m.nodeOf(p.Namespace, p.Name); n != "" {
+				u := perNode[n]
+				u.CPU += p.CPU
+				u.Mem += p.Mem
+				perNode[n] = u
+			}
+		}
 		if latest[p.Namespace] == nil {
 			latest[p.Namespace] = map[string]PodUsage{}
 		}
@@ -251,9 +263,17 @@ func (m *MetricsSampler) Sample(now time.Time) {
 		s.add(t, p.Usage)
 	}
 	m.cluster.add(t, total)
-	for key, s := range m.series {
-		if t-s.lastSeen > int64(historyWindow/time.Second) {
-			delete(m.series, key)
+	for n, u := range perNode {
+		if m.nodes[n] == nil {
+			m.nodes[n] = &series{}
+		}
+		m.nodes[n].add(t, u)
+	}
+	for _, all := range []map[string]*series{m.series, m.nodes} {
+		for key, s := range all {
+			if t-s.lastSeen > int64(historyWindow/time.Second) {
+				delete(all, key)
+			}
 		}
 	}
 	m.latest, m.updatedAt, m.available, m.reason = latest, now, true, ""
@@ -339,6 +359,17 @@ func (m *MetricsSampler) ClusterHistory(rng time.Duration, now time.Time) []Poin
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.cluster.points(now.Add(-rng).Unix())
+}
+
+// NodeHistory is the usage of a node's pods summed, over the last rng (at most 24 h).
+func (m *MetricsSampler) NodeHistory(node string, rng time.Duration, now time.Time) []Point {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	s := m.nodes[node]
+	if s == nil {
+		return []Point{}
+	}
+	return s.points(now.Add(-rng).Unix())
 }
 
 // All is the latest sample of every pod in the cluster (PodUsage.Namespace set).

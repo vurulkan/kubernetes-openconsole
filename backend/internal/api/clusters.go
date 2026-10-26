@@ -186,7 +186,7 @@ func (s *Server) handleUpdateClusterByID(w http.ResponseWriter, r *http.Request)
 	if p.ReplaceSecrets {
 		s.clusters.Invalidate(id)
 		s.prom.Delete(id)
-		s.overviewHistory.Delete(id)
+		s.dropHistory(id)
 	}
 	s.recordClusterAudit(r, audit.VerbUpdate, p.Name, id)
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
@@ -205,7 +205,7 @@ func (s *Server) handleDeleteCluster(w http.ResponseWriter, r *http.Request) {
 	}
 	s.clusters.Invalidate(id)
 	s.prom.Delete(id)
-	s.overviewHistory.Delete(id)
+	s.dropHistory(id)
 	// Users who had picked it fall back to the default cluster.
 	_ = s.store.ClearClusterSelections(r.Context(), id)
 	s.recordClusterAudit(r, audit.VerbDelete, name, id)

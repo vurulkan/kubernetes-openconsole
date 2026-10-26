@@ -87,6 +87,27 @@ func TestHistoryURLModeWithAuthAndHeaders(t *testing.T) {
 	}
 }
 
+func TestNodeHistoryQuery(t *testing.T) {
+	var mu sync.Mutex
+	var queries []string
+	srv := fakeProm(t, nil, func(path, q string) any {
+		mu.Lock()
+		queries = append(queries, q)
+		mu.Unlock()
+		return map[string]any{"resultType": "matrix", "result": []any{}}
+	})
+	c, _ := New(models.PrometheusConfig{Mode: "url", URL: srv.URL}, nil)
+	pts, err := c.NodeHistory(context.Background(), "aks-pool-1", []string{"10.0.0.4"}, "1h", time.Unix(1000, 0))
+	if err != nil || len(pts) != 0 {
+		t.Fatalf("points %v, err %v", pts, err)
+	}
+	// The node label first; nothing there, then the instance (name or address, with or without the kubelet port).
+	all := strings.Join(queries, "\n")
+	if len(queries) != 4 || !strings.Contains(all, `node="aks-pool-1"`) || !strings.Contains(all, `instance=~"(aks-pool-1|10\\.0\\.0\\.4)(:[0-9]+)?"`) {
+		t.Fatalf("queries = %s", all)
+	}
+}
+
 func TestDiagnose(t *testing.T) {
 	answers := map[string]any{}
 	srv := fakeProm(t, nil, func(path, q string) any {

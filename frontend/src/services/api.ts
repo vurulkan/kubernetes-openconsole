@@ -380,6 +380,49 @@ export const getOverview = (auto?: boolean) => apiRequest<Overview>('/api/admin/
 /** The overview's 24 h cluster CPU / memory; Prometheus can take seconds, so it comes apart. */
 export const getOverviewHistory = () => apiRequest<UsageHistory>('/api/admin/overview/history', autoRefresh(true));
 
+/** Nodes (admins only). Requests / limits as the scheduler counts them; usage from metrics-server. */
+export type NodeRow = Overview['nodes'][number] & {
+  cpuRequests: number;
+  cpuLimits: number;
+  memoryRequests: number;
+  memoryLimits: number;
+  roles: string[];
+  kubeletVersion: string;
+  os: string;
+  arch: string;
+  created: string;
+  labels?: Record<string, string>;
+  /** Pods not finished, against the node's allocatable pod count. */
+  pods: number;
+  podCapacity: number;
+};
+export type NodeList = {
+  generatedAt: string;
+  nodes: NodeRow[];
+  /** forbidden | error: the token can't list nodes. */
+  note?: string;
+  /** metrics_unavailable: no usage column. */
+  metricsNote?: string;
+};
+/** A pod on the node, trimmed (classify with podStatus()), with what it reserves and its last sample. */
+export type NodePod = Record<string, any> & {
+  cpuRequests: number;
+  memoryRequests: number;
+  usage?: Usage;
+};
+export type NodeDetail = {
+  summary: NodeRow;
+  node: Record<string, any>;
+  pods: NodePod[];
+  /** Warnings first, then newest. */
+  events: Array<Record<string, unknown>>;
+};
+export const listNodes = (auto?: boolean) => apiRequest<NodeList>('/api/admin/nodes', autoRefresh(auto));
+export const getNode = (name: string, auto?: boolean) =>
+  apiRequest<NodeDetail>(`/api/admin/nodes/${encodeURIComponent(name)}`, autoRefresh(auto));
+export const getNodeUsageHistory = (name: string, range: string) =>
+  apiRequest<UsageHistory>(`/api/admin/nodes/${encodeURIComponent(name)}/metrics/history?range=${range}`, autoRefresh(true));
+
 // Polled every 30 s next to the lists; never audited server-side.
 export const getPodMetrics = (namespace: string) =>
   apiRequest<MetricsSnapshot>(`/api/namespaces/${namespace}/metrics/pods`, autoRefresh(true));

@@ -13,7 +13,7 @@ const TONES = {
   warn: { fill: 'bg-amber-500', track: 'bg-amber-100 dark:bg-amber-500/20' },
   high: { fill: 'bg-rose-500', track: 'bg-rose-100 dark:bg-rose-500/20' },
 };
-const toneOf = (pct: number) => (pct >= 90 ? TONES.high : pct >= 70 ? TONES.warn : TONES.ok);
+export const toneOf = (pct: number) => (pct >= 90 ? TONES.high : pct >= 70 ? TONES.warn : TONES.ok);
 
 /**
  * "412Mi / 512Mi" with a meter of usage against the limit, or the request
@@ -183,8 +183,10 @@ export const UsageHistoryPanel: React.FC<{
   load: (range: string) => Promise<UsageHistory>;
   cpuLimit?: number;
   memLimit?: number;
+  /** Label of the dashed line; "limit" by default ("allocatable" for a node). */
+  limitLabel?: string;
   reloadKey: unknown;
-}> = ({ load, cpuLimit, memLimit, reloadKey }) => {
+}> = ({ load, cpuLimit, memLimit, limitLabel, reloadKey }) => {
   const { t } = useTranslation();
   const [range, setRange] = useState('1h');
   const [data, setData] = useState<UsageHistory | null>(null);
@@ -238,8 +240,8 @@ export const UsageHistoryPanel: React.FC<{
         <p className="text-xs text-slate-500 dark:text-slate-400">{t('dashboard.usage.noHistory')}</p>
       ) : (
         <>
-          <LineChart kind="cpu" title="CPU" points={cpu} limit={cpuLimit} />
-          <LineChart kind="mem" title={t('dashboard.usage.memory')} points={mem} limit={memLimit} />
+          <LineChart kind="cpu" title="CPU" points={cpu} limit={cpuLimit} limitLabel={limitLabel} />
+          <LineChart kind="mem" title={t('dashboard.usage.memory')} points={mem} limit={memLimit} limitLabel={limitLabel} />
         </>
       )}
     </div>

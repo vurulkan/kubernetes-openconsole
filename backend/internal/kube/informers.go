@@ -7,6 +7,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	appslisters "k8s.io/client-go/listers/apps/v1"
@@ -128,6 +129,10 @@ type InformerCache struct {
 	jobLister         batchlisters.JobLister
 	namespaceLister   corelisters.NamespaceLister
 	eventLister       corelisters.EventLister
+	podIndexer        cache.Indexer // also by spec.nodeName (podNodeIndex)
+	// nodeLister is nil when the credentials may not list and watch nodes (set before the sync).
+	nodeLister corelisters.NodeLister
+	client     kubernetes.Interface
 
 	countsMu sync.RWMutex
 	counts   []CountPoint // every 5 min, the last 24 h
@@ -141,10 +146,18 @@ func newInformerCache(client kubernetes.Interface, bus *EventBus, onTermination 
 		factory: factory,
 		stop:    make(chan struct{}),
 		bus:     bus,
+		client:  client,
 	}
 
 	podInf := factory.Core().V1().Pods()
 	ic.podLister = podInf.Lister()
+	_ = podInf.Informer().AddIndexers(cache.Indexers{podNodeIndex: func(obj any) ([]string, error) {
+		if p, ok := obj.(*corev1.Pod); ok && p.Spec.NodeName != "" {
+			return []string{p.Spec.NodeName}, nil
+		}
+		return nil, nil
+	}})
+	ic.podIndexer = podInf.Informer().GetIndexer()
 	deployInf := factory.Apps().V1().Deployments()
 	ic.deploymentLister = deployInf.Lister()
 	dsInf := factory.Apps().V1().DaemonSets()
@@ -278,6 +291,13 @@ func toResourceEvent(verb, kind string, obj any) (ResourceEvent, bool) {
 }
 
 func (c *InformerCache) start(ctx context.Context) {
+	// Nodes only with list + watch: a token from an older rbac.yaml would otherwise hold up
+	// the sync for 20 s and log a refused watch forever; the node screen then lists them itself.
+	probeCtx, cancelProbe := context.WithTimeout(ctx, 10*time.Second)
+	defer cancelProbe()
+	if canWatchNodes(probeCtx, c.client) {
+		c.nodeLister = c.factory.Core().V1().Nodes().Lister()
+	}
 	c.factory.Start(c.stop)
 	// Bounded initial sync so a slow cluster doesn't delay readiness forever.
 	syncCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
@@ -386,6 +406,59 @@ func (c *InformerCache) WarningEvents(since time.Time) []corev1.Event {
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return EventTime(&out[i]).After(EventTime(&out[j])) })
+	return out
+}
+
+const podNodeIndex = "nodeName"
+
+func canWatchNodes(ctx context.Context, client kubernetes.Interface) bool {
+	for _, verb := range []string{"list", "watch"} {
+		r, err := client.AuthorizationV1().SelfSubjectAccessReviews().Create(ctx, &authorizationv1.SelfSubjectAccessReview{
+			Spec: authorizationv1.SelfSubjectAccessReviewSpec{ResourceAttributes: &authorizationv1.ResourceAttributes{Verb: verb, Resource: "nodes"}},
+		}, metav1.CreateOptions{})
+		if err != nil || !r.Status.Allowed {
+			return false
+		}
+	}
+	return true
+}
+
+// Nodes lists the cluster's nodes from the cache; false when nodes aren't watched or the cache is cold.
+func (c *InformerCache) Nodes() ([]*corev1.Node, bool) {
+	if !c.Synced() || c.nodeLister == nil {
+		return nil, false
+	}
+	nodes, err := c.nodeLister.List(labels.Everything())
+	return nodes, err == nil
+}
+
+// NodePods are the pods scheduled to a node (the nodeName index).
+func (c *InformerCache) NodePods(node string) []*corev1.Pod {
+	objs, _ := c.podIndexer.ByIndex(podNodeIndex, node)
+	out := make([]*corev1.Pod, 0, len(objs))
+	for _, o := range objs {
+		out = append(out, o.(*corev1.Pod))
+	}
+	return out
+}
+
+// PodNode is the node a pod runs on, "" when unknown (the sampler's node series).
+func (c *InformerCache) PodNode(namespace, name string) string {
+	if p, err := c.podLister.Pods(namespace).Get(name); err == nil {
+		return p.Spec.NodeName
+	}
+	return ""
+}
+
+// NodeEvents lists the events about a node from the cache.
+func (c *InformerCache) NodeEvents(node string) []corev1.Event {
+	evs, _ := c.eventLister.List(labels.Everything())
+	out := []corev1.Event{}
+	for _, e := range evs {
+		if e.InvolvedObject.Kind == "Node" && e.InvolvedObject.Name == node {
+			out = append(out, *e)
+		}
+	}
 	return out
 }
 
