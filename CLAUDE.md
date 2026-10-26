@@ -82,6 +82,15 @@ the skill (`/plugin marketplace add nextlevelbuilder/ui-ux-pro-max-skill`, then
 `/plugin install ui-ux-pro-max@ui-ux-pro-max-skill`) and keep to the existing Tailwind tokens and
 `components/ui.tsx`; don't introduce a second component library.
 
+## Working style (ponytail)
+
+Agent work on this repo runs with the [ponytail](https://github.com/DietrichGebert/ponytail) plugin
+(`/plugin marketplace add DietrichGebert/ponytail`, then `/plugin install ponytail@ponytail`): the smallest
+complete change, reuse what the repo already has, no unrequested options or abstractions, a test for risky logic.
+- A deliberate shortcut gets a comment `shortcut: <the limit>, <when to upgrade>`; `/ponytail-debt` lists them.
+- Review a change before the PR with `/ponytail-review`; whole-repo audit with `/ponytail-audit`.
+- Without the plugin, follow the same rules by hand.
+
 ## Release
 
 Feature branch `X.Y.Z-name` → squash merge to `main` → `git tag -a vX.Y.Z` + push the tag → CI builds once
