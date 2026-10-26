@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go test *)",
+      "Bash(go vet *)",
+      "Bash(go build *)",
+      "Bash(npm test *)",
+      "Bash(npm run *)",
+      "Bash(npx tsc *)"
+    ],
+    "deny": [
+      "Read(frontend/package-lock.json)",
+      "Read(frontend/dist/**)",
+      "Read(**/node_modules/**)"
+    ]
+  }
+}

@@ -32,4 +32,4 @@ backend/data/
 # Env files
 .env
 .env.*
-.claude/
+.claude/settings.local.json
