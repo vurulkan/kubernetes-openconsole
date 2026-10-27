@@ -46,7 +46,7 @@ Every read and write is an audit event with its own fields: `action` (`deploymen
 - **Keyboard-first navigation**: `⌘K` / `Ctrl+K` command palette, `?` cheat sheet, chord shortcuts for nav/theme, `c` cluster switcher, `v` saved views, `e` live events panel, `n` namespace filter focus. TR keyboard positions (`ğ` / `ü` / `.`) are mapped to the US `[` / `]` / `/` by physical key, so the shortcuts don't break on a TR Q layout.
 - **Saved views** — store (cluster, namespace, tab, search, view mode) under a name on the server, so they follow you to any browser; **share** a view with every user.
 - **Keyboard table navigation** — `j` / `k` move through rows of the admin tables, `Enter` opens, `d` deletes (with confirmation), `n` / `p` change page.
-- **Label filters in the search box** — `label:app=foo`, `label:tier`, name tokens, AND-combined.
+- **Search every column, plus label filters** — plain terms match the name and any column's text, `label:app=foo`, `label:tier`, AND-combined.
 - **Audit logs** with pagination, filters, CSV export; **users and groups CSV export** for access reviews.
 - **Accessible**: WCAG 2.1 AA contrast in light and dark themes, labelled controls, focusable scroll regions — checked with axe in the test suite and in a real browser.
 - **Admin Role Permissions redesign** — role sidebar, grouped grant cards (namespaces that share identical grants merge), bulk Add Permissions modal with templates (Viewer / Developer / SRE / Admin), copy-from-role, inline edit.
@@ -73,14 +73,14 @@ docker build -t kubernetes-openconsole:local .
 ### Option B — prebuilt image (GHCR)
 
 ```yaml
-image: ghcr.io/vurulkan/kubernetes-openconsole:2.20.0   # pin a release
+image: ghcr.io/vurulkan/kubernetes-openconsole:2.21.0   # pin a release
 ```
 
 Images are multi-arch (**linux/amd64** and **linux/arm64**: Graviton, Ampere, Apple silicon); the runtime picks the right one. CI is the only publisher. Release tags:
 
 | Tag | Points to | Moves? |
 |---|---|---|
-| `X.Y.Z` (e.g. `2.20.0`) | that release | no — use this in production |
+| `X.Y.Z` (e.g. `2.21.0`) | that release | no — use this in production |
 | `latest` | the newest release, same image (same digest) as its `X.Y.Z` | yes, on each release |
 
 Releasing = push the `vX.Y.Z` git tag; CI builds once and pushes `:X.Y.Z` and `:latest`. Pushes to `main` are built and tested but not published. Pushes to other branches publish pre-release test images as `:dev-<build number>` and `:dev-latest`; never run those in production, and `:latest` never points to one.
@@ -91,12 +91,12 @@ Every release image has a signed SLSA **build provenance** and an SPDX **SBOM** 
 
 ```bash
 # Provenance: built by this repository's CI from a release tag
-gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.20.0 \
+gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.21.0 \
   --repo vurulkan/kubernetes-openconsole \
   --signer-workflow vurulkan/kubernetes-openconsole/.github/workflows/ci.yml
 
 # SBOM (packages in the image)
-gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.20.0 \
+gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.21.0 \
   --repo vurulkan/kubernetes-openconsole \
   --predicate-type https://spdx.dev/Document/v2.3 --format json \
   --jq '.[0].verificationResult.statement.predicate.packages | length'
@@ -124,7 +124,7 @@ cd frontend && npx tsc --noEmit -p . && npm test && npm run build
 docker run --rm -p 8080:8080 \
   -e TIMEZONE=Europe/Istanbul \
   -v kubernetes-openconsole-data:/data \
-  ghcr.io/vurulkan/kubernetes-openconsole:2.20.0
+  ghcr.io/vurulkan/kubernetes-openconsole:2.21.0
 ```
 
 The image defaults to `DATA_PATH=/data/app.db` and `STATIC_DIR=/app/public`; the SQLite DB and session recordings live under `/data`. Drop the `-v` for a throwaway instance. Then open http://localhost:8080 and add a cluster ([Connecting clusters](#connecting-clusters)).
@@ -151,7 +151,7 @@ Then:
 1. Open the UI and log in as `admin` / `admin` ([First login](#first-login)).
 2. Add the cluster in **Admin → Clusters** ([Connecting clusters](#connecting-clusters)). The backend never picks up a cluster on its own.
 
-To upgrade, run `kubectl -n kubernetes-openconsole rollout restart deploy/kubernetes-openconsole`. The pod pulls `:latest`, i.e. the newest release. To stay on a fixed version, set a release tag (e.g. `2.20.0`) in `deployment.yaml` or through the `images:` override in `kustomization.yaml`, then re-apply.
+To upgrade, run `kubectl -n kubernetes-openconsole rollout restart deploy/kubernetes-openconsole`. The pod pulls `:latest`, i.e. the newest release. To stay on a fixed version, set a release tag (e.g. `2.21.0`) in `deployment.yaml` or through the `images:` override in `kustomization.yaml`, then re-apply.
 
 ## Environment variables
 
@@ -542,6 +542,8 @@ Templates in the Add Permissions modal: Viewer (read only, including secret *met
 
 **Status.** Pods show the STATUS `kubectl get pods` would print, computed the same way (waiting / terminated reasons, init containers, Terminating, Unschedulable): red for a pod that is crashing or can't start, amber for one that waits or isn't ready, green for ready, gray for completed. Hovering an unhealthy status shows its latest Warning events.
 
+**Containers and owner (Pods).** The *Containers* column has one square per container, the pod's containers first, then its init containers: filled green running and ready (with an amber ring when it has restarted), filled amber running but not ready or still starting, filled red waiting on an error (CrashLoopBackOff, ImagePullBackOff, …), hollow gray exited with 0 (a finished init container), hollow red exited with an error. Hovering a square shows the container's name (init containers and sidecars are marked), its state, when it started and its restarts; sorting the column orders pods by their number of containers (most first), and among pods with as many containers puts the ones with more problem containers first. Cards show the same squares next to the status for pods with more than one container. *Controlled By* shows the kind of the pod's direct controller (ReplicaSet, StatefulSet, DaemonSet, Job, or Node for a static pod), its name on hover.
+
 **Restarts.** Next to the restart count is the last exit of a restarted container: `9 · 137 OOMKilled · 3m`. The tooltip and the pod drawer explain the code: `137` with `OOMKilled` is the memory limit, `137` otherwise a failed liveness probe or a stop that took longer than the grace period, `143` a normal SIGTERM (rollout, scale-down), `1` an application error, `127` a command missing from the image, … Kubernetes keeps only the last exit of a container; OpenConsole keeps the rest (below).
 
 **Previous log.** For a restarted container the log window has *Before the last restart*, the log of the container instance that exited (`kubectl logs --previous`). It is audited as `pod.logs` with `previous: true`. Some runtimes drop the log of a container that died within a second; the API then answers "unable to retrieve container logs", as `kubectl` does.
@@ -877,7 +879,8 @@ Every user works on **their own** cluster:
 
 - **Namespaces** (left panel): only the ones you have access to, with a filter (`n`). The selection is remembered.
 - **Resource tabs**: only the resources you may list. `[` / `]` switch tabs. There are **card** and **list** views; list columns are sortable.
-- **Search** (`/`): name tokens plus `label:key=value` or `label:key`, combined with AND.
+- **Columns** (list view): the ⋮ at the right end of the header row picks which columns show, per tab (*Name* always stays). The choice is kept in the browser (not on the server); *Reset to default* shows them all again. Hiding a column doesn't change what the search finds.
+- **Search** (`/`): every space-separated term must match (case-insensitive, part of a word is enough). A plain term matches the name or the text of any column on the tab, hidden ones too, so list and card view find the same rows: Pods status, container names and Controlled By (kind and name); Deployments / StatefulSets / DaemonSets status and replica count (`2/3`); Services type, cluster IP, external IPs and ports (`80`, `8080/TCP`, target port, node port, port name); ConfigMaps / Secrets key names and secret type; Ingresses hosts and paths; CronJobs / Jobs schedule and status; HPAs target (`Deployment/web`) and min / max. Ages, restarts, CPU / memory and fields that aren't columns (node, pod IP, image) are not searched. `label:key=value` or `label:key` match labels.
 - **Saved views** (`v`): save the current cluster + namespace + tab + search + view mode under a name. Views are stored on the server, so they follow you to every browser. Opening a view saved on another cluster switches you to that cluster. The share icon makes a view visible to **every user** (marked with its owner); others can use it but only you can rename, unshare or delete it, and admins can remove shared views. A shared view never grants access: someone without permission on its namespace just sees an empty list. Views saved in the browser by older versions are moved to the server the first time you open the menu.
 - **Live Events** (`e`): adds, updates, deletes and Kubernetes Events in real time, with filters for warnings.
 - **Pods**: logs (live stream), events, **Shell** (`pods:exec`, recorded), YAML.

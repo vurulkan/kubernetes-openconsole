@@ -104,3 +104,64 @@ describe('DataTable sorting', () => {
     expect(order()).toEqual(['row-1', 'row-3', 'row-2']);
   });
 });
+
+describe('DataTable column picker', () => {
+  type P = { id: number; name: string; ns: string; ip: string };
+  const data: P[] = [{ id: 1, name: 'web', ns: 'prod', ip: '10.0.0.1' }];
+  const cols: Column<P>[] = [
+    { key: 'name', header: 'Name', cell: (r) => r.name },
+    { key: 'ns', header: 'Namespace', cell: (r) => r.ns },
+    { key: 'ip', header: 'IP', cell: (r) => r.ip },
+    { key: 'actions', header: '', cell: () => null },
+  ];
+  const headers = () => screen.getAllByRole('columnheader').map((h) => h.textContent);
+  const mount = () => render(<DataTable rows={data} columns={cols} rowKey={(r) => r.id} columnsStorageKey="t:pods" />);
+
+  it('hides a column, keeps it after a remount, and resets; Name cannot be hidden', async () => {
+    localStorage.clear();
+    const { unmount } = mount();
+    const button = screen.getByRole('button', { name: 'Columns' });
+    fireEvent.click(button);
+    const items = screen.getAllByRole('menuitemcheckbox');
+    expect(items.map((i) => i.textContent)).toEqual(['Name', 'Namespace', 'IP']);
+    expect(items[0]).toBeDisabled();
+    expect(items[1]).toHaveFocus();
+    await expectNoA11yViolations(document.body);
+
+    fireEvent.click(items[1]);
+    expect(headers()).toEqual(['Name', 'IP', 'Actions']);
+    expect(screen.queryByText('prod')).toBeNull();
+    expect(localStorage.getItem('dt:cols:t:pods')).toBe('["ns"]');
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(button).toHaveFocus();
+
+    unmount();
+    mount();
+    expect(headers()).toEqual(['Name', 'IP', 'Actions']);
+    fireEvent.click(screen.getByRole('button', { name: 'Columns' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Reset to default' }));
+    expect(headers()).toEqual(['Name', 'Namespace', 'IP', 'Actions']);
+    expect(localStorage.getItem('dt:cols:t:pods')).toBeNull();
+  });
+
+  it('arrow keys move through the enabled items', () => {
+    localStorage.clear();
+    mount();
+    fireEvent.click(screen.getByRole('button', { name: 'Columns' }));
+    const [, ns, ip] = screen.getAllByRole('menuitemcheckbox');
+    const reset = screen.getByRole('menuitem');
+    fireEvent.keyDown(ns, { key: 'ArrowDown' });
+    expect(ip).toHaveFocus();
+    fireEvent.keyDown(ip, { key: 'ArrowDown' });
+    expect(reset).toHaveFocus();
+    fireEvent.keyDown(reset, { key: 'ArrowDown' });
+    expect(ns).toHaveFocus(); // Name is disabled, so the wrap skips it
+  });
+
+  it('is off without columnsStorageKey', () => {
+    render(<DataTable rows={data} columns={cols} rowKey={(r) => r.id} />);
+    expect(screen.queryByRole('button', { name: 'Columns' })).toBeNull();
+  });
+});

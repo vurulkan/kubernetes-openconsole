@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import i18n from '../i18n';
-import { exitCodeHint, mainContainer, podStatus, type PodLike } from './podStatus';
+import { containerStates, exitCodeHint, mainContainer, podController, podStatus, type PodLike } from './podStatus';
 
 const running = (name: string, extra: object = {}) => ({
   name,
@@ -224,5 +224,87 @@ describe('mainContainer', () => {
     expect(mainContainer(pod(['topic-operator', 'user-operator'], { kind: 'ReplicaSet', name: 'kafka-entity-operator-1' }))).toBe('topic-operator');
     expect(mainContainer(pod(['istio-proxy', 'api'], undefined, { labels: { app: 'api' } }))).toBe('api');
     expect(mainContainer({})).toBe('');
+  });
+});
+
+describe('podStatus with native sidecars', () => {
+  const spec = { initContainers: [{ name: 'migrate' }, { name: 'log-agent', restartPolicy: 'Always' }] };
+  const done = { name: 'migrate', state: { terminated: { exitCode: 0, reason: 'Completed' } } };
+
+  it('a started sidecar no longer holds the pod in Init and counts as a container', () => {
+    const s = podStatus({
+      spec,
+      status: { phase: 'Running', initContainerStatuses: [done, running('log-agent', { started: true })], containerStatuses: [running('app')] },
+    });
+    expect([s.label, s.tone, s.ready, s.total]).toEqual(['Running', 'ok', 2, 2]);
+  });
+
+  it('a sidecar that has not started yet is still Init', () => {
+    const s = podStatus({
+      spec,
+      status: {
+        phase: 'Pending',
+        initContainerStatuses: [done, { name: 'log-agent', started: false, state: { waiting: { reason: 'PodInitializing' } } }],
+        containerStatuses: [{ name: 'app', state: { waiting: { reason: 'PodInitializing' } } }],
+      },
+    });
+    expect(s.label).toBe('Init:1/2');
+  });
+});
+
+describe('containerStates', () => {
+  it('reads every state, containers first, then init containers and sidecars', () => {
+    const p = {
+      spec: {
+        containers: [{ name: 'app' }, { name: 'proxy' }, { name: 'worker' }, { name: 'job' }, { name: 'boom' }, { name: 'pull' }],
+        initContainers: [{ name: 'migrate' }, { name: 'logs', restartPolicy: 'Always' }],
+      },
+      status: {
+        initContainerStatuses: [
+          { name: 'migrate', state: { terminated: { exitCode: 0, reason: 'Completed', startedAt: '2026-10-26T07:59:00Z' } } },
+          running('logs'),
+        ],
+        containerStatuses: [
+          running('app'),
+          running('proxy', { restartCount: 2 }),
+          running('worker', { ready: false }),
+          { name: 'job', state: { terminated: { exitCode: 0, reason: 'Completed' } } },
+          { name: 'boom', restartCount: 4, state: { waiting: { reason: 'CrashLoopBackOff' } } },
+          { name: 'pull', state: { waiting: { reason: 'ContainerCreating' } } },
+        ],
+      },
+    };
+    expect(containerStates(p).map((c) => [c.name, c.kind, c.state, c.look, c.problem])).toEqual([
+      ['app', 'container', 'running, ready', 'ok', false],
+      ['proxy', 'container', 'running, restarted, ready', 'restarted', false],
+      ['worker', 'container', 'running, not ready', 'warn', true],
+      ['job', 'container', 'terminated: Completed (0)', 'done', false],
+      ['boom', 'container', 'waiting: CrashLoopBackOff', 'error', true],
+      ['pull', 'container', 'waiting: ContainerCreating', 'warn', true],
+      ['migrate', 'init', 'terminated: Completed (0)', 'done', false],
+      ['logs', 'sidecar', 'running, ready', 'ok', false],
+    ]);
+    expect(containerStates(p)[0].startedAt).toBe('2026-10-26T08:00:00Z');
+    expect(containerStates(p)[4].restarts).toBe(4);
+  });
+
+  it('marks a failed exit and a container without a status yet', () => {
+    const p = {
+      spec: { containers: [{ name: 'app' }], initContainers: [{ name: 'init' }] },
+      status: { initContainerStatuses: [{ name: 'init', state: { terminated: { exitCode: 2 } } }] },
+    };
+    expect(containerStates(p).map((c) => [c.name, c.state, c.look])).toEqual([
+      ['app', 'waiting', 'warn'],
+      ['init', 'terminated: ExitCode (2)', 'failed'],
+    ]);
+  });
+});
+
+describe('podController', () => {
+  it('is the direct controller, not resolved to the Deployment', () => {
+    const p = (refs: Array<{ kind: string; name: string; controller?: boolean }>) => ({ metadata: { ownerReferences: refs } });
+    expect(podController(p([{ kind: 'ReplicaSet', name: 'web-7d9f8', controller: true }]))).toEqual({ kind: 'ReplicaSet', name: 'web-7d9f8' });
+    expect(podController(p([{ kind: 'Foo', name: 'x' }, { kind: 'Node', name: 'n1', controller: true }]))).toEqual({ kind: 'Node', name: 'n1' });
+    expect(podController({})).toBeUndefined();
   });
 });

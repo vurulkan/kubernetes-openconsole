@@ -10,10 +10,10 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Badge } from '../../components/ui';
-import { PodRestarts, PodStatusBadge } from '../../components/PodStatusBadge';
+import { ContainerSquares, PodRestarts, PodStatusBadge } from '../../components/PodStatusBadge';
 import { Column, DataTable, IconButton } from '../../components/DataTable';
 import { ageShort } from '../../utils/age';
-import { podStatus, type PodStatus } from '../../utils/podStatus';
+import { containerStates, podController, podStatus, type ContainerInfo, type PodStatus } from '../../utils/podStatus';
 import { UsageBar } from '../../components/Usage';
 import type { MetricsSnapshot } from '../../services/api';
 import { ownerUsage, podResources, scaleResources } from '../../utils/resources';
@@ -26,6 +26,12 @@ function statusOf(it: Item): PodStatus {
   let s = statusCache.get(it);
   if (!s) statusCache.set(it, (s = podStatus(it)));
   return s;
+}
+const containersCache = new WeakMap<Item, ContainerInfo[]>();
+function containersOf(it: Item): ContainerInfo[] {
+  let c = containersCache.get(it);
+  if (!c) containersCache.set(it, (c = containerStates(it)));
+  return c;
 }
 const TONE_ORDER = { error: 0, warn: 1, idle: 2, ok: 3 } as const;
 
@@ -139,7 +145,7 @@ export const ResourceListView: React.FC<Props> = ({
   const columns: Column<Item>[] = React.useMemo(() => {
     const nameCol: Column<Item> = {
       key: 'name',
-      header: 'Name',
+      header: t('dashboard.columns.name'),
       sortValue: (it) => nameOf(it).toLowerCase(),
       cell: (it) => (
         <span className="truncate font-mono text-[12.5px] font-medium text-slate-900 dark:text-slate-100">
@@ -149,7 +155,7 @@ export const ResourceListView: React.FC<Props> = ({
     };
     const ageCol: Column<Item> = {
       key: 'age',
-      header: 'Age',
+      header: t('dashboard.columns.age'),
       align: 'right',
       width: '80px',
       // Age sort uses creationTimestamp parsed to epoch ms, so "newer first"
@@ -173,7 +179,7 @@ export const ResourceListView: React.FC<Props> = ({
         nameCol,
         {
           key: 'status',
-          header: 'Status',
+          header: t('dashboard.columns.status'),
           sortValue: (it) => TONE_ORDER[statusOf(it).tone],
           cell: (it) => {
             const st = statusOf(it);
@@ -191,12 +197,36 @@ export const ResourceListView: React.FC<Props> = ({
           },
         },
         {
+          key: 'containers',
+          header: t('dashboard.columns.containers'),
+          descFirst: true,
+          // By container count; equal counts put more problem containers first, then keep the name order (stable sort).
+          sortValue: (it) => {
+            const c = containersOf(it);
+            return c.length * 1000 + c.filter((x) => x.problem).length;
+          },
+          cell: (it) => <ContainerSquares containers={containersOf(it)} />,
+        },
+        {
           key: 'restarts',
-          header: 'Restarts',
-          width: '200px',
+          header: t('dashboard.columns.restarts'),
+          width: '90px',
           descFirst: true,
           sortValue: (it) => statusOf(it).restarts,
           cell: (it) => <PodRestarts status={statusOf(it)} />,
+        },
+        {
+          key: 'controlled-by',
+          header: t('dashboard.columns.controlledBy'),
+          sortValue: (it) => podController(it)?.kind ?? null,
+          cell: (it) => {
+            const c = podController(it);
+            return (
+              <span className="font-mono text-xs text-slate-600 dark:text-slate-300" title={c ? `${c.kind} ${c.name}` : undefined}>
+                {c?.kind ?? '—'}
+              </span>
+            );
+          },
         },
         ...podUsageCols,
         ageCol,
@@ -232,7 +262,7 @@ export const ResourceListView: React.FC<Props> = ({
         nameCol,
         {
           key: 'status',
-          header: 'Status',
+          header: t('dashboard.columns.status'),
           width: '130px',
           sortValue: (it) => {
             const desired = ((it.spec as any)?.replicas as number) ?? 0;
@@ -251,7 +281,7 @@ export const ResourceListView: React.FC<Props> = ({
         },
         {
           key: 'replicas',
-          header: 'Replicas',
+          header: t('dashboard.columns.replicas'),
           align: 'center',
           // Wider than before and the subtitle is a second small line so a
           // 10/10 count on a 1920px screen still fits on one row.
@@ -267,7 +297,7 @@ export const ResourceListView: React.FC<Props> = ({
                   {ready}/{desired}
                 </span>
                 <span className="font-mono text-[10px] text-slate-500 dark:text-slate-400 whitespace-nowrap">
-                  {avail} avail
+                  {t('dashboard.columns.available', { count: avail })}
                 </span>
               </div>
             );
@@ -316,7 +346,7 @@ export const ResourceListView: React.FC<Props> = ({
         nameCol,
         {
           key: 'type',
-          header: 'Type',
+          header: t('dashboard.columns.type'),
           sortValue: (it) => (((it.spec as any)?.type as string) ?? '').toLowerCase(),
           cell: (it) => (
             <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
@@ -326,7 +356,7 @@ export const ResourceListView: React.FC<Props> = ({
         },
         {
           key: 'cluster-ip',
-          header: 'Cluster IP',
+          header: t('dashboard.columns.clusterIP'),
           sortValue: (it) => ((it.spec as any)?.clusterIP as string) ?? '',
           cell: (it) => (
             <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
@@ -336,7 +366,7 @@ export const ResourceListView: React.FC<Props> = ({
         },
         {
           key: 'ports',
-          header: 'Ports',
+          header: t('dashboard.columns.ports'),
           cell: (it) => {
             const ports = ((it.spec as any)?.ports as Array<{ port?: number; protocol?: string }>) ?? [];
             if (ports.length === 0) return <span className="text-xs text-slate-400">—</span>;
@@ -369,7 +399,7 @@ export const ResourceListView: React.FC<Props> = ({
         nameCol,
         {
           key: 'keys',
-          header: 'Keys',
+          header: t('dashboard.columns.keys'),
           align: 'center',
           width: '80px',
           sortValue: (it) => Object.keys(((it.data as Record<string, string>) ?? {})).length,
@@ -458,7 +488,7 @@ export const ResourceListView: React.FC<Props> = ({
         nameCol,
         {
           key: 'hosts',
-          header: 'Hosts',
+          header: t('dashboard.columns.hosts'),
           cell: (it) => {
             const rules = ((it.spec as any)?.rules as Array<{ host?: string }>) ?? [];
             const hosts = rules.map((r) => r.host).filter(Boolean) as string[];
@@ -472,7 +502,7 @@ export const ResourceListView: React.FC<Props> = ({
         },
         {
           key: 'paths',
-          header: 'Paths',
+          header: t('dashboard.columns.paths'),
           cell: (it) => {
             const rules = ((it.spec as any)?.rules as Array<{ http?: { paths?: Array<{ path?: string }> } }>) ?? [];
             const paths = rules.flatMap((r) => r.http?.paths ?? []).map((p) => p.path).filter(Boolean) as string[];
@@ -506,7 +536,7 @@ export const ResourceListView: React.FC<Props> = ({
         nameCol,
         {
           key: 'schedule',
-          header: 'Schedule',
+          header: t('dashboard.columns.schedule'),
           sortValue: (it) => ((it.spec as any)?.schedule as string) ?? '',
           cell: (it) => (
             <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
@@ -516,20 +546,20 @@ export const ResourceListView: React.FC<Props> = ({
         },
         {
           key: 'last',
-          header: 'Last run',
+          header: t('dashboard.columns.lastRun'),
           sortValue: (it) => {
             const t = (it.status as any)?.lastScheduleTime as string | undefined;
             return t ? Date.parse(t) : 0;
           },
           cell: (it) => (
             <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
-              {((it.status as any)?.lastScheduleTime as string) ?? 'Never'}
+              {((it.status as any)?.lastScheduleTime as string) ?? t('dashboard.columns.never')}
             </span>
           ),
         },
         {
           key: 'suspended',
-          header: 'Status',
+          header: t('dashboard.columns.status'),
           align: 'center',
           width: '110px',
           sortValue: (it) => (((it.spec as any)?.suspend as boolean) ? 0 : 1),
@@ -562,7 +592,7 @@ export const ResourceListView: React.FC<Props> = ({
         nameCol,
         {
           key: 'status',
-          header: 'Status',
+          header: t('dashboard.columns.status'),
           width: '130px',
           sortValue: (it) => {
             const st = (it.status as any) ?? {};
@@ -584,7 +614,7 @@ export const ResourceListView: React.FC<Props> = ({
         },
         {
           key: 'completions',
-          header: 'Completions',
+          header: t('dashboard.columns.completions'),
           align: 'center',
           width: '120px',
           sortValue: (it) => ((it.status as any)?.succeeded as number) ?? 0,
@@ -623,7 +653,7 @@ export const ResourceListView: React.FC<Props> = ({
         nameCol,
         {
           key: 'status',
-          header: 'Status',
+          header: t('dashboard.columns.status'),
           width: '130px',
           sortValue: (it) => {
             const desired = ((it.status as any)?.desiredNumberScheduled as number) ?? 0;
@@ -642,7 +672,7 @@ export const ResourceListView: React.FC<Props> = ({
         },
         {
           key: 'nodes',
-          header: 'Nodes',
+          header: t('dashboard.columns.nodes'),
           align: 'center',
           width: '110px',
           sortValue: (it) => ((it.status as any)?.desiredNumberScheduled as number) ?? 0,
@@ -679,7 +709,7 @@ export const ResourceListView: React.FC<Props> = ({
         nameCol,
         {
           key: 'status',
-          header: 'Status',
+          header: t('dashboard.columns.status'),
           width: '140px',
           sortValue: (it) => {
             const desired = ((it.spec as any)?.replicas as number) ?? 0;
@@ -698,7 +728,7 @@ export const ResourceListView: React.FC<Props> = ({
         },
         {
           key: 'replicas',
-          header: 'Replicas',
+          header: t('dashboard.columns.replicas'),
           align: 'center',
           width: '110px',
           sortValue: (it) => ((it.spec as any)?.replicas as number) ?? 0,
@@ -744,7 +774,7 @@ export const ResourceListView: React.FC<Props> = ({
         nameCol,
         {
           key: 'target',
-          header: 'Target',
+          header: t('dashboard.columns.target'),
           sortValue: (it) => {
             const ref = (it.spec as any)?.scaleTargetRef as { kind?: string; name?: string } | undefined;
             return `${ref?.kind ?? ''}/${ref?.name ?? ''}`.toLowerCase();
@@ -760,7 +790,7 @@ export const ResourceListView: React.FC<Props> = ({
         },
         {
           key: 'range',
-          header: 'Min/Max',
+          header: t('dashboard.columns.minMax'),
           align: 'center',
           width: '110px',
           sortValue: (it) => ((it.spec as any)?.maxReplicas as number) ?? 0,
@@ -776,7 +806,7 @@ export const ResourceListView: React.FC<Props> = ({
         },
         {
           key: 'current',
-          header: 'Current',
+          header: t('dashboard.columns.current'),
           align: 'center',
           width: '110px',
           sortValue: (it) => ((it.status as any)?.currentReplicas as number) ?? 0,
@@ -849,17 +879,19 @@ export const ResourceListView: React.FC<Props> = ({
   return (
     <div className="p-5">
       <DataTable
+        key={activeTab}
         rows={items}
         columns={withFailing}
         rowKey={(it) => nameOf(it) || JSON.stringify((it.metadata as any)?.uid ?? Math.random())}
         onRowClick={['pods', 'deployments', 'statefulsets', 'daemonsets'].includes(activeTab) ? onOpen : undefined}
         sortStorageKey={`dashboard:${activeTab}`}
+        columnsStorageKey={`dashboard:${activeTab}`}
         emptyMessage={
           loading
-            ? 'Loading…'
+            ? t('common.loading')
             : searchQuery
-            ? 'No matching records found.'
-            : 'No records available.'
+            ? t('dashboard.emptyFiltered')
+            : t('dashboard.empty')
         }
       />
     </div>

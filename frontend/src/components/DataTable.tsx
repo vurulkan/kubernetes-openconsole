@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ChevronsUpDown } from 'lucide-react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ChevronsUpDown, MoreVertical } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { useScopedShortcuts } from '../hooks/useScopedShortcuts';
+import { popModalScope, pushModalScope, useScopedShortcuts } from '../hooks/useScopedShortcuts';
 
 export type Column<T> = {
   key: string;
@@ -38,6 +39,12 @@ type Props<T> = {
    * sorting resets to "no sort" on each mount.
    */
   sortStorageKey?: string;
+  /**
+   * Turns on the column picker (a ⋮ menu in the unlabelled actions column's header) and keeps
+   * the hidden column keys in localStorage under `dt:cols:<key>`. Only hidden keys are stored,
+   * so a column added later shows by default. The `name` column and the actions column can't be hidden.
+   */
+  columnsStorageKey?: string;
 };
 
 type SortState = { key: string; dir: 'asc' | 'desc' } | null;
@@ -62,6 +69,7 @@ export function DataTable<T>({
   pageSize = 25,
   emptyMessage = 'No data.',
   sortStorageKey,
+  columnsStorageKey,
   keyboardNav = false,
   rowClassName,
 }: Props<T>) {
@@ -99,6 +107,27 @@ export function DataTable<T>({
       /* ignore */
     }
   }, [sort, sortStorageKey]);
+
+  const [hidden, setHidden] = useState<string[]>(() => {
+    if (!columnsStorageKey) return [];
+    try {
+      const parsed = JSON.parse(localStorage.getItem('dt:cols:' + columnsStorageKey) ?? '[]');
+      return Array.isArray(parsed) ? parsed.filter((k): k is string => typeof k === 'string') : [];
+    } catch (err) {
+      return [];
+    }
+  });
+  const saveHidden = (keys: string[]) => {
+    setHidden(keys);
+    try {
+      if (keys.length) localStorage.setItem('dt:cols:' + columnsStorageKey, JSON.stringify(keys));
+      else localStorage.removeItem('dt:cols:' + columnsStorageKey);
+    } catch (err) {
+      /* ignore */
+    }
+  };
+  const [menuAnchor, setMenuAnchor] = useState<HTMLButtonElement | null>(null);
+  const shown = useMemo(() => columns.filter((c) => c.key === 'name' || c.header === '' || !hidden.includes(c.key)), [columns, hidden]);
 
   const sortedRows = useMemo(() => {
     if (!sort) return rows;
@@ -236,7 +265,7 @@ export function DataTable<T>({
         <table className="w-full text-sm">
           <thead className="bg-slate-50/70 dark:bg-slate-800/40">
             <tr>
-              {columns.map((c) => {
+              {shown.map((c) => {
                 const sortable = Boolean(c.sortValue);
                 const sortIcon = (() => {
                   if (!sortable) return null;
@@ -256,12 +285,27 @@ export function DataTable<T>({
                 return (
                   <th
                     key={c.key}
-                    className={`px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 ${alignClass(c.align)}`}
+                    className={`px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 ${alignClass(c.align)}`}
                     style={c.width ? { width: c.width } : undefined}
                   >
                     {c.header === '' ? (
-                      // Unlabelled (actions) column: give screen readers a name.
-                      <span className="sr-only">{t('common.actionsColumn')}</span>
+                      <>
+                        {/* Unlabelled (actions) column: give screen readers a name. */}
+                        <span className="sr-only">{t('common.actionsColumn')}</span>
+                        {columnsStorageKey && (
+                          <button
+                            type="button"
+                            aria-label={t('common.columns')}
+                            title={t('common.columns')}
+                            aria-haspopup="menu"
+                            aria-expanded={!!menuAnchor}
+                            onClick={(e) => setMenuAnchor(menuAnchor ? null : e.currentTarget)}
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-transparent text-slate-500 transition-colors hover:border-slate-200 hover:bg-slate-100 hover:text-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 dark:text-slate-400 dark:hover:border-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                          >
+                            <MoreVertical size={14} />
+                          </button>
+                        )}
+                      </>
                     ) : sortable ? (
                       <button
                         type="button"
@@ -289,7 +333,7 @@ export function DataTable<T>({
             {slice.length === 0 && (
               <tr>
                 <td
-                  colSpan={columns.length}
+                  colSpan={shown.length}
                   className="px-4 py-10 text-center text-sm text-slate-500 dark:text-slate-400"
                 >
                   {emptyMessage}
@@ -315,7 +359,7 @@ export function DataTable<T>({
                     rowClassName?.(row) ?? ''
                   }`}
                 >
-                  {columns.map((c) => (
+                  {shown.map((c) => (
                     <td
                       key={c.key}
                       className={`px-4 py-2.5 align-middle ${alignClass(c.align)} ${c.className ?? ''}`}
@@ -329,6 +373,16 @@ export function DataTable<T>({
           </tbody>
         </table>
       </div>
+
+      {menuAnchor && (
+        <ColumnMenu
+          anchor={menuAnchor}
+          columns={columns.filter((c) => c.header !== '')}
+          hidden={hidden}
+          onChange={saveHidden}
+          onClose={() => setMenuAnchor(null)}
+        />
+      )}
 
       {total > pageSize && (
         <div className="flex items-center justify-between gap-3 text-xs text-slate-500 dark:text-slate-400">
@@ -361,6 +415,121 @@ export function DataTable<T>({
 }
 
 export default DataTable;
+
+/**
+ * The column picker: a checkbox menu under the ⋮ button, portalled with fixed positioning like
+ * ContainerPicker so the table can't clip it. Arrow keys move, Esc / Tab / a click outside close it and focus returns
+ * to the button; page shortcuts are off while it's open (modal scope).
+ */
+function ColumnMenu<T>({
+  anchor,
+  columns,
+  hidden,
+  onChange,
+  onClose,
+}: {
+  anchor: HTMLButtonElement;
+  columns: Column<T>[];
+  hidden: string[];
+  onChange: (hidden: string[]) => void;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+
+  useLayoutEffect(() => {
+    const place = () => {
+      const r = anchor.getBoundingClientRect();
+      const h = menuRef.current?.offsetHeight ?? 0;
+      const below = r.bottom + 4 + h <= window.innerHeight;
+      setPos({ top: below ? r.bottom + 4 : Math.max(4, r.top - 4 - h), right: Math.max(4, window.innerWidth - r.right) });
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [anchor]);
+
+  useEffect(() => {
+    pushModalScope();
+    menuRef.current?.querySelector<HTMLButtonElement>('button:not([disabled])')?.focus();
+    const close = () => {
+      onClose();
+      anchor.focus();
+    };
+    const onDown = (e: MouseEvent) => {
+      if (!menuRef.current?.contains(e.target as Node) && !anchor.contains(e.target as Node)) onClose();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' && e.key !== 'Tab') return;
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey, true);
+    return () => {
+      popModalScope();
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey, true);
+    };
+    // onClose is stable for the menu's short life
+  }, [anchor]);
+
+  const item =
+    'flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-slate-800 hover:bg-slate-50 focus:bg-slate-100 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60 dark:text-slate-100 dark:hover:bg-slate-800 dark:focus:bg-slate-800';
+  return createPortal(
+    <div
+      ref={menuRef}
+      role="menu"
+      aria-label={t('common.columns')}
+      style={{ position: 'fixed', top: pos?.top ?? -9999, right: pos?.right ?? 0 }}
+      className="z-[70] w-52 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-elevated dark:border-slate-800 dark:bg-slate-900"
+      onKeyDown={(e) => {
+        if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+        e.preventDefault();
+        const items = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('button:not([disabled])'));
+        const i = items.indexOf(document.activeElement as HTMLButtonElement);
+        items[e.key === 'ArrowDown' ? (i + 1) % items.length : (i - 1 + items.length) % items.length]?.focus();
+      }}
+    >
+      {columns.map((c) => {
+        const on = !hidden.includes(c.key);
+        return (
+          <button
+            key={c.key}
+            type="button"
+            role="menuitemcheckbox"
+            aria-checked={on}
+            disabled={c.key === 'name'}
+            onClick={() => onChange(on ? [...hidden, c.key] : hidden.filter((k) => k !== c.key))}
+            className={item}
+          >
+            <span
+              aria-hidden
+              className={`inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border ${
+                on ? 'border-brand-600 bg-brand-600 text-white dark:border-brand-400 dark:bg-brand-500' : 'border-slate-400 dark:border-slate-500'
+              }`}
+            >
+              {on && <Check size={10} strokeWidth={3} />}
+            </span>
+            <span className="min-w-0 flex-1 truncate">{c.header}</span>
+          </button>
+        );
+      })}
+      <div role="separator" className="my-1 border-t border-slate-100 dark:border-slate-800" />
+      <button type="button" role="menuitem" onClick={() => onChange([])} className={item}>
+        {t('common.resetColumns')}
+      </button>
+    </div>,
+    // Inside <main> so the menu stays in a landmark (axe "region"); main has no transform, so fixed still works.
+    document.querySelector('main') ?? document.body,
+  );
+}
 
 /** IconButton primitive for row actions (edit, delete, etc.). */
 export const IconButton: React.FC<{

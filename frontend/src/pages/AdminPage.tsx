@@ -1300,16 +1300,16 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                       <table className="w-full text-sm">
                         <thead className="bg-slate-50 dark:bg-slate-900">
                           <tr>
-                            <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">
+                            <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300">
                               Cluster
                             </th>
-                            <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">
+                            <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300">
                               Namespace
                             </th>
-                            <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">
+                            <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300">
                               Permissions
                             </th>
-                            <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">
+                            <th className="px-4 py-3 text-right text-xs font-semibold text-slate-600 dark:text-slate-300">
                               Actions
                             </th>
                           </tr>

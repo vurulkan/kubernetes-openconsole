@@ -11,6 +11,7 @@ import {
   HardDrive,
   KeyRound,
   LayoutGrid,
+  Link2,
   List as ListIcon,
   ListChecks,
   Minus,
@@ -27,8 +28,8 @@ import PodExecModal from '../components/PodExecModal';
 import { ContainerPicker } from '../components/ContainerPicker';
 import { LogViewer, type LogTarget } from '../components/LogViewer';
 import SecretModal from '../components/SecretModal';
-import { PodRestarts, PodStatusBadge, STATUS_DOT } from '../components/PodStatusBadge';
-import { podOwner, podStatus } from '../utils/podStatus';
+import { ContainerSquares, PodRestarts, PodStatusBadge, STATUS_DOT } from '../components/PodStatusBadge';
+import { containerStates, podController, podOwner, podStatus } from '../utils/podStatus';
 import { PodDrawer } from './dashboard/PodDrawer';
 import { KIND, WorkloadDrawer } from './dashboard/WorkloadDrawer';
 import { usePodMetrics } from '../hooks/usePodMetrics';
@@ -42,6 +43,7 @@ import { Alert, Badge, Button, Input, Modal, Spinner } from '../components/ui';
 import { useScopedShortcuts } from '../hooks/useScopedShortcuts';
 import { EVENTS_PANEL_EVENT_NAME } from '../hooks/useGlobalShortcuts';
 import { formatAge } from '../utils/age';
+import { searchText } from '../utils/searchText';
 import { ResourceListView } from './dashboard/ResourceListView';
 import {
   User,
@@ -233,7 +235,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   }, [viewMode]);
   const [restartTarget, setRestartTarget] = useState<string | null>(null);
   const theme = useTheme();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [yamlTarget, setYamlTarget] = useState<YamlEditTarget | null>(null);
   const [eventsOpen, setEventsOpen] = useState<boolean>(() => {
     try {
@@ -273,18 +275,25 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   );
 
   // Search input supports two concepts in a single box:
-  //   • plain text  → matches the resource name (what we had before)
+  //   • plain text  → matches the name or any column's text (utils/searchText.ts)
   //   • label:k=v   → matches metadata.labels[k] == v exactly
   //   • label:k     → matches any resource with the label key present
   // Multiple tokens are AND'd. "foo label:tier=front label:app"
-  // keeps rows whose name contains "foo" AND has tier=front AND has an
+  // keeps rows that contain "foo" AND have tier=front AND have an
   // "app" label.
+  // Built once per refresh, so a keystroke only runs substring checks.
+  const haystacks = useMemo(
+    () => new Map(items.map((it) => [it, searchText(activeTab, it)])),
+    // i18n.language: translated status texts are part of the haystack
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items, activeTab, i18n.language],
+  );
   const filteredItems = useMemo(() => {
     const q = searchQuery.trim();
     if (!q) return items;
     const tokens = q.split(/\s+/);
     return items.filter((item) => {
-      const name = (item.metadata as { name?: string })?.name ?? '';
+      const text = haystacks.get(item) ?? '';
       const labels = ((item.metadata as { labels?: Record<string, string> })?.labels) ?? {};
       for (const t of tokens) {
         if (t.toLowerCase().startsWith('label:')) {
@@ -298,12 +307,12 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
             if (!(spec in labels)) return false;
           }
         } else {
-          if (!name.toLowerCase().includes(t.toLowerCase())) return false;
+          if (!text.includes(t.toLowerCase())) return false;
         }
       }
       return true;
     });
-  }, [items, searchQuery]);
+  }, [items, searchQuery, haystacks]);
 
   const loadNamespaces = async () => {
     try {
@@ -979,7 +988,13 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                 pod.tone === 'ok' && pod.restarts > 0
                   ? 'status-dot bg-emerald-500 ring-1 ring-amber-400/50 ring-offset-2 ring-offset-white dark:ring-offset-slate-900'
                   : STATUS_DOT[pod.tone];
-              statusLabel = <PodStatusBadge namespace={selectedNamespace ?? ''} podName={name} status={pod} />;
+              const containers = containerStates(item);
+              statusLabel = (
+                <span className="inline-flex items-center gap-2">
+                  {containers.length > 1 && <ContainerSquares containers={containers} />}
+                  <PodStatusBadge namespace={selectedNamespace ?? ''} podName={name} status={pod} />
+                </span>
+              );
             } else if (activeTab === 'deployments') {
               if (desiredReplicas === 0) {
                 dotClass = 'status-dot status-dot-idle';
@@ -1121,10 +1136,22 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                   {pod && (
                     <div className="flex items-center gap-1.5">
                       <RefreshCw size={11} className="text-slate-500 dark:text-slate-400" />
-                      <span>Restarts:</span>
+                      <span>{t('dashboard.columns.restarts')}:</span>
                       <PodRestarts status={pod} />
                     </div>
                   )}
+                  {pod && podController(item) && (() => {
+                    const c = podController(item)!;
+                    return (
+                      <div className="flex items-center gap-1.5">
+                        <Link2 size={11} className="text-slate-500 dark:text-slate-400" />
+                        <span>{t('dashboard.columns.controlledBy')}:</span>
+                        <span className="font-mono text-slate-700 dark:text-slate-200" title={`${c.kind} ${c.name}`}>
+                          {c.kind}
+                        </span>
+                      </div>
+                    );
+                  })()}
                   {metrics?.available && (activeTab === 'pods' || isWorkloadTab) && (() => {
                     const owner = isWorkloadTab ? `${KIND[activeTab as WorkloadKind]}/${name}` : '';
                     const used = activeTab === 'pods' ? usageOf(name) : ownerUsage(metrics.items, owner);

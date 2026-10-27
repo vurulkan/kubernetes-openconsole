@@ -1103,7 +1103,7 @@ const AddPermissionsModal: React.FC<{
 
         <div className="rounded-lg border border-slate-200 dark:border-slate-800">
           <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:bg-slate-900/70 dark:text-slate-400">
+            <thead className="bg-slate-50 text-left text-[10px] font-semibold text-slate-500 dark:bg-slate-900/70 dark:text-slate-400">
               <tr>
                 <th className="px-3 py-2">{tr('common.resource')}</th>
                 <th className="px-3 py-2 text-right">{tr('common.actions')}</th>

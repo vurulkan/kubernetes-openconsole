@@ -18,13 +18,14 @@ type ContainerState = {
 type ContainerStatus = {
   name: string;
   ready?: boolean;
+  started?: boolean;
   restartCount?: number;
   state?: ContainerState;
   lastState?: ContainerState;
 };
 export type PodLike = {
   metadata?: { deletionTimestamp?: string };
-  spec?: { initContainers?: unknown[] };
+  spec?: { initContainers?: Array<{ name?: string; restartPolicy?: string }> };
   status?: {
     phase?: string;
     reason?: string;
@@ -99,7 +100,9 @@ export function podStatus(pod: PodLike): PodStatus {
   const status = pod.status ?? {};
   const containers = status.containerStatuses ?? [];
   const inits = status.initContainerStatuses ?? [];
-  const total = containers.length;
+  // Native sidecars (init containers with restartPolicy Always) count as containers once started, like kubectl.
+  const sidecars = new Set((pod.spec?.initContainers ?? []).filter((c) => c.restartPolicy === 'Always').map((c) => c.name));
+  const total = containers.length + sidecars.size;
   let ready = 0;
   let label = status.reason || status.phase || 'Unknown';
 
@@ -107,6 +110,10 @@ export function podStatus(pod: PodLike): PodStatus {
   for (let i = 0; i < inits.length; i++) {
     const s = inits[i].state ?? {};
     if (s.terminated && (s.terminated.exitCode ?? 0) === 0) continue;
+    if (sidecars.has(inits[i].name) && inits[i].started) {
+      if (inits[i].ready) ready++;
+      continue;
+    }
     initializing = true;
     if (s.terminated) label = terminatedLabel(s.terminated, 'Init:');
     else if (s.waiting?.reason && s.waiting.reason !== 'PodInitializing') label = `Init:${s.waiting.reason}`;
@@ -160,6 +167,67 @@ export function podStatus(pod: PodLike): PodStatus {
     lastTermination,
     containers: perContainer,
   };
+}
+
+/** How a container's square looks: filled green / green + amber ring / amber / red, or hollow slate / red. */
+export type ContainerLook = 'ok' | 'restarted' | 'warn' | 'error' | 'done' | 'failed';
+
+export type ContainerInfo = {
+  name: string;
+  kind: 'container' | 'init' | 'sidecar';
+  /** Kubernetes terms, not translated: "running, ready", "waiting: CrashLoopBackOff", "terminated: Completed (0)". */
+  state: string;
+  look: ContainerLook;
+  /** Problem containers (amber or red) count for the Containers column sort. */
+  problem: boolean;
+  restarts: number;
+  startedAt?: string;
+};
+
+type ContainerPod = PodLike & {
+  spec?: { containers?: Array<{ name: string }>; initContainers?: Array<{ name: string; restartPolicy?: string }> };
+};
+
+/** Every container of a pod, spec.containers first, then the init containers (a sidecar is an init container with restartPolicy Always). */
+export function containerStates(pod: ContainerPod): ContainerInfo[] {
+  const statuses = pod.status?.containerStatuses ?? [];
+  const initStatuses = pod.status?.initContainerStatuses ?? [];
+  const specs = pod.spec?.containers ?? statuses;
+  const initSpecs = (pod.spec?.initContainers ?? initStatuses) as Array<{ name: string; restartPolicy?: string }>;
+  const info = (name: string, kind: ContainerInfo['kind'], st?: ContainerStatus): ContainerInfo => {
+    const s = st?.state ?? {};
+    const restarts = st?.restartCount ?? 0;
+    let state: string;
+    let look: ContainerLook;
+    let startedAt: string | undefined;
+    if (s.running) {
+      state = ['running', restarts > 0 && 'restarted', st?.ready ? 'ready' : 'not ready'].filter(Boolean).join(', ');
+      look = !st?.ready ? 'warn' : restarts > 0 ? 'restarted' : 'ok';
+      startedAt = s.running.startedAt;
+    } else if (s.terminated) {
+      const code = s.terminated.exitCode ?? 0;
+      state = `terminated: ${s.terminated.reason || 'ExitCode'} (${code})`;
+      look = code === 0 ? 'done' : 'failed';
+      startedAt = s.terminated.startedAt;
+    } else {
+      const reason = s.waiting?.reason;
+      state = reason ? `waiting: ${reason}` : 'waiting';
+      look = reason && ERROR_REASONS.has(reason) ? 'error' : 'warn';
+    }
+    return { name, kind, state, look, problem: look === 'warn' || look === 'error' || look === 'failed', restarts, startedAt };
+  };
+  return [
+    ...specs.map((c) => info(c.name, 'container', statuses.find((x) => x.name === c.name))),
+    ...initSpecs.map((c) => info(c.name, c.restartPolicy === 'Always' ? 'sidecar' : 'init', initStatuses.find((x) => x.name === c.name))),
+  ];
+}
+
+/** The pod's direct controller from ownerReferences (ReplicaSet, StatefulSet, DaemonSet, Job, Node for a static pod); not resolved to the Deployment like podOwner. */
+export function podController(pod: {
+  metadata?: { ownerReferences?: Array<{ kind?: string; name?: string; controller?: boolean }> };
+}): { kind: string; name: string } | undefined {
+  const ref = (pod.metadata?.ownerReferences ?? []).find((o) => o.controller) ?? pod.metadata?.ownerReferences?.[0];
+  return ref?.kind && ref.name ? { kind: ref.kind, name: ref.name } : undefined;
 }
 
 /**

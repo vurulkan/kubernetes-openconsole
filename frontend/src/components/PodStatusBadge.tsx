@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { Badge, Spinner } from './ui';
 import { getPodEvents } from '../services/api';
 import { ageShort } from '../utils/age';
-import { exitCodeHint, exitLabel, type PodStatus, type Tone } from '../utils/podStatus';
+import { exitCodeHint, exitLabel, type ContainerInfo, type ContainerLook, type PodStatus, type Tone } from '../utils/podStatus';
 
 type Props = {
   namespace: string;
@@ -210,6 +210,71 @@ export const PodRestarts: React.FC<{ status: PodStatus }> = ({ status }) => {
       title={lines.join('\n\n') || undefined}
     >
       {status.restarts}
+    </span>
+  );
+};
+
+const LOOK: Record<ContainerLook, string> = {
+  ok: 'bg-emerald-500',
+  restarted: 'bg-emerald-500 ring-1 ring-amber-400/50 ring-offset-2 ring-offset-white dark:ring-offset-slate-900',
+  warn: 'bg-amber-400',
+  error: 'bg-rose-500',
+  done: 'border-2 border-slate-400 dark:border-slate-500',
+  failed: 'border-2 border-rose-500',
+};
+
+/**
+ * One small square per container (Lens style): filled = running or waiting, hollow = exited,
+ * a ring = restarted. Hovering shows name, state, start time and restarts; the same text is
+ * each square's aria-label. Not tab stops: the pod drawer lists the containers too.
+ */
+export const ContainerSquares: React.FC<{ containers: ContainerInfo[] }> = ({ containers }) => {
+  const { t, i18n } = useTranslation();
+  const [tip, setTip] = useState<{ i: number; top?: number; bottom?: number; left: number } | null>(null);
+  const lines = (c: ContainerInfo) =>
+    [
+      c.kind === 'container' ? c.name : `${c.name} · ${t(`dashboard.containers.${c.kind}`)}`,
+      c.state,
+      c.startedAt &&
+        t('dashboard.containers.startedAt', {
+          time: new Date(c.startedAt).toLocaleString(i18n.language),
+          ago: t('dashboard.podStatus.ago', { age: ageShort(c.startedAt) }),
+        }),
+      t('dashboard.podStatus.restartsN', { count: c.restarts }),
+    ].filter((l): l is string => !!l);
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      {containers.map((c, i) => (
+        <span
+          key={c.name}
+          role="img"
+          aria-label={lines(c).join(', ')}
+          onMouseEnter={(e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            const left = Math.max(8, Math.min(r.left - 8, window.innerWidth - 300));
+            // Above the square when the bottom of the viewport is close.
+            setTip(r.bottom + 110 < window.innerHeight ? { i, left, top: r.bottom + 6 } : { i, left, bottom: window.innerHeight - r.top + 6 });
+          }}
+          onMouseLeave={() => setTip(null)}
+          className={`inline-block h-2.5 w-2.5 shrink-0 rounded-[2px] ${LOOK[c.look]}`}
+        />
+      ))}
+      {tip &&
+        containers[tip.i] &&
+        createPortal(
+          <div
+            aria-hidden
+            style={{ top: tip.top, bottom: tip.bottom, left: tip.left }}
+            className="pointer-events-none fixed z-[1000] max-w-[292px] rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-600 shadow-elevated dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300"
+          >
+            {lines(containers[tip.i]).map((l, n) => (
+              <div key={n} className={n === 0 ? 'font-mono font-semibold text-slate-900 dark:text-slate-100' : n === 1 ? 'font-mono' : ''}>
+                {l}
+              </div>
+            ))}
+          </div>,
+          document.body,
+        )}
     </span>
   );
 };
