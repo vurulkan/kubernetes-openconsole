@@ -160,7 +160,7 @@ To upgrade, run `kubectl -n kubernetes-openconsole rollout restart deploy/kubern
 - `STATIC_DIR` (default `/app/public` in the image) — Served React build output.
 - `TIMEZONE` (default `UTC`) — Used for audit log timestamps.
 - `LOG_RETENTION_DAYS` (default `30`) — Audit log retention (purged automatically).
-- `API_KEY_READ_RETENTION_DAYS` (default `7`) — How long **successful reads made with an API key** (`list`, `get`, `logs`, `view_yaml`, `view_overview`) are kept; they are most of an agent's audit volume. Writes, denials, failures, `pod.exec` and `api_key.*` events stay for `LOG_RETENTION_DAYS`. The console / Elastic lines are not affected. See [API keys](#api-keys).
+- `API_KEY_READ_RETENTION_DAYS` (default `7`) — How long **successful reads made with an API key** (`list`, `get`, `logs`, `view_yaml`, `view_overview`) are kept; they are most of an agent's audit volume. Writes, denials, failures, `pod.exec` and `api_key.*` events stay for `LOG_RETENTION_DAYS`. The console / Elastic lines are not affected. See [API keys](#api-and-agents).
 - `RESTART_HISTORY_RETENTION_DAYS` (default `30`) — How long container exits (restart history) are kept.
 - `MAX_REPLICAS` (default `100`) — Hard upper bound the Scale endpoint accepts for Deployment / StatefulSet scaling.
 
@@ -282,7 +282,7 @@ Every audited action is one event, stored in the database (Admin → Audit Logs,
 | `reason` | `event.reason` | why it was denied or failed: `forbidden`, `feature_disabled`, `admin_only`, `k8s_forbidden`, `not_found`, `conflict`, `bad_password`, … |
 | `user`, `auth_source` | `user.name`, `openconsole.auth_source` | who, and where the account signs in (`local` / `ldap` / `azure`) |
 | `remote_ip`, `user_agent`, `request_id` | `source.ip`, `user_agent.original`, `http.request.id` | from where; the request id matches the `http.request` line |
-| `api_key_id`, `api_key_name` | `openconsole.api_key.id`, `openconsole.api_key.name` | the [API key](#api-keys) the action was taken with; empty for a web session |
+| `api_key_id`, `api_key_name` | `openconsole.api_key.id`, `openconsole.api_key.name` | the [API key](#api-and-agents) the action was taken with; empty for a web session |
 | `cluster`, `cluster_id` | `openconsole.cluster`, `openconsole.cluster_id` | the cluster the action **targeted**. Empty for actions that don't run on a cluster (sign-ins, users, groups, roles, settings, sessions, saved views). A permission grant records the grant's cluster (empty for "all clusters"), not the cluster the admin had selected. |
 | `namespace`, `resource_type`, `resource_name` | `openconsole.*` | the target; `resource_type` is singular (`deployment`), `resource_name` is the bare name, `*` for a list |
 | details | `openconsole.<key>` | typed, see below |
@@ -294,7 +294,7 @@ Details are a fixed set of keys, each with a type in the Elastic mapping:
 | `deployment.restart` | `restarted_at` (date) |
 | `deployment.scale`, `statefulset.scale` | `replicas_from`, `replicas_to` |
 | `<kind>.apply` | `dry_run`, `yaml_from`, `yaml_to` (sha256 prefixes, never the YAML) |
-| `pod.exec` | `phase` (`start` / `end`), `container`, `command`; at the end `exit_code`, `bytes_in`, `bytes_out`, `duration_ms` |
+| `pod.exec` | shell: `phase` (`start` / `end`), `container`, `command`; at the end `exit_code`, `bytes_in`, `bytes_out`, `duration_ms`. One command (`POST …/exec`): `mode` (`command`), `container`, `program` (the first element only, never the full command), `exit_code`, `bytes_out`, `duration_ms`, `recording_id` |
 | `pod.logs`, `deployment.logs`, `job.logs` | `container` / `pods`; `previous` (true) for the log before the last restart |
 | `secret.reveal` | `key` (the key name, never the value) |
 | `recording.*` | `pod`, `container`, `owner`, `started_at`, `size_bytes`, `truncate_reason`, `count`, `retention_days` |
@@ -318,7 +318,7 @@ openconsole.outcome : "denied" and user.name : "dev1"
 
 #### Upgrading to 2.22
 
-- **Elastic**: re-run `deploy/elk/install.sh` once: it adds the mapping of `openconsole.api_key.id` / `.name`, `openconsole.admin_scope`, `openconsole.expires_at`, `openconsole.api_access`, `openconsole.by_admin` and `openconsole.comment` (the pipeline is unchanged). If you don't, nothing is lost: the fields are mapped dynamically, and get the right type from the next rollover after you run it.
+- **Elastic**: re-run `deploy/elk/install.sh` once: it adds the mapping of `openconsole.api_key.id` / `.name`, `openconsole.admin_scope`, `openconsole.expires_at`, `openconsole.api_access`, `openconsole.by_admin`, `openconsole.comment`, `openconsole.mode`, `openconsole.program` and `openconsole.recording_id` (the pipeline is unchanged). If you don't, nothing is lost: the fields are mapped dynamically, and get the right type from the next rollover after you run it.
 - **Database**: new tables and columns are added on the first start; nothing to do.
 - **API key policy**: every existing role starts at **Safe read-only** API access, so keys made before the upgrade lose exec, edit, scale, restart, ConfigMaps and Secrets until an admin opens a role (Admin → Roles → *API access*). The keys themselves are not changed: they work as before once the policy allows it.
 
@@ -548,7 +548,7 @@ Templates in the Add Permissions modal: Viewer (read only, including secret *met
 
 ---
 
-# API keys
+# API and agents
 
 An API key lets your AI agent (Claude Code, Cursor, …) or a script call the OpenConsole API in your name. Every call is audited with your user **and the key's name**. Open it from the account menu (your name, top right) → **API keys**, or `⌘K` → *Go to API keys*.
 
@@ -561,7 +561,7 @@ An API key lets your AI agent (Claude Code, Cursor, …) or a script call the Op
 | All my permissions | everything you hold in the chosen scope |
 | Custom | what you pick |
 
-The matrix offers only what you hold yourself and the [admin policy](#api-keys) lets keys have: other cells are closed (*"You do not have this permission"*, or *"The admin's API access policy does not allow it"*); a cell you hold in only some of the chosen namespaces is marked (*"Only in 3 of 5 namespaces"*). The server checks this too (400). The key (`oc_` + 40 characters) is shown **once**, with a ready `curl` line; the list shows its first characters only. The database keeps a SHA-256 of it.
+The matrix offers only what you hold yourself and the [admin policy](#api-and-agents) lets keys have: other cells are closed (*"You do not have this permission"*, or *"The admin's API access policy does not allow it"*); a cell you hold in only some of the chosen namespaces is marked (*"Only in 3 of 5 namespaces"*). The server checks this too (400). The key (`oc_` + 40 characters) is shown **once**, with a ready `curl` line; the list shows its first characters only. The database keeps a SHA-256 of it.
 
 **What a key can do.** At most what it lists **and** what you hold at the time of the call: if a namespace is taken from your role, the key loses it at once (the list shows *"2 permissions not valid now"*); if you get more, the key does not grow by itself (except *all my namespaces*). Edit changes name, note, scope and permissions; the secret and expiry stay. **Regenerate** gives a new secret and a new expiry; the old secret stops working at once (it also revives a revoked or expired key). **Revoke** stops it for good; **Delete** removes it from the list. Admin endpoints (`/api/admin/*`) need an admin's key created with the **Admin API** box, and stop working when the owner is no longer an admin. A key can never manage keys, change the password, change your selected cluster, or save views (403, reason `api_key_not_allowed`).
 
@@ -575,7 +575,38 @@ curl -H "Authorization: Bearer $OPENCONSOLE_API_KEY" -H "X-OpenConsole-Cluster: 
 - `X-OpenConsole-Cluster: <name or id>` picks the cluster per request (without it: your selected cluster). An unknown cluster is 400, one the key can't use 403.
 - WebSockets (logs, exec, events): `POST /api/ws-ticket` with the key, then open the socket with `?ticket=`. Keys are never accepted in a URL.
 - 401 = the key is not valid (unknown, expired, revoked, owner disabled); 403 = not allowed (permission, admin policy, feature flag, owner must change the password; the body names the reason); 429 = more than 10 requests / s (burst 30) for the key.
-- A pod shell opened with a key is always recorded, and shows the key name in Admin → Recordings.
+- A shell or a command run with a key is always recorded, and shows the key name in Admin → Recordings.
+
+**For agents.** The API is described in OpenAPI 3.1 at `GET /api/openapi.json` (no sign-in; no hostnames, users or secrets in it), and in the app under **API keys → Documentation**: quick start, a ready text to give your agent (the key stays in `OPENCONSOLE_API_KEY`, never in the text), every endpoint a key can call grouped by tag with its permission, parameters, a `curl` example and example responses, and the errors. Endpoints none of your keys can call now are greyed out with the reason (*You do not have it*, *Policy does not allow*, *Switched off*); web-only endpoints are left out, admin ones are shown to admins only. A test fails the build when a route in `router.go` is missing from the description.
+
+Two endpoints exist so an agent never needs a WebSocket:
+
+```bash
+# The end of a pod's log as text (pods:logs; audited as pod.logs)
+curl -H "Authorization: Bearer $OPENCONSOLE_API_KEY" \
+  "$OC_URL/api/namespaces/shop/pods/web-7c9f/logs?tailLines=200&previous=true"
+
+# One command in a container (pods:exec; recorded; audited as pod.exec)
+curl -H "Authorization: Bearer $OPENCONSOLE_API_KEY" -H "Content-Type: application/json" \
+  -d '{"container":"app","command":["cat","/etc/os-release"],"timeoutSeconds":30}' \
+  "$OC_URL/api/namespaces/shop/pods/web-7c9f/exec"
+# → {"stdout":"NAME=…","stderr":"","exitCode":0,"truncated":false,"durationMs":184}
+```
+
+| | Logs `GET …/pods/{name}/logs` | Command `POST …/pods/{name}/exec` |
+|---|---|---|
+| Input | `container`, `tailLines` (default 500, at most 10 000), `sinceSeconds`, `previous`, `timestamps` | `command` (argv array, **not** run in a shell: `["sh","-c","…"]` for pipes), `container`, `timeoutSeconds` (1–120, default 30); no stdin |
+| Output | `text/plain`, at most 5 MiB (cut at a line end, header `X-OpenConsole-Truncated: true`) | `stdout`, `stderr` (1 MiB each; the rest is dropped and `truncated` is true, the command still runs to its end), `exitCode`, `durationMs`. A non-zero exit code is a 200. Past the timeout: what was printed so far, `exitCode: -1`, `truncated: true`; Kubernetes doesn't stop the process, it may run on in the container |
+| Errors | 400 bad parameter, `container_not_found`, `previous_unavailable`, `not_ready`; 404 `pod_not_found`; 429 too many log requests | 400 bad body, `container_not_found`, `not_ready`; 403 `forbidden`, `api_access_policy`, `feature_disabled` (`FEATURE_POD_EXEC=false`); 404 `pod_not_found`; 429 `too_many_sessions` (counts with the user's shells, `MAX_EXEC_SESSIONS_PER_USER`); 503 `recording_unavailable` (a key's command that can't be recorded); 502 `exec_failed` |
+
+A command is recorded like a shell: the first line is `$ <command>`, then its output, and Admin → Recordings marks it *command*. The audit event (`pod.exec`, `mode: command`) keeps only the program (`command[0]`, e.g. `cat`), the exit code, bytes, duration and the recording's id, **never the whole command line**, which may hold a password; only admins can replay the recording. A web session can call both endpoints too.
+
+Giving it to Claude Code (or any agent that runs `curl`):
+
+```bash
+export OPENCONSOLE_API_KEY=oc_…   # in the agent's environment, not in the prompt
+claude "Use the OpenConsole API at $OC_URL (spec: $OC_URL/api/openapi.json; send Authorization: Bearer \$OPENCONSOLE_API_KEY and X-OpenConsole-Cluster: nonprod). Find the crash-looping pods in the ci-dev namespace and summarize their last logs."
+```
 
 **Admin policy.** An admin decides how much of a user's permissions their keys may get:
 
@@ -639,6 +670,7 @@ Interactive shell into a running container, gated by application permission `pod
 - xterm.js UI with a shell picker (`/bin/sh`, `/bin/bash`, `/bin/ash`). For a pod with several containers the Shell button first opens a small menu: the main container on top and focused (the `kubectl.kubernetes.io/default-container` annotation, else the one named after the workload, so a sidecar listed first is not the default; Enter opens it), containers that are not running greyed out. The terminal can still switch container.
 - Idle timeout: **5 minutes** without input closes the session (`EXEC_IDLE_TIMEOUT`).
 - At most **3** open shells per user (`MAX_EXEC_SESSIONS_PER_USER`); the next one is refused with 429 and audited as `pod.exec.rate_limited`.
+- For one command without a terminal (scripts, agents): `POST /api/namespaces/{namespace}/pods/{name}/exec`, see [API and agents](#api-and-agents).
 - Each session writes two `pod.exec` audit events, `phase: start` (container, command) and `phase: end`. The end event carries `exit_code` (the shell's exit status; `-1` when the session was cut — idle timeout, closed tab, network), `bytes_in`, `bytes_out` and `duration_ms`. A shell that ends with a non-zero status, e.g. after a failed last command, is a normal end (outcome `success`).
 - Can be switched off for everyone with `FEATURE_POD_EXEC=false` ([Feature flags](#feature-flags)).
 - Terminal output is recorded by default — see [Session Recording](#session-recording).
@@ -669,7 +701,7 @@ The Secrets tab (after ConfigMaps) uses four permissions. Seeing that a secret e
 
 # Session Recording
 
-Every pod shell session is recorded as an [asciicast v2](https://docs.asciinema.org/manual/asciicast/v2/) file and can be replayed by admins. Recording lives entirely inside OpenConsole — no extra ClusterRole permissions.
+Every pod shell session, and every single command run through `POST …/pods/{name}/exec`, is recorded as an [asciicast v2](https://docs.asciinema.org/manual/asciicast/v2/) file and can be replayed by admins. Recording lives entirely inside OpenConsole — no extra ClusterRole permissions.
 
 **What is recorded**
 - Everything the container writes to the terminal (stdout + stderr — merged, since the shell runs on a TTY), with timing, plus terminal resizes.
@@ -680,7 +712,7 @@ Every pod shell session is recorded as an [asciicast v2](https://docs.asciinema.
 **Privacy.** If someone prints a secret (`cat` of a mounted secret, `env`, `kubectl get secret -o yaml`), that secret is now in the recording. The shell shows a red *"This session is being recorded"* banner that says so. The banner only appears when the server confirms that the session is actually being recorded. Recordings are admin-only, and every view or download is audited. Treat the recordings volume like the audit database.
 
 **Playback (Admin → Recordings)**
-- Filter by user, namespace, pod, source (web / API key, key name) and date range. The table shows duration, size, *in progress* / *truncated* badges, and the key name for a shell opened with an API key.
+- Filter by user, namespace, pod, source (web / API key, key name) and date range. The table shows duration, size, *in progress* / *truncated* badges, the key name for a shell opened with an API key, and a *command* badge for a single command (`POST …/exec`).
 - ▶ opens an in-browser player: play / pause, timeline seek, 1x / 2x / 4x, and "skip idle time" (squeezes pauses longer than 2 s).
 - ⬇ downloads the `.cast` file, after a confirmation that warns the file may contain secrets and must not be shared in tickets / chat / email. It plays in the `asciinema` CLI too: `asciinema play file.cast`.
 - 🗑 deletes the file and its row. A recording whose session is still running can't be deleted.
@@ -699,7 +731,7 @@ When a limit would be crossed, the **disk policy** decides what happens:
 - `evict_oldest` (default) — the oldest finished recordings are deleted, even before their retention ends, until the next session fits. Each eviction is audited as `recording.evict` (user `system`, reason `quota` / `low_disk`).
 - `stop` — existing recordings are kept. New shells still open but are **not** recorded (`recording.create` failed, reason `disk_quota`), and running recordings stop with a truncation marker. The admin screen shows a warning until space is freed.
 
-The shell itself is never blocked by recording: a disabled, full or broken recorder only means the session isn't recorded. The exception is a shell opened with an [API key](#api-keys): it is recorded even when recording is switched off, and refused (503, `pod.exec` failed, reason `recording_unavailable`) when it can't be. For full isolation, give recordings their own PVC; `deploy/pvc.yaml` and `deploy/deployment.yaml` contain a commented example. Then set `SESSION_RECORDING_DIR=/recordings`.
+The shell itself is never blocked by recording: a disabled, full or broken recorder only means the session isn't recorded. The exception is a shell opened with an [API key](#api-and-agents): it is recorded even when recording is switched off, and refused (503, `pod.exec` failed, reason `recording_unavailable`) when it can't be. For full isolation, give recordings their own PVC; `deploy/pvc.yaml` and `deploy/deployment.yaml` contain a commented example. Then set `SESSION_RECORDING_DIR=/recordings`.
 
 **Retention.** A background job runs one minute after start and then daily. It deletes recordings older than the retention period (row and file, audited as `recording.purge` with `count`) and removes stray `.cast` files that have no database row. If the process crashes mid-session, the next start closes the open row using the file's size and modification time.
 
@@ -952,15 +984,15 @@ Every user works on **their own** cluster:
   - **User**, **Action** and **Namespace** suggest the values that actually occur in the log as you type. Typed text matches anywhere.
   - Picking an action matches it exactly. Its family row, e.g. `pod.*`, selects everything done to pods.
   - **Outcome** (success / denied / failed / rate_limited / locked), **Verb** (list, restart, exec, …), **Resource type** and **Cluster** narrow any of them, e.g. "everything denied", or `secret.*` + denied.
-  - **Source**: Web or API key, and the key's name; rows done with a key carry a key badge ([API keys](#api-keys)).
+  - **Source**: Web or API key, and the key's name; rows done with a key carry a key badge ([API keys](#api-and-agents)).
 - **Users / Groups → Export CSV**: who has access and through which group and role.
 - **Sessions**: every issued token; revoke one or all of a user's ([Sessions](#sessions-admin--sessions)).
-- **API keys**: every user's API keys; revoke, export CSV ([API keys](#api-keys)).
+- **API keys**: every user's API keys; revoke, export CSV ([API keys](#api-and-agents)).
 - **Recordings**: replay, download (with a warning) or delete pod shell sessions, and set retention / disk limits ([Session Recording](#session-recording)).
 
 ### Session timeout
 
-**Admin → Session**: how long a login token stays valid (minutes, default 60). This applies to new logins. The same tab holds the [API key expiry policy](#api-keys).
+**Admin → Session**: how long a login token stays valid (minutes, default 60). This applies to new logins. The same tab holds the [API key expiry policy](#api-and-agents).
 
 ### Customization
 
