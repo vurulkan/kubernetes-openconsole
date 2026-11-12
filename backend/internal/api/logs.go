@@ -2,6 +2,7 @@ package api
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"io"
 	"log/slog"
@@ -460,4 +461,121 @@ func (s *Server) workloadLogsWS(w http.ResponseWriter, r *http.Request, kind, re
 		}
 	}
 	sock.send(end)
+}
+
+// Limits of GET /api/namespaces/{namespace}/pods/{name}/logs (M16).
+const (
+	restLogDefaultTail = 500
+	restLogMaxTail     = 10000
+	restLogMaxBytes    = 5 << 20
+)
+
+// restLogStatus is the HTTP status for a logErrorReason.
+var restLogStatus = map[string]int{
+	"container_not_found":  http.StatusBadRequest,
+	"previous_unavailable": http.StatusBadRequest,
+	"not_ready":            http.StatusBadRequest,
+	"pod_deleted":          http.StatusNotFound,
+}
+
+// handlePodLogs returns the end of a pod's log as text/plain (M16), so agents and scripts
+// read logs without a WebSocket; following a log live stays on the socket. Same permission,
+// rate limit and audit (pod.logs) as the socket.
+func (s *Server) handlePodLogs(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.FromContext(r.Context())
+	if !ok {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	namespace, podName := chi.URLParam(r, "namespace"), chi.URLParam(r, "name")
+	q := r.URL.Query()
+	previous := q.Get("previous") == "true"
+	ev := models.AuditLog{Verb: audit.VerbLogs, ResourceType: "pod", Namespace: namespace, ResourceName: podName,
+		Details: audit.D{"container": q.Get("container")}}
+	if previous {
+		ev.Details["previous"] = true
+	}
+	refuse := func(status int, outcome, reason string) {
+		ev.Outcome, ev.Reason = outcome, reason
+		s.auditEvent(r, ev)
+		writeError(w, status, reason)
+	}
+	if !s.can(r.Context(), claims.UserID, namespace, "pods", "logs") {
+		refuse(http.StatusForbidden, audit.Denied, s.denyReason(r.Context(), namespace, "pods", "logs"))
+		return
+	}
+	opts := &corev1.PodLogOptions{Container: q.Get("container"), Previous: previous, Timestamps: q.Get("timestamps") == "true"}
+	tail := int64(restLogDefaultTail)
+	if v := q.Get("tailLines"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 1 || n > restLogMaxTail {
+			writeError(w, http.StatusBadRequest, "tailLines must be between 1 and "+strconv.Itoa(restLogMaxTail))
+			return
+		}
+		tail = n
+	}
+	opts.TailLines = &tail
+	if v := q.Get("sinceSeconds"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 1 {
+			writeError(w, http.StatusBadRequest, "sinceSeconds must be a positive number")
+			return
+		}
+		opts.SinceSeconds = &n
+	}
+	if !s.allowLogStream(claims.UserID) {
+		refuse(http.StatusTooManyRequests, audit.RateLimited, reasonRateLimited)
+		return
+	}
+	client, ok := kubeFor(r).Client()
+	if !ok {
+		refuse(http.StatusServiceUnavailable, audit.Failed, "not_connected")
+		return
+	}
+	pod, err := client.CoreV1().Pods(namespace).Get(r.Context(), podName, metav1.GetOptions{})
+	switch {
+	case apierrors.IsNotFound(err):
+		refuse(http.StatusNotFound, audit.Failed, "pod_not_found")
+		return
+	case err != nil:
+		refuse(http.StatusBadGateway, audit.Failed, "unavailable")
+		return
+	}
+	if opts.Container == "" {
+		// Kubernetes refuses a log request without a container when the pod has several.
+		opts.Container = defaultContainer(pod)
+		ev.Details["container"] = opts.Container
+	}
+	limit := int64(restLogMaxBytes + 1) // one byte more tells a cut log from one that fits
+	opts.LimitBytes = &limit
+	var body []byte
+	stream, err := client.CoreV1().Pods(namespace).GetLogs(podName, opts).Stream(r.Context())
+	if err == nil {
+		body, err = io.ReadAll(io.LimitReader(stream, limit))
+		stream.Close()
+	}
+	if err != nil {
+		reason := logErrorReason(err, previous)
+		status, ok := restLogStatus[reason]
+		if !ok {
+			status = http.StatusBadGateway
+		}
+		if reason == "pod_deleted" {
+			reason = "pod_not_found"
+		}
+		refuse(status, audit.Failed, reason)
+		return
+	}
+	s.auditEvent(r, ev)
+	if len(body) > restLogMaxBytes {
+		// Cut at the last whole line within the limit.
+		body = body[:restLogMaxBytes]
+		if i := bytes.LastIndexByte(body, '\n'); i >= 0 {
+			body = body[:i+1]
+		}
+		w.Header().Set("X-OpenConsole-Truncated", "true")
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
 }

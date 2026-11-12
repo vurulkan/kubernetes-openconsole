@@ -249,6 +249,15 @@
             "phase": {
               "type": "keyword"
             },
+            "mode": {
+              "type": "keyword"
+            },
+            "program": {
+              "type": "keyword"
+            },
+            "recording_id": {
+              "type": "keyword"
+            },
             "duration_ms": {
               "type": "long"
             },

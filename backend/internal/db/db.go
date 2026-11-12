@@ -312,6 +312,8 @@ func migrate(ctx context.Context, conn *sql.DB) error {
 		`ALTER TABLE users ADD COLUMN api_access_override TEXT NULL`,
 		`ALTER TABLE session_settings ADD COLUMN api_key_max_days INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE session_settings ADD COLUMN api_key_allow_no_expiry INTEGER NOT NULL DEFAULT 1`,
+		// 2.22.0 (M16): shell | command (one command over REST).
+		`ALTER TABLE session_recordings ADD COLUMN mode TEXT NOT NULL DEFAULT 'shell'`,
 	}
 	for _, stmt := range alterStatements {
 		if _, err := conn.ExecContext(ctx, stmt); err != nil {

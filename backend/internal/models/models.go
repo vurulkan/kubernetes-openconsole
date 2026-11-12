@@ -227,7 +227,14 @@ type SessionRecording struct {
 	Path       string     `json:"-"`
 	APIKeyID   int        `json:"apiKeyId,omitempty"`
 	APIKeyName string     `json:"apiKeyName,omitempty"`
+	Mode       string     `json:"mode"` // RecordingModeShell | RecordingModeCommand
 }
+
+// What a recording captured: an interactive shell or one command (POST …/exec).
+const (
+	RecordingModeShell   = "shell"
+	RecordingModeCommand = "command"
+)
 
 // RecordingFilter narrows ListRecordings. Empty strings / nil times are
 // ignored; Limit <= 0 falls back to the store default.

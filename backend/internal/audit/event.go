@@ -145,6 +145,9 @@ var DetailKeys = map[string]DetailType{
 	"previous":     Bool, // logs of the previous (crashed) container
 	"command":      Keyword,
 	"phase":        Keyword, // exec: start | end
+	"mode":         Keyword, // exec: command (one command over REST; a shell has phase instead)
+	"program":      Keyword, // exec command: argv[0] only, never the full command
+	"recording_id": Keyword, // exec command: the recording's session id
 	"exit_code":    Long,
 	"bytes_in":     Long,
 	"bytes_out":    Long,

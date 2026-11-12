@@ -410,3 +410,49 @@ func TestAPIKeyRefusalAuditThrottled(t *testing.T) {
 		t.Fatalf("%d audit rows for 5 refused requests", n)
 	}
 }
+
+// With a key: allowed when the policy lets keys exec, 403 api_access_policy when it doesn't,
+// and never unrecorded.
+func TestAPIKeyExecCommand(t *testing.T) {
+	e := newTestEnv(t)
+	fakeCommands(t)
+	e.runningPod()
+	bobID, bob := e.user("bob", false)
+	role := e.grantMode(bobID, rbac.AccessFull, [4]any{0, "team-a", "pods", "exec"})
+	key, _ := e.createKey(bob, keyBody("agent", []string{"team-a"}, "pods:exec"))
+	body := map[string]any{"command": []string{"cat", "/etc/os-release"}}
+
+	e.expect("POST", execPath, key, body, http.StatusOK)
+	recs, _, _ := e.server.recorder.List(context.Background(), models.RecordingFilter{APIKey: "agent"})
+	if len(recs) != 1 || recs[0].Mode != models.RecordingModeCommand {
+		t.Fatalf("key command recordings = %+v", recs)
+	}
+
+	_ = e.store.SetRoleAPIAccess(context.Background(), role, rbac.AccessSafeRead)
+	if out := e.expect("POST", execPath, key, body, http.StatusForbidden); !strings.Contains(out, reasonAPIAccessPolicy) {
+		t.Fatal(out)
+	}
+	e.waitAudit("pod.exec.denied", reasonAPIAccessPolicy)
+
+	_ = e.store.SetRoleAPIAccess(context.Background(), role, rbac.AccessFull)
+	e.server.recorder = nil
+	e.expect("POST", execPath, key, body, http.StatusServiceUnavailable)
+	e.waitAudit("pod.exec.failed", "recording_unavailable")
+	// A web session runs it unrecorded when recording can't start (as a shell does).
+	e.expect("POST", execPath, bob, body, http.StatusOK)
+}
+
+// The REST log follows the key's scope like every read, and is audited with the key's name.
+func TestAPIKeyRESTLogs(t *testing.T) {
+	e := newTestEnv(t)
+	bobID, bob := e.user("bob", false)
+	e.grant(bobID, [4]any{0, "team-a", "pods", "logs"}, [4]any{0, "team-b", "pods", "logs"})
+	key, _ := e.createKey(bob, keyBody("reader", []string{"team-a"}, "pods:logs"))
+	if out := e.expect("GET", "/api/namespaces/team-a/pods/api-1/logs", key, nil, http.StatusOK); out != "fake logs" {
+		t.Fatalf("log = %q", out)
+	}
+	if l := e.waitAudit("pod.logs.success", "api-1"); l.APIKeyName != "reader" {
+		t.Fatalf("audit key = %q", l.APIKeyName)
+	}
+	e.expect("GET", "/api/namespaces/team-b/pods/api-1/logs", key, nil, http.StatusForbidden)
+}

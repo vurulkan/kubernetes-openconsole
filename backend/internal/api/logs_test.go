@@ -162,3 +162,23 @@ func TestPodLogsResumeAndRefusal(t *testing.T) {
 	// Plain HTTP (no upgrade) still gets the status code.
 	e.expect("GET", "/ws/namespaces/team-b/pods/api-1/logs", bob, nil, http.StatusForbidden)
 }
+
+// GET …/pods/{name}/logs: text, the same permission and audit as the socket, and its limits.
+func TestPodLogsREST(t *testing.T) {
+	e := newTestEnv(t)
+	bobID, bob := e.user("bob", false)
+	e.grant(bobID, [4]any{0, "team-a", "pods", "logs"})
+	const p = "/api/namespaces/team-a/pods/api-1/logs"
+
+	code, out := e.doHeader("GET", p+"?tailLines=10000&previous=true&timestamps=true&sinceSeconds=60", bob, nil)
+	if code != http.StatusOK || out != "fake logs" {
+		t.Fatalf("logs = %d %q", code, out)
+	}
+	e.waitAudit("pod.logs.success", `"previous":true`)
+	for _, q := range []string{"tailLines=0", "tailLines=10001", "tailLines=x", "sinceSeconds=0"} {
+		e.expect("GET", p+"?"+q, bob, nil, http.StatusBadRequest)
+	}
+	e.expect("GET", "/api/namespaces/team-a/pods/gone/logs", bob, nil, http.StatusNotFound)
+	e.expect("GET", "/api/namespaces/team-b/pods/api-1/logs", bob, nil, http.StatusForbidden)
+	e.waitAudit("pod.logs.denied", "forbidden")
+}
