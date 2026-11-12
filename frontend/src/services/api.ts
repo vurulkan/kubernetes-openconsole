@@ -7,7 +7,14 @@ export type User = {
   /** Where the user signs in. Only local users can have their password reset. */
   authSource?: 'local' | 'ldap' | 'azure';
   activeClusterId?: number;
+  /** Replaces the role modes for this user's API keys; "" = by roles. */
+  apiAccessOverride?: ApiAccessOverride;
 };
+
+/** What a role's grants give API keys. */
+export type ApiAccess = 'off' | 'safe_read' | 'full';
+export type ApiAccessOverride = '' | ApiAccess;
+export type Role = { id: number; name: string; description: string; apiAccess: ApiAccess };
 
 export type NamespacePermission = {
   id: number;
@@ -21,6 +28,9 @@ export type NamespacePermission = {
 
 export type SessionSettings = {
   sessionMinutes: number;
+  /** API key expiry policy: the longest lifetime in days (0 = no limit), whether "never" is allowed. */
+  apiKeyMaxDays: number;
+  apiKeyAllowNoExpiry: boolean;
 };
 
 export type LDAPConfig = {
@@ -671,7 +681,10 @@ export const createUser = (payload: {
     body: JSON.stringify(payload)
   });
 
-export const updateUser = (id: number, payload: { username: string; isActive: boolean; isAdmin: boolean }) =>
+export const updateUser = (
+  id: number,
+  payload: { username: string; isActive: boolean; isAdmin: boolean; apiAccessOverride?: ApiAccessOverride },
+) =>
   apiRequest<User>(`/api/admin/users/${id}`, {
     method: 'PUT',
     body: JSON.stringify(payload)
@@ -715,15 +728,15 @@ export const setGroupRoles = (id: number, roleIds: number[]) =>
 export const getGroupRoles = (id: number) =>
   apiRequest<{ roleIds: number[] }>(`/api/admin/groups/${id}/roles`);
 
-export const listRoles = () => apiRequest<{ items: Array<{ id: number; name: string; description: string }> }>('/api/admin/roles');
+export const listRoles = () => apiRequest<{ items: Role[] }>('/api/admin/roles');
 
-export const createRole = (payload: { name: string; description: string }) =>
+export const createRole = (payload: { name: string; description: string; apiAccess: ApiAccess }) =>
   apiRequest('/api/admin/roles', {
     method: 'POST',
     body: JSON.stringify(payload)
   });
 
-export const updateRole = (id: number, payload: { name: string; description: string }) =>
+export const updateRole = (id: number, payload: { name: string; description: string; apiAccess?: ApiAccess }) =>
   apiRequest(`/api/admin/roles/${id}`, {
     method: 'PUT',
     body: JSON.stringify(payload)
@@ -1174,9 +1187,17 @@ export type ApiKey = ApiKeyScope & {
 export type ApiKeyCeiling = {
   isAdmin: boolean;
   clusters: Array<{ id: number; name: string }>;
-  namespaces: Array<{ clusterId: number; namespace: string; grants: string[] }>;
+  /** grants: what a key may hold here; blocked: what the user holds but the admin's API access policy keeps from keys. */
+  namespaces: Array<{ clusterId: number; namespace: string; grants: string[]; blocked: string[] }>;
   /** Grants the operator switched off (FEATURE_*). */
   disabled: string[];
+  /** An admin whose policy lets keys hold the Admin API scope. */
+  adminScopeAllowed: boolean;
+  /** The "safe read-only" grants (one definition, on the server). */
+  safeRead: string[];
+  /** Expiry policy for new and regenerated keys (maxDays 0 = no limit). */
+  maxDays: number;
+  allowNoExpiry: boolean;
 };
 
 export type ApiKeyInput = ApiKeyScope & { name: string; note: string; adminScope: boolean; expiresAt?: string | null };
@@ -1194,6 +1215,39 @@ export const regenerateApiKey = (id: number, expiresAt: string | null) =>
   });
 export const revokeApiKey = (id: number) => apiRequest<{ status: string }>(`/api/me/api-keys/${id}/revoke`, { method: 'POST' });
 export const deleteApiKey = (id: number) => apiRequest<Record<string, never>>(`/api/me/api-keys/${id}`, { method: 'DELETE' });
+
+// ─── API keys of every user (admin, web session only) ───────────────────────
+
+export type AdminApiKey = ApiKey & {
+  ownerId: number;
+  owner: string;
+  status: 'active' | 'expired' | 'revoked';
+  /** An active key the expiry policy would not allow today. */
+  outsidePolicy: boolean;
+};
+
+/** What a user's keys may reach: per namespace (all | read | partial | none), or the admin's mode. */
+export type UserApiAccess = {
+  isAdmin: boolean;
+  /** Keys are refused on every call (policy off). */
+  refused: boolean;
+  activeKeys: number;
+  adminMode?: ApiAccess;
+  clusters?: Array<{ id: number; name: string }>;
+  namespaces?: Array<{ clusterId: number; namespace: string; level: 'all' | 'read' | 'partial' | 'none' }>;
+};
+
+export const listAllApiKeys = () => apiRequest<{ items: AdminApiKey[] }>('/api/admin/api-keys');
+export const exportApiKeysCsv = () => downloadWithAuth('/api/admin/api-keys/export', 'api-keys.csv');
+export const adminRevokeApiKey = (id: number, comment: string) =>
+  apiRequest<{ status: string }>(`/api/admin/api-keys/${id}/revoke`, { method: 'POST', body: JSON.stringify({ comment }) });
+export const revokeUserApiKeys = (userId: number) =>
+  apiRequest<{ revoked: number }>(`/api/admin/users/${userId}/revoke-api-keys`, { method: 'POST' });
+/** override: a choice not saved yet (undefined = the saved one). */
+export const getUserApiAccess = (userId: number, override?: ApiAccessOverride) =>
+  apiRequest<UserApiAccess>(
+    `/api/admin/users/${userId}/api-access` + (override === undefined ? '' : `?override=${encodeURIComponent(override)}`),
+  );
 
 let featuresPromise: Promise<Record<string, boolean>> | null = null;
 /** Feature flags (FEATURE_*); fetched once. A flag missing from the answer counts as on. */

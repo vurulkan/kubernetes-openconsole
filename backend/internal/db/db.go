@@ -305,6 +305,13 @@ func migrate(ctx context.Context, conn *sql.DB) error {
 		`ALTER TABLE audit_logs ADD COLUMN api_key_name TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE session_recordings ADD COLUMN api_key_id INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE session_recordings ADD COLUMN api_key_name TEXT NOT NULL DEFAULT ''`,
+		// 2.22.0 (M15): API key policy. Every role, old or new, starts at safe
+		// read-only; NULL override = by roles; expiry policy defaults to
+		// today's behaviour (no limit, "never expires" allowed).
+		`ALTER TABLE roles ADD COLUMN api_access TEXT NOT NULL DEFAULT 'safe_read'`,
+		`ALTER TABLE users ADD COLUMN api_access_override TEXT NULL`,
+		`ALTER TABLE session_settings ADD COLUMN api_key_max_days INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE session_settings ADD COLUMN api_key_allow_no_expiry INTEGER NOT NULL DEFAULT 1`,
 	}
 	for _, stmt := range alterStatements {
 		if _, err := conn.ExecContext(ctx, stmt); err != nil {

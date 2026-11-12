@@ -152,7 +152,7 @@ func (l *apiKeyLimits) dueTouch(id int) bool {
 // AuthenticateKey implements auth.KeyAuthenticator. Unlike a session, a key
 // is refused when the lookup fails: a minute of errors for an agent is
 // cheaper than a door opened to the wrong caller.
-func (s *Server) AuthenticateKey(r *http.Request, secret string, keyID int) (*auth.Claims, int) {
+func (s *Server) AuthenticateKey(r *http.Request, secret string, keyID int) (*auth.Claims, int, string) {
 	ctx := r.Context()
 	var key *models.APIKey
 	var err error
@@ -163,16 +163,16 @@ func (s *Server) AuthenticateKey(r *http.Request, secret string, keyID int) (*au
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		slog.Warn("unknown API key", slog.String("remote_ip", clientIP(r)), slog.String("request_id", logpkg.RequestIDFrom(ctx)))
-		return nil, http.StatusUnauthorized
+		return nil, http.StatusUnauthorized, ""
 	}
 	if err != nil {
 		slog.Warn("API key lookup failed; refusing", slog.Any("error", err), slog.String("request_id", logpkg.RequestIDFrom(ctx)))
-		return nil, http.StatusUnauthorized
+		return nil, http.StatusUnauthorized, ""
 	}
 	user, err := s.store.GetUserByID(ctx, key.UserID)
 	if err != nil {
 		slog.Warn("API key owner lookup failed; refusing", slog.Any("error", err), slog.String("request_id", logpkg.RequestIDFrom(ctx)))
-		return nil, http.StatusUnauthorized
+		return nil, http.StatusUnauthorized, ""
 	}
 	deny := func(outcome, reason string) {
 		if !s.keyLimits.dueAudit(key.ID, reason) {
@@ -184,21 +184,30 @@ func (s *Server) AuthenticateKey(r *http.Request, secret string, keyID int) (*au
 	switch {
 	case key.RevokedAt != nil:
 		deny(audit.Denied, "revoked")
-		return nil, http.StatusUnauthorized
+		return nil, http.StatusUnauthorized, ""
 	case key.ExpiresAt != nil && !time.Now().Before(*key.ExpiresAt):
 		deny(audit.Denied, "expired")
-		return nil, http.StatusUnauthorized
+		return nil, http.StatusUnauthorized, ""
 	case !user.IsActive:
 		deny(audit.Denied, "owner_inactive")
-		return nil, http.StatusUnauthorized
+		return nil, http.StatusUnauthorized, ""
 	case user.MustChangePassword:
 		// The key is valid, its owner just cannot use anything yet: 403, not 401.
 		deny(audit.Denied, "must_change_password")
-		return nil, http.StatusForbidden
+		return nil, http.StatusForbidden, "change your password first"
+	}
+	refused, err := s.keysRefused(ctx, user)
+	if err != nil {
+		slog.Warn("API access policy lookup failed; refusing", slog.Any("error", err), slog.String("request_id", logpkg.RequestIDFrom(ctx)))
+		return nil, http.StatusUnauthorized, ""
+	}
+	if refused {
+		deny(audit.Denied, reasonAPIAccessOff)
+		return nil, http.StatusForbidden, reasonAPIAccessOff
 	}
 	if !s.keyLimits.allow(key.ID) {
 		deny(audit.RateLimited, reasonRateLimited)
-		return nil, http.StatusTooManyRequests
+		return nil, http.StatusTooManyRequests, ""
 	}
 	if s.keyLimits.dueTouch(key.ID) {
 		ip := clientIP(r)
@@ -208,7 +217,24 @@ func (s *Server) AuthenticateKey(r *http.Request, secret string, keyID int) (*au
 			_ = s.store.TouchAPIKey(ctx, key.ID, ip)
 		}()
 	}
-	return &auth.Claims{UserID: user.ID, Username: user.Username, APIKey: key}, 0
+	return &auth.Claims{UserID: user.ID, Username: user.Username, APIKey: key}, 0, ""
+}
+
+// keysRefused: the admin's API access policy leaves the user's keys nothing
+// (override "off", or, by roles, every role of a non-admin "off"); such a
+// key is refused on every endpoint.
+func (s *Server) keysRefused(ctx context.Context, user *models.User) (bool, error) {
+	switch {
+	case user.APIAccessOverride == rbac.AccessOff:
+		return true, nil
+	case user.IsAdmin || user.APIAccessOverride != "":
+		return false, nil
+	}
+	modes, err := s.store.ListRoleAccessByUser(ctx, user.ID)
+	if err != nil {
+		return false, err
+	}
+	return len(modes) > 0 && !slices.ContainsFunc(modes, func(m string) bool { return m != rbac.AccessOff }), nil
 }
 
 // denyAPIKey refuses, audits and returns true when r carries an API key: a
@@ -234,6 +260,8 @@ type ceilingNamespace struct {
 	ClusterID int      `json:"clusterId"`
 	Namespace string   `json:"namespace"`
 	Grants    []string `json:"grants"` // "pods:list"
+	// Blocked are grants the user holds here on the web that the admin's API access policy keeps from keys.
+	Blocked []string `json:"blocked"`
 }
 
 type keyCeiling struct {
@@ -242,6 +270,13 @@ type keyCeiling struct {
 	Namespaces []ceilingNamespace `json:"namespaces"`
 	// Disabled are catalog grants the operator switched off (FEATURE_*); no key can hold them.
 	Disabled []string `json:"disabled"`
+	// AdminScopeAllowed: an admin whose override leaves keys every grant.
+	AdminScopeAllowed bool `json:"adminScopeAllowed"`
+	// SafeRead is the safe read-only template (rbac.SafeReadGrants).
+	SafeRead []string `json:"safeRead"`
+	// The expiry policy for new and regenerated keys (0 = no limit).
+	MaxDays       int  `json:"maxDays"`
+	AllowNoExpiry bool `json:"allowNoExpiry"`
 }
 
 // grants returns the ceiling's grants on (cluster, namespace).
@@ -278,11 +313,18 @@ func (c keyCeiling) invalidGrants(sc models.APIKeyScope) []string {
 	return out
 }
 
-// ceilingFor computes what user may give a key: for an admin every grant in
-// every namespace of every reachable cluster, for anyone else their grants.
-// It is the web session's view, never narrowed by a key.
+// ceilingFor computes what user may give a key: keyAccess (the web access
+// through the admin's policy) in every namespace the user reaches, every
+// namespace of every reachable cluster for an admin. Blocked shows the cells
+// the policy took away.
 func (s *Server) ceilingFor(ctx context.Context, user *models.User) (keyCeiling, error) {
-	out := keyCeiling{IsAdmin: user.IsAdmin, Clusters: []ceilingCluster{}, Namespaces: []ceilingNamespace{}, Disabled: []string{}}
+	out := keyCeiling{IsAdmin: user.IsAdmin, Clusters: []ceilingCluster{}, Namespaces: []ceilingNamespace{}, Disabled: []string{},
+		AdminScopeAllowed: user.IsAdmin && rbac.AdminScopeAllowed(user.APIAccessOverride), SafeRead: rbac.SafeReadGrants()}
+	policy, err := s.store.GetSessionSettings(ctx)
+	if err != nil {
+		return out, err
+	}
+	out.MaxDays, out.AllowNoExpiry = policy.APIKeyMaxDays, policy.APIKeyAllowNoExpiry
 	all := []string{}
 	for _, c := range rbac.Catalog {
 		for _, a := range c.Actions {
@@ -297,41 +339,47 @@ func (s *Server) ceilingFor(ctx context.Context, user *models.User) (keyCeiling,
 	if err != nil {
 		return out, err
 	}
-	var perms []models.NamespacePermission
-	if !user.IsAdmin {
-		if perms, err = s.store.ListPermissionsByUser(ctx, user.ID); err != nil {
-			return out, err
-		}
+	web, err := s.webAccess(ctx, user)
+	if err != nil {
+		return out, err
 	}
-	engine := rbac.New(perms)
+	keys, err := s.keyAccess(ctx, user)
+	if err != nil {
+		return out, err
+	}
 	for _, c := range clusters {
-		if !user.IsAdmin && !engine.CoversCluster(c.ID) {
+		if !web.CoversCluster(c.ID) {
 			continue
 		}
 		out.Clusters = append(out.Clusters, ceilingCluster{ID: c.ID, Name: c.Name})
+		var nss []string
 		if user.IsAdmin {
 			m, err := s.clusters.Get(ctx, c.ID)
 			if err != nil {
 				continue // unreachable: no namespaces to offer
 			}
-			nss, err := s.resources.ListNamespaces(kube.WithManager(ctx, m))
+			list, err := s.resources.ListNamespaces(kube.WithManager(ctx, m))
 			if err != nil {
 				continue
 			}
-			for _, ns := range nss {
-				out.Namespaces = append(out.Namespaces, ceilingNamespace{ClusterID: c.ID, Namespace: ns.Name, Grants: all})
+			for _, ns := range list {
+				nss = append(nss, ns.Name)
 			}
-			continue
+		} else {
+			nss = web.AllowedNamespaces(c.ID)
 		}
-		byNS := map[string][]string{}
-		for _, p := range perms {
-			g := strings.ToLower(p.Resource + ":" + p.Action)
-			if (p.ClusterID == 0 || p.ClusterID == c.ID) && slices.Contains(all, g) && !slices.Contains(byNS[p.Namespace], g) {
-				byNS[p.Namespace] = append(byNS[p.Namespace], g)
+		for _, ns := range nss {
+			n := ceilingNamespace{ClusterID: c.ID, Namespace: ns, Grants: []string{}, Blocked: []string{}}
+			for _, g := range all {
+				res, act, _ := strings.Cut(g, ":")
+				switch {
+				case keys.Can(c.ID, ns, res, act):
+					n.Grants = append(n.Grants, g)
+				case web.Can(c.ID, ns, res, act):
+					n.Blocked = append(n.Blocked, g)
+				}
 			}
-		}
-		for ns, gs := range byNS {
-			out.Namespaces = append(out.Namespaces, ceilingNamespace{ClusterID: c.ID, Namespace: ns, Grants: gs})
+			out.Namespaces = append(out.Namespaces, n)
 		}
 	}
 	sort.Slice(out.Namespaces, func(i, j int) bool {
@@ -437,7 +485,11 @@ func (s *Server) handleAPIKeyCeiling(w http.ResponseWriter, r *http.Request) {
 
 // validateAPIKeyRequest checks req against the caller's ceiling (the trust
 // boundary: the UI never offers more, but nothing else stops a crafted request).
-func (s *Server) validateAPIKeyRequest(ctx context.Context, user *models.User, req *apiKeyRequest) error {
+// On edit, before is the key as stored: grants (and the Admin API) the admin's
+// policy blocks may stay if the key had them, so the key works again when the
+// policy opens (M15 decision 5); they can't be added.
+func (s *Server) validateAPIKeyRequest(ctx context.Context, user *models.User, req *apiKeyRequest, before *models.APIKey) error {
+	kept := before != nil && before.AdminScope
 	req.Name, req.Note = strings.TrimSpace(req.Name), strings.TrimSpace(req.Note)
 	switch {
 	case req.Name == "" || len(req.Name) > 100:
@@ -446,6 +498,8 @@ func (s *Server) validateAPIKeyRequest(ctx context.Context, user *models.User, r
 		return errors.New("note is too long (at most 1000 characters)")
 	case req.AdminScope && !user.IsAdmin:
 		return errors.New("only admins can give a key the admin scope")
+	case req.AdminScope && !rbac.AdminScopeAllowed(user.APIAccessOverride) && !kept:
+		return errors.New("the admin's API access policy does not allow the admin scope for your keys")
 	case len(req.Clusters) == 0:
 		return errors.New("pick at least one cluster")
 	case !req.AllNamespaces && len(req.Namespaces) == 0:
@@ -456,6 +510,15 @@ func (s *Server) validateAPIKeyRequest(ctx context.Context, user *models.User, r
 	ceiling, err := s.ceilingFor(ctx, user)
 	if err != nil {
 		return err
+	}
+	if before != nil {
+		for i, n := range ceiling.Namespaces {
+			for _, g := range n.Blocked {
+				if slices.Contains(before.Grants, g) {
+					ceiling.Namespaces[i].Grants = append(ceiling.Namespaces[i].Grants, g)
+				}
+			}
+		}
 	}
 	if slices.Contains(req.Clusters, 0) {
 		req.Clusters = []int{0}
@@ -513,7 +576,37 @@ func (s *Server) auditAPIKey(r *http.Request, verb, outcome, reason, name string
 	s.auditEvent(r, models.AuditLog{Verb: verb, Outcome: outcome, Reason: reason, ResourceType: audit.KindAPIKey, ResourceName: name, Details: d})
 }
 
-func validExpiry(t *time.Time) bool { return t == nil || t.After(time.Now()) }
+// expiryError checks a new or regenerated key's expiry against the admin's
+// policy (keys that exist are left alone when the policy tightens).
+func expiryError(p models.SessionSettings, t *time.Time, now time.Time) error {
+	switch {
+	case t == nil && !p.APIKeyAllowNoExpiry:
+		return errors.New("keys that never expire are not allowed; pick an expiry")
+	case t == nil:
+		return nil
+	case !t.After(now):
+		return errors.New("the expiry must be in the future")
+	// Days of 24 h, as the UI counts them (AddDate would shift an hour across DST);
+	// a minute of slack for the time between the form and the request.
+	case p.APIKeyMaxDays > 0 && t.After(now.Add(time.Duration(p.APIKeyMaxDays)*24*time.Hour+time.Minute)):
+		return fmt.Errorf("the expiry can be at most %d days away", p.APIKeyMaxDays)
+	}
+	return nil
+}
+
+// checkExpiry answers 400 (or 500) and false when t breaks the expiry policy.
+func (s *Server) checkExpiry(w http.ResponseWriter, r *http.Request, t *time.Time) bool {
+	p, err := s.store.GetSessionSettings(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not read the expiry policy")
+		return false
+	}
+	if err := expiryError(p, t, time.Now()); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return false
+	}
+	return true
+}
 
 func (s *Server) handleCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.apiKeyGate(w, r, audit.VerbCreate)
@@ -525,11 +618,10 @@ func (s *Server) handleCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if !validExpiry(req.ExpiresAt) {
-		writeError(w, http.StatusBadRequest, "the expiry must be in the future")
+	if !s.checkExpiry(w, r, req.ExpiresAt) {
 		return
 	}
-	if err := s.validateAPIKeyRequest(r.Context(), user, &req); err != nil {
+	if err := s.validateAPIKeyRequest(r.Context(), user, &req, nil); err != nil {
 		s.auditAPIKey(r, audit.VerbCreate, audit.Denied, "outside_ceiling", req.Name, failDetails(err, nil))
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -570,7 +662,7 @@ func (s *Server) handleUpdateAPIKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if err := s.validateAPIKeyRequest(r.Context(), user, &req); err != nil {
+	if err := s.validateAPIKeyRequest(r.Context(), user, &req, before); err != nil {
 		s.auditAPIKey(r, audit.VerbUpdate, audit.Denied, "outside_ceiling", before.Name, failDetails(err, audit.D{"id": before.ID}))
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -619,8 +711,11 @@ func (s *Server) handleRegenerateAPIKey(w http.ResponseWriter, r *http.Request) 
 	var req struct {
 		ExpiresAt *time.Time `json:"expiresAt"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || !validExpiry(req.ExpiresAt) {
-		writeError(w, http.StatusBadRequest, "the expiry must be in the future")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if !s.checkExpiry(w, r, req.ExpiresAt) {
 		return
 	}
 	secret, prefix, hash, err := newAPIKeySecret()

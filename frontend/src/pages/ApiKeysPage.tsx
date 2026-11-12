@@ -24,9 +24,11 @@ import {
   SecretBox,
   classify,
   dangerous,
+  defaultChoice,
   expiryFromChoice,
   expiryState,
   type ExpiryChoice,
+  type ExpiryPolicy,
 } from './apikeys/ApiKeyParts';
 
 /** Every grant the ceiling holds somewhere, for naming a key "all my permissions". */
@@ -116,7 +118,7 @@ const ApiKeysPage: React.FC<{ user: User }> = ({ user }) => {
         const invalid = k.invalidGrants ?? [];
         return (
           <div className="flex flex-wrap items-center gap-1">
-            <span className="text-xs text-slate-700 dark:text-slate-200">{t(`apiKeys.templates.${classify(k.grants, available)}`)}</span>
+            <span className="text-xs text-slate-700 dark:text-slate-200">{t(`apiKeys.templates.${classify(k.grants, ceiling?.safeRead ?? [], available)}`)}</span>
             {dangerous(k.grants, k.adminScope).map((d) => (
               <Badge key={d} variant="error" className="!px-1.5 !py-0 font-mono text-[10px]">
                 {d}
@@ -254,9 +256,10 @@ const ApiKeysPage: React.FC<{ user: User }> = ({ user }) => {
         </MenuPopover>
       )}
 
-      {regen && (
+      {regen && ceiling && (
         <RegenerateModal
           apiKey={regen}
+          policy={ceiling}
           onClose={() => setRegen(null)}
           onDone={(value) => {
             setSecret({ value, cluster: clusterName(regen) });
@@ -270,13 +273,18 @@ const ApiKeysPage: React.FC<{ user: User }> = ({ user }) => {
 };
 
 /** New secret + new expiry; the old secret stops working at once. */
-const RegenerateModal: React.FC<{ apiKey: ApiKey; onClose: () => void; onDone: (secret: string) => void }> = ({ apiKey, onClose, onDone }) => {
+const RegenerateModal: React.FC<{ apiKey: ApiKey; policy: ExpiryPolicy; onClose: () => void; onDone: (secret: string) => void }> = ({
+  apiKey,
+  policy,
+  onClose,
+  onDone,
+}) => {
   const { t } = useTranslation();
-  const [choice, setChoice] = useState<ExpiryChoice>('30');
+  const [choice, setChoice] = useState<ExpiryChoice>(defaultChoice(policy));
   const [date, setDate] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const expires = expiryFromChoice(choice, date);
+  const expires = expiryFromChoice(choice, date, policy.maxDays);
   return (
     <Modal
       open
@@ -312,6 +320,7 @@ const RegenerateModal: React.FC<{ apiKey: ApiKey; onClose: () => void; onDone: (
       <div className="space-y-4">
         <Alert severity="warning">{t('apiKeys.regenerateWarning')}</Alert>
         <ExpiryPicker
+          policy={policy}
           choice={choice}
           date={date}
           onChange={(c, d) => {

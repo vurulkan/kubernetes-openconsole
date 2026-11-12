@@ -6,7 +6,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 vi.mock('../components/Layout', () => ({ default: ({ children }: { children: React.ReactNode }) => <main>{children}</main> }));
 import ApiKeysPage from './ApiKeysPage';
 import ApiKeyFormPage from './apikeys/ApiKeyFormPage';
-import { classify, expiryFromChoice, expiryState, scopePairs, templateGrants } from './apikeys/ApiKeyParts';
+import { allowedChoices, classify, defaultChoice, expiryFromChoice, expiryState, scopePairs, templateGrants } from './apikeys/ApiKeyParts';
 import { mockFetch } from '../test/fetchMock';
 import { expectNoA11yViolations } from '../test/a11y';
 import type { ApiKey, ApiKeyCeiling, User } from '../services/api';
@@ -14,14 +14,21 @@ import type { ApiKey, ApiKeyCeiling, User } from '../services/api';
 const DAY = 24 * 60 * 60 * 1000;
 const iso = (ms: number) => new Date(Date.now() + ms).toISOString();
 
+// The server's safe read-only list (rbac.SafeReadGrants), shortened.
+const SAFE = ['pods:list', 'pods:get', 'pods:logs', 'deployments:list', 'deployments:get'];
+
 const ceiling: ApiKeyCeiling = {
   isAdmin: false,
   clusters: [{ id: 1, name: 'alpha' }],
   namespaces: [
-    { clusterId: 1, namespace: 'team-a', grants: ['pods:list', 'pods:get', 'pods:logs', 'pods:exec', 'secrets:list'] },
-    { clusterId: 1, namespace: 'team-b', grants: ['pods:list'] },
+    { clusterId: 1, namespace: 'team-a', grants: ['pods:list', 'pods:get', 'pods:logs', 'pods:exec', 'secrets:list'], blocked: ['deployments:restart'] },
+    { clusterId: 1, namespace: 'team-b', grants: ['pods:list'], blocked: [] },
   ],
   disabled: ['secrets:edit'],
+  adminScopeAllowed: false,
+  safeRead: SAFE,
+  maxDays: 0,
+  allowNoExpiry: true,
 };
 
 const key = (over: Partial<ApiKey>): ApiKey => ({
@@ -37,12 +44,12 @@ afterEach(() => vi.unstubAllGlobals());
 describe('API key helpers', () => {
   it('names templates and fills them from what the owner holds', () => {
     const available = new Set(['pods:list', 'pods:exec', 'secrets:list', 'secrets:reveal', 'configmaps:get']);
-    expect(templateGrants('safeRead', available)).toEqual(['pods:list']);
-    expect(templateGrants('readAll', available)).toEqual(['pods:list', 'configmaps:get', 'secrets:list', 'secrets:reveal']);
-    expect(classify(['pods:list', 'pods:logs'])).toBe('safeRead');
-    expect(classify(['pods:list', 'secrets:reveal'])).toBe('readAll');
-    expect(classify([...available], available)).toBe('all');
-    expect(classify(['pods:exec'], available)).toBe('custom');
+    expect(templateGrants('safeRead', available, SAFE)).toEqual(['pods:list']);
+    expect(templateGrants('readAll', available, SAFE)).toEqual(['pods:list', 'configmaps:get', 'secrets:list', 'secrets:reveal']);
+    expect(classify(['pods:list', 'pods:logs'], SAFE)).toBe('safeRead');
+    expect(classify(['pods:list', 'secrets:reveal'], SAFE)).toBe('readAll');
+    expect(classify([...available], SAFE, available)).toBe('all');
+    expect(classify(['pods:exec'], SAFE, available)).toBe('custom');
   });
 
   it('tells the expiry state and computes the expiry to send', () => {
@@ -51,11 +58,21 @@ describe('API key helpers', () => {
     expect(expiryState({ revokedAt: null, expiresAt: null }).kind).toBe('never');
     expect(expiryState({ revokedAt: null, expiresAt: iso(3 * DAY - 1000) })).toEqual({ kind: 'active', days: 3 });
     const now = new Date(2026, 10, 12, 10, 0, 0);
-    expect(expiryFromChoice('never', '', now)).toBeNull();
-    expect(Date.parse(expiryFromChoice('30', '', now)!)).toBe(now.getTime() + 30 * DAY);
-    expect(new Date(expiryFromChoice('custom', '2026-11-20', now)!).getHours()).toBe(23); // end of that day, local
-    expect(expiryFromChoice('custom', '2026-11-01', now)).toBeUndefined();
-    expect(expiryFromChoice('custom', '', now)).toBeUndefined();
+    expect(expiryFromChoice('never', '', 0, now)).toBeNull();
+    expect(Date.parse(expiryFromChoice('30', '', 0, now)!)).toBe(now.getTime() + 30 * DAY);
+    expect(new Date(expiryFromChoice('custom', '2026-11-20', 0, now)!).getHours()).toBe(23); // end of that day, local
+    expect(expiryFromChoice('custom', '2026-11-01', 0, now)).toBeUndefined();
+    expect(expiryFromChoice('custom', '', 0, now)).toBeUndefined();
+    // A 30-day limit: the last day whose end is within 30 days (Dec 12 10:00 → Dec 11).
+    expect(expiryFromChoice('custom', '2026-12-11', 30, now)).toBeDefined();
+    expect(expiryFromChoice('custom', '2026-12-12', 30, now)).toBeUndefined();
+  });
+
+  it('offers only the expiries the policy allows', () => {
+    expect(allowedChoices({ maxDays: 0, allowNoExpiry: true })).toEqual(['7', '30', '60', '90', 'custom', 'never']);
+    expect(allowedChoices({ maxDays: 30, allowNoExpiry: false })).toEqual(['7', '30', 'custom']);
+    expect(defaultChoice({ maxDays: 20, allowNoExpiry: false })).toBe('7');
+    expect(defaultChoice({ maxDays: 3, allowNoExpiry: false })).toBe('custom');
   });
 
   it('expands a selection to the namespaces it reaches', () => {
@@ -173,6 +190,7 @@ describe('ApiKeyFormPage', () => {
     expect(screen.getByRole('button', { name: /^deployments list/ })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'deployments list — You do not have this permission' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'secrets edit — Switched off by the operator' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: "deployments restart — The admin's API access policy does not allow it" })).toBeDisabled();
     // pods:get is in team-a only: partial over the two namespaces.
     expect(screen.getByRole('button', { name: 'pods get — Only in 1 of 2 namespaces' })).toHaveTextContent('1/2');
     await expectNoA11yViolations(document.body);
@@ -195,5 +213,48 @@ describe('ApiKeyFormPage', () => {
     expect(typeof body.expiresAt).toBe('string');
     expect(screen.getByText(/X-OpenConsole-Cluster: alpha/)).toBeInTheDocument();
     await expectNoA11yViolations(document.body);
+  });
+
+  it('keeps to the expiry policy and the Admin API policy', async () => {
+    mockFetch([['GET /api/me/api-keys/ceiling', () => ({ ...ceiling, isAdmin: true, maxDays: 30, allowNoExpiry: false })]]);
+    render(
+      <MemoryRouter initialEntries={['/account/api-keys/new']}>
+        <Routes>
+          <Route path="/account/api-keys/:id" element={<ApiKeyFormPage user={{ ...user, isAdmin: true }} />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    const expiry = (await screen.findByRole('group', { name: 'Expiry' })) as HTMLElement;
+    expect(within(expiry).getAllByRole('button').map((b) => b.textContent)).toEqual(['7 days', '30 days', 'Custom date']);
+    expect(within(expiry).getByText('At most 30 days (admin policy)')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /admin endpoints/ })).toBeDisabled();
+    expect(screen.getByText(/does not allow the Admin API/)).toBeInTheDocument();
+    await expectNoA11yViolations(document.body);
+  });
+
+  it('keeps a cell the policy blocks when editing a key that has it', async () => {
+    const blocked: ApiKeyCeiling = {
+      ...ceiling,
+      namespaces: [{ clusterId: 1, namespace: 'team-a', grants: ['pods:list'], blocked: ['pods:exec'] }],
+    };
+    const calls = mockFetch([
+      ['GET /api/me/api-keys/ceiling', () => blocked],
+      ['PUT /api/me/api-keys/9', () => ({ key: key({}) })],
+      ['GET /api/me/api-keys', () => ({ items: [key({ id: 9, name: 'shell', grants: ['pods:list', 'pods:exec'] })] })],
+    ]);
+    render(
+      <MemoryRouter initialEntries={['/account/api-keys/9']}>
+        <Routes>
+          <Route path="/account/api-keys/:id" element={<ApiKeyFormPage user={user} />} />
+          <Route path="/account/api-keys" element={<p>list</p>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    const exec = await screen.findByRole('button', { name: "pods exec — The admin's API access policy does not allow it" });
+    expect(exec).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByText(/will be removed when you save/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByText('list');
+    expect((calls.find((c) => c.method === 'PUT')!.body as { grants: string[] }).grants).toEqual(['pods:list', 'pods:exec']);
   });
 });

@@ -138,8 +138,9 @@ func (s *Server) handleSecretReveal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.can(r.Context(), user.ID, namespace, "secrets", "reveal") {
-		s.recordSecretAudit(r, namespace, name, audit.VerbReveal, audit.Denied, reasonForbidden, audit.D{"key": body.Key})
-		writeError(w, http.StatusForbidden, "forbidden")
+		reason := s.denyReason(r.Context(), namespace, "secrets", "reveal")
+		s.recordSecretAudit(r, namespace, name, audit.VerbReveal, audit.Denied, reason, audit.D{"key": body.Key})
+		writeError(w, http.StatusForbidden, reason)
 		return
 	}
 	sec, err := s.resources.GetSecret(r.Context(), namespace, name)
@@ -178,8 +179,9 @@ func (s *Server) handleSecretYAML(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 	name := chi.URLParam(r, "name")
 	if !s.can(r.Context(), user.ID, namespace, "secrets", "edit") {
-		s.recordSecretAudit(r, namespace, name, audit.VerbViewYAML, audit.Denied, reasonForbidden, nil)
-		writeError(w, http.StatusForbidden, "forbidden")
+		reason := s.denyReason(r.Context(), namespace, "secrets", "edit")
+		s.recordSecretAudit(r, namespace, name, audit.VerbViewYAML, audit.Denied, reason, nil)
+		writeError(w, http.StatusForbidden, reason)
 		return
 	}
 	sec, err := s.resources.GetSecret(r.Context(), namespace, name)

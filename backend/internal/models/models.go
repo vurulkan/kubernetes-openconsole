@@ -16,6 +16,9 @@ type User struct {
 	// ActiveClusterID is the cluster this user picked in the header
 	// switcher; 0 = use the default cluster.
 	ActiveClusterID int `json:"activeClusterId"`
+	// APIAccessOverride replaces the role modes for this user's API keys
+	// (rbac.Access*); "" = by roles.
+	APIAccessOverride string `json:"apiAccessOverride"`
 }
 
 // Where a user authenticates.
@@ -34,6 +37,8 @@ type Role struct {
 	ID          int    `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	// APIAccess is what this role's grants give API keys (rbac.Access*).
+	APIAccess string `json:"apiAccess"`
 }
 
 // NamespacePermission grants a role one (cluster, namespace, resource, action)
@@ -48,6 +53,8 @@ type NamespacePermission struct {
 	Namespace   string `json:"namespace"`
 	Resource    string `json:"resource"`
 	Action      string `json:"action"`
+	// RoleAPIAccess is the role's API access mode (rbac.Access*), filled by ListPermissionsByUser.
+	RoleAPIAccess string `json:"-"`
 }
 
 type LDAPConfig struct {
@@ -83,6 +90,10 @@ type AzureADConfig struct {
 
 type SessionSettings struct {
 	SessionMinutes int `json:"sessionMinutes"`
+	// API key expiry policy for new and regenerated keys: the longest
+	// lifetime in days (0 = no limit) and whether "never expires" is allowed.
+	APIKeyMaxDays       int  `json:"apiKeyMaxDays"`
+	APIKeyAllowNoExpiry bool `json:"apiKeyAllowNoExpiry"`
 }
 
 type KubeCredentials struct {

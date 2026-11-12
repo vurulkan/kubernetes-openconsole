@@ -18,6 +18,7 @@ import (
 	"k8s-dashboard/backend/internal/db"
 	"k8s-dashboard/backend/internal/kube"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/rbac"
 	"k8s-dashboard/backend/internal/store"
 )
 
@@ -279,7 +280,7 @@ func TestAPIKeyLookupErrorRefuses(t *testing.T) {
 	}
 	database.Conn.Close()
 	s := &Server{store: st}
-	if _, status := s.AuthenticateKey(httptest.NewRequest("GET", "/api/namespaces", nil), "oc_x", 0); status != http.StatusUnauthorized {
+	if _, status, _ := s.AuthenticateKey(httptest.NewRequest("GET", "/api/namespaces", nil), "oc_x", 0); status != http.StatusUnauthorized {
 		t.Fatalf("status = %d", status)
 	}
 }
@@ -377,7 +378,7 @@ func TestAPIKeysFeatureFlag(t *testing.T) {
 func TestAPIKeyShellMustBeRecorded(t *testing.T) {
 	e := newTestEnv(t)
 	bobID, bob := e.user("bob", false)
-	e.grant(bobID, [4]any{0, "team-a", "pods", "exec"})
+	e.grantMode(bobID, rbac.AccessFull, [4]any{0, "team-a", "pods", "exec"})
 	key, _ := e.createKey(bob, keyBody("k", []string{"team-a"}, "pods:exec"))
 	// The fake clientset has no REST config; a real (unreachable) one gets the handler to the recording step.
 	m := kube.NewManager()

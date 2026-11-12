@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -38,9 +39,9 @@ const APIKeyPrefix = "oc_"
 
 // KeyAuthenticator checks an API key: the secret from the Authorization
 // header, or (keyID > 0) the key a WebSocket ticket was issued with. A
-// non-zero status rejects the request with that status.
+// non-zero status rejects the request with that status (and the message, if any, as {"error": …}).
 type KeyAuthenticator interface {
-	AuthenticateKey(r *http.Request, secret string, keyID int) (*Claims, int)
+	AuthenticateKey(r *http.Request, secret string, keyID int) (*Claims, int, string)
 }
 
 // AuthMiddleware parses the JWT and, when a SessionValidator is wired, cross-
@@ -56,8 +57,14 @@ func AuthMiddleware(secret []byte, sessions SessionValidator, keys KeyAuthentica
 				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
-			claims, status := keys.AuthenticateKey(r, secret, keyID)
+			claims, status, message := keys.AuthenticateKey(r, secret, keyID)
 			if status != 0 {
+				if message != "" {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(status)
+					_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
+					return
+				}
 				w.WriteHeader(status)
 				return
 			}

@@ -58,11 +58,11 @@ func TestMiddlewareRejectsTokenInQuery(t *testing.T) {
 
 type fakeKeys struct{ secret string }
 
-func (f fakeKeys) AuthenticateKey(r *http.Request, secret string, keyID int) (*Claims, int) {
+func (f fakeKeys) AuthenticateKey(r *http.Request, secret string, keyID int) (*Claims, int, string) {
 	if secret == f.secret || keyID == 7 {
-		return &Claims{UserID: 1, APIKey: &models.APIKey{ID: 7}}, 0
+		return &Claims{UserID: 1, APIKey: &models.APIKey{ID: 7}}, 0, ""
 	}
-	return nil, http.StatusUnauthorized
+	return nil, http.StatusUnauthorized, ""
 }
 
 // An oc_ bearer token goes to the key checker, never to the JWT parser; a

@@ -291,6 +291,12 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/admin/users", s.handleListUsers)
 		r.Get("/api/admin/users/export", s.handleExportUsers)
 		r.Get("/api/admin/groups/export", s.handleExportGroups)
+		// API keys of every user (M15): web session only, see apikeys_admin.go.
+		r.Get("/api/admin/api-keys", s.handleAdminListAPIKeys)
+		r.Get("/api/admin/api-keys/export", s.handleExportAPIKeys)
+		r.Post("/api/admin/api-keys/{id}/revoke", s.handleAdminRevokeAPIKey)
+		r.Post("/api/admin/users/{id}/revoke-api-keys", s.handleRevokeUserAPIKeys)
+		r.Get("/api/admin/users/{id}/api-access", s.handleUserAPIAccess)
 		r.Post("/api/admin/users", s.handleCreateUser)
 		r.Put("/api/admin/users/{id}", s.handleUpdateUser)
 		r.Delete("/api/admin/users/{id}", s.handleDeleteUser)
@@ -575,7 +581,7 @@ func (s *Server) isAdminRequest(r *http.Request) (*models.User, bool) {
 	if !ok || !user.IsAdmin || user.MustChangePassword {
 		return user, false
 	}
-	if k := apiKeyFrom(r.Context()); k != nil && !k.AdminScope {
+	if k := apiKeyFrom(r.Context()); k != nil && (!k.AdminScope || !rbac.AdminScopeAllowed(user.APIAccessOverride)) {
 		return user, false
 	}
 	return user, true
@@ -1583,6 +1589,8 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		Username string `json:"username"`
 		IsActive bool   `json:"isActive"`
 		IsAdmin  bool   `json:"isAdmin"`
+		// APIAccessOverride: "" = by roles, else a mode; absent = unchanged.
+		APIAccessOverride *string `json:"apiAccessOverride"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -1609,6 +1617,10 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if o := request.APIAccessOverride; o != nil && *o != "" && !rbac.ValidMode(*o) {
+		writeError(w, http.StatusBadRequest, errAPIAccess)
+		return
+	}
 	before := *user
 	user.Username = request.Username
 	user.IsActive = request.IsActive
@@ -1627,8 +1639,20 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	if before.IsAdmin != user.IsAdmin {
 		changed = append(changed, "is_admin")
 	}
-	s.auditEvent(r, models.AuditLog{Verb: audit.VerbUpdate, ResourceType: audit.KindUser, ResourceName: user.Username,
-		Details: audit.D{"changed": changed, "is_admin": user.IsAdmin, "is_active": user.IsActive}})
+	d := audit.D{"changed": changed, "is_admin": user.IsAdmin, "is_active": user.IsActive}
+	if o := request.APIAccessOverride; o != nil && *o != before.APIAccessOverride {
+		if err := s.store.SetUserAPIAccess(r.Context(), user.ID, *o); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		user.APIAccessOverride = *o
+		d["changed"] = append(changed, "api_access")
+		d["api_access"] = *o
+		if *o == "" {
+			d["api_access"] = "roles"
+		}
+	}
+	s.auditEvent(r, models.AuditLog{Verb: audit.VerbUpdate, ResourceType: audit.KindUser, ResourceName: user.Username, Details: d})
 	writeJSON(w, http.StatusOK, user)
 }
 
@@ -1818,9 +1842,17 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
+		APIAccess   string `json:"apiAccess"` // "" = safe_read
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if request.APIAccess == "" {
+		request.APIAccess = rbac.AccessSafeRead
+	}
+	if !rbac.ValidMode(request.APIAccess) {
+		writeError(w, http.StatusBadRequest, errAPIAccess)
 		return
 	}
 	id, err := s.store.CreateRole(r.Context(), request.Name, request.Description)
@@ -1828,8 +1860,15 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusConflict)
 		return
 	}
-	s.auditEvent(r, models.AuditLog{Verb: audit.VerbCreate, ResourceType: audit.KindRole, ResourceName: request.Name})
-	writeJSON(w, http.StatusCreated, models.Role{ID: id, Name: request.Name, Description: request.Description})
+	if request.APIAccess != rbac.AccessSafeRead {
+		if err := s.store.SetRoleAPIAccess(r.Context(), id, request.APIAccess); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+	}
+	s.auditEvent(r, models.AuditLog{Verb: audit.VerbCreate, ResourceType: audit.KindRole, ResourceName: request.Name,
+		Details: audit.D{"api_access": request.APIAccess}})
+	writeJSON(w, http.StatusCreated, models.Role{ID: id, Name: request.Name, Description: request.Description, APIAccess: request.APIAccess})
 }
 
 func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request) {
@@ -1839,19 +1878,44 @@ func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
+		Name        string  `json:"name"`
+		Description string  `json:"description"`
+		APIAccess   *string `json:"apiAccess"` // absent = unchanged
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	if err := s.store.UpdateRole(r.Context(), models.Role{ID: id, Name: request.Name, Description: request.Description}); err != nil {
+	if request.APIAccess != nil && !rbac.ValidMode(*request.APIAccess) {
+		writeError(w, http.StatusBadRequest, errAPIAccess)
+		return
+	}
+	roles, err := s.store.ListRoles(r.Context())
+	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	s.auditEvent(r, models.AuditLog{Verb: audit.VerbUpdate, ResourceType: audit.KindRole, ResourceName: request.Name})
-	writeJSON(w, http.StatusOK, models.Role{ID: id, Name: request.Name, Description: request.Description})
+	i := slices.IndexFunc(roles, func(x models.Role) bool { return x.ID == id })
+	if i < 0 {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	role := models.Role{ID: id, Name: request.Name, Description: request.Description, APIAccess: roles[i].APIAccess}
+	if err := s.store.UpdateRole(r.Context(), role); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	var d audit.D
+	if request.APIAccess != nil && *request.APIAccess != role.APIAccess {
+		if err := s.store.SetRoleAPIAccess(r.Context(), id, *request.APIAccess); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		role.APIAccess = *request.APIAccess
+		d = audit.D{"changed": []string{"api_access"}, "api_access": role.APIAccess}
+	}
+	s.auditEvent(r, models.AuditLog{Verb: audit.VerbUpdate, ResourceType: audit.KindRole, ResourceName: request.Name, Details: d})
+	writeJSON(w, http.StatusOK, role)
 }
 
 func (s *Server) handleDeleteRole(w http.ResponseWriter, r *http.Request) {
@@ -2145,7 +2209,12 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
-	var request models.SessionSettings
+	// Fields left out of the body keep their value.
+	request, err := s.store.GetSessionSettings(r.Context())
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		return
@@ -2154,11 +2223,16 @@ func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+	if request.APIKeyMaxDays < 0 || request.APIKeyMaxDays > 3650 {
+		writeError(w, http.StatusBadRequest, "the longest API key lifetime is 0 (no limit) to 3650 days")
+		return
+	}
 	if err := s.store.UpdateSessionSettings(r.Context(), request); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	s.recordSettingsUpdate(r, "session", audit.D{"summary": "session_minutes=" + strconv.Itoa(request.SessionMinutes)})
+	s.recordSettingsUpdate(r, "session", audit.D{"summary": fmt.Sprintf("session_minutes=%d api_key_max_days=%d api_key_allow_no_expiry=%t",
+		request.SessionMinutes, request.APIKeyMaxDays, request.APIKeyAllowNoExpiry)})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
@@ -2462,19 +2536,63 @@ func (s *Server) engineForRequest(r *http.Request) (*rbac.Engine, bool) {
 	return engine, err == nil
 }
 
-// accessFor is the single source of what user may do on this request: an
-// admin holds every grant, anyone else their roles' grants; an API key on ctx
-// narrows either to the key's scope.
+// accessFor is the single source of what user may do on this request: the
+// web access, or with an API key on ctx the key access narrowed to the key's scope.
 func (s *Server) accessFor(ctx context.Context, user *models.User) (*rbac.Engine, error) {
-	engine := rbac.NewAdmin()
-	if !user.IsAdmin {
-		perms, err := s.store.ListPermissionsByUser(ctx, user.ID)
-		if err != nil {
-			return nil, err
-		}
-		engine = rbac.New(perms)
+	k := apiKeyScopeFrom(ctx)
+	if k == nil {
+		return s.webAccess(ctx, user)
 	}
-	return engine.WithKey(apiKeyScopeFrom(ctx)), nil
+	engine, err := s.keyAccess(ctx, user)
+	if err != nil {
+		return nil, err
+	}
+	return engine.WithKey(k), nil
+}
+
+// webAccess: an admin holds every grant, anyone else their roles' grants.
+func (s *Server) webAccess(ctx context.Context, user *models.User) (*rbac.Engine, error) {
+	if user.IsAdmin {
+		return rbac.NewAdmin(), nil
+	}
+	perms, err := s.store.ListPermissionsByUser(ctx, user.ID)
+	if err != nil {
+		return nil, err
+	}
+	return rbac.New(perms), nil
+}
+
+// keyAccess is the most user's API keys may reach: the web access through the
+// admin's API access policy (role modes, the user's override). accessFor and
+// ceilingFor both use it, so the key form offers exactly what a key gets.
+func (s *Server) keyAccess(ctx context.Context, user *models.User) (*rbac.Engine, error) {
+	if user.IsAdmin {
+		return rbac.NewAdminKeys(user.APIAccessOverride), nil
+	}
+	perms, err := s.store.ListPermissionsByUser(ctx, user.ID)
+	if err != nil {
+		return nil, err
+	}
+	return rbac.New(rbac.KeyCeiling(perms, user.APIAccessOverride)), nil
+}
+
+// denyReason names a refusal: api_access_policy when the key lists the grant
+// and its owner holds it on the web, so only the admin's policy stands in
+// the way; forbidden otherwise.
+func (s *Server) denyReason(ctx context.Context, namespace, resource, action string) string {
+	c, ok := auth.FromContext(ctx)
+	if !ok || c.APIKey == nil || !featureAllows(resource, action) {
+		return reasonForbidden
+	}
+	user, err := s.store.GetUserByID(ctx, c.UserID)
+	if err != nil {
+		return reasonForbidden
+	}
+	web, err := s.webAccess(ctx, user)
+	if err == nil && web.WithKey(&c.APIKey.APIKeyScope).Can(clusterIDFrom(ctx), namespace, resource, action) {
+		return reasonAPIAccessPolicy
+	}
+	return reasonForbidden
 }
 
 func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, resource, action string) (string, bool) {
@@ -2494,8 +2612,9 @@ func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, resou
 		return "", false
 	}
 	if !engine.Can(clusterIDFrom(r.Context()), namespace, resource, action) {
-		s.auditReadDenied(r, resource, action, reasonForbidden)
-		w.WriteHeader(http.StatusForbidden)
+		reason := s.denyReason(r.Context(), namespace, resource, action)
+		s.auditReadDenied(r, resource, action, reason)
+		writeError(w, http.StatusForbidden, reason)
 		return "", false
 	}
 	return namespace, true

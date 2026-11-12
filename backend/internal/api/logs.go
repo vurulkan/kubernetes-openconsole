@@ -195,9 +195,9 @@ func (s *Server) handlePodLogsWS(w http.ResponseWriter, r *http.Request) {
 		podLogs.Details["previous"] = true
 	}
 	if !s.can(r.Context(), claims.UserID, namespace, "pods", "logs") {
-		podLogs.Outcome, podLogs.Reason = audit.Denied, reasonForbidden
+		podLogs.Outcome, podLogs.Reason = audit.Denied, s.denyReason(r.Context(), namespace, "pods", "logs")
 		s.auditEvent(r, podLogs)
-		wsFail(w, r, http.StatusForbidden, "forbidden")
+		wsFail(w, r, http.StatusForbidden, podLogs.Reason)
 		return
 	}
 	if !s.allowLogStream(claims.UserID) {
@@ -375,9 +375,9 @@ func (s *Server) workloadLogsWS(w http.ResponseWriter, r *http.Request, kind, re
 	logsEvent := models.AuditLog{Verb: audit.VerbLogs, ResourceType: kind, Namespace: namespace, ResourceName: name}
 	if !s.can(r.Context(), claims.UserID, namespace, resource, "get") ||
 		!s.can(r.Context(), claims.UserID, namespace, "pods", "logs") {
-		logsEvent.Outcome, logsEvent.Reason = audit.Denied, reasonForbidden
+		logsEvent.Outcome, logsEvent.Reason = audit.Denied, s.denyReason(r.Context(), namespace, "pods", "logs")
 		s.auditEvent(r, logsEvent)
-		wsFail(w, r, http.StatusForbidden, "forbidden")
+		wsFail(w, r, http.StatusForbidden, logsEvent.Reason)
 		return
 	}
 	if !s.allowLogStream(claims.UserID) {

@@ -492,3 +492,112 @@ func TestPurgeAPIKeyReads(t *testing.T) {
 		t.Fatalf("web entries = %d", n)
 	}
 }
+
+// M15: roles of an older release start at safe read-only, users follow their
+// roles, the expiry policy keeps today's behaviour; the policy columns round-trip.
+func TestAPIKeyPolicyUpgrade(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	legacy, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE,
+			password_hash TEXT NOT NULL, must_change_password INTEGER NOT NULL DEFAULT 1,
+			is_active INTEGER NOT NULL DEFAULT 1, is_admin INTEGER NOT NULL DEFAULT 0, created_at DATETIME NOT NULL)`,
+		`CREATE TABLE roles (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, description TEXT NOT NULL DEFAULT '')`,
+		`CREATE TABLE session_settings (id INTEGER PRIMARY KEY CHECK (id = 1), session_minutes INTEGER NOT NULL)`,
+		`INSERT INTO users (username, password_hash, must_change_password, is_active, is_admin, created_at)
+			VALUES ('olduser', 'hash', 0, 1, 0, '2025-01-01 00:00:00')`,
+		`INSERT INTO roles (name) VALUES ('ops')`,
+		`INSERT INTO session_settings (id, session_minutes) VALUES (1, 45)`,
+	} {
+		if _, err := legacy.Exec(stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	legacy.Close()
+	conn, st := open(t, path)
+	defer conn.Close()
+	ctx := context.Background()
+
+	roles, err := st.ListRoles(ctx)
+	if err != nil || len(roles) != 1 || roles[0].APIAccess != "safe_read" {
+		t.Fatalf("migrated roles = %+v, %v", roles, err)
+	}
+	u, err := st.GetUserByUsername(ctx, "olduser")
+	if err != nil || u.APIAccessOverride != "" {
+		t.Fatalf("migrated user = %+v, %v", u, err)
+	}
+	ss, err := st.GetSessionSettings(ctx)
+	if err != nil || ss.SessionMinutes != 45 || ss.APIKeyMaxDays != 0 || !ss.APIKeyAllowNoExpiry {
+		t.Fatalf("migrated session settings = %+v, %v", ss, err)
+	}
+	newRole, _ := st.CreateRole(ctx, "new", "")
+	roles, _ = st.ListRoles(ctx) // "new", "ops"
+	if roles[0].ID != newRole || roles[0].APIAccess != "safe_read" {
+		t.Fatalf("a new role should start at safe_read: %+v", roles)
+	}
+
+	if err := st.SetRoleAPIAccess(ctx, roles[1].ID, "full"); err != nil {
+		t.Fatal(err)
+	}
+	g, _ := st.CreateGroup(ctx, "g")
+	_ = st.SetGroupRoles(ctx, g, []int{roles[1].ID, newRole})
+	_ = st.SetUserGroups(ctx, u.ID, []int{g})
+	_ = st.AddNamespacePermission(ctx, roles[1].ID, 0, "a", "pods", "exec")
+	perms, err := st.ListPermissionsByUser(ctx, u.ID)
+	if err != nil || len(perms) != 1 || perms[0].RoleAPIAccess != "full" {
+		t.Fatalf("permissions = %+v, %v", perms, err)
+	}
+	// The role without permission rows counts too.
+	modes, err := st.ListRoleAccessByUser(ctx, u.ID)
+	if err != nil || len(modes) != 2 {
+		t.Fatalf("role modes = %v, %v", modes, err)
+	}
+
+	for _, o := range []string{"off", ""} {
+		if err := st.SetUserAPIAccess(ctx, u.ID, o); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := st.GetUserByID(ctx, u.ID); got.APIAccessOverride != o {
+			t.Fatalf("override = %q, want %q", got.APIAccessOverride, o)
+		}
+	}
+	ss.APIKeyMaxDays, ss.APIKeyAllowNoExpiry = 30, false
+	if err := st.UpdateSessionSettings(ctx, ss); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.GetSessionSettings(ctx); got != ss {
+		t.Fatalf("session settings = %+v, want %+v", got, ss)
+	}
+
+	// Revoke all: only live keys count; ListAPIKeys(0) lists every user's.
+	past, future := time.Now().Add(-time.Hour), time.Now().Add(time.Hour)
+	other, _ := st.CreateUser(ctx, "other", "h")
+	for i, k := range []models.APIKey{
+		{UserID: u.ID, Name: "live", Hash: "a", ExpiresAt: &future},
+		{UserID: u.ID, Name: "forever", Hash: "b"},
+		{UserID: u.ID, Name: "old", Hash: "c", ExpiresAt: &past},
+		{UserID: u.ID, Name: "gone", Hash: "d"},
+		{UserID: other, Name: "theirs", Hash: "e"},
+	} {
+		k.Clusters, k.Grants = []int{0}, []string{"pods:list"}
+		id, err := st.CreateAPIKey(ctx, k)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == 3 {
+			_ = st.RevokeAPIKey(ctx, id)
+		}
+	}
+	if n, err := st.RevokeUserAPIKeys(ctx, u.ID); err != nil || n != 2 {
+		t.Fatalf("revoked %d, %v; want 2", n, err)
+	}
+	if all, _ := st.ListAPIKeys(ctx, 0); len(all) != 5 {
+		t.Fatalf("all keys = %d, want 5", len(all))
+	}
+	if theirs, _ := st.GetAPIKeyByHash(ctx, "e"); theirs.RevokedAt != nil {
+		t.Fatal("another user's key was revoked")
+	}
+}

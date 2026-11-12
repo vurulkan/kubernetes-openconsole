@@ -76,6 +76,18 @@ func (s *Store) RevokeAPIKey(ctx context.Context, id int) error {
 	return err
 }
 
+// RevokeUserAPIKeys revokes every live key of the user and returns how many.
+func (s *Store) RevokeUserAPIKeys(ctx context.Context, userID int) (int, error) {
+	now := time.Now().UTC()
+	res, err := s.conn.ExecContext(ctx, `UPDATE api_keys SET revoked_at = ?, updated_at = ?
+		WHERE user_id = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`, now, now, userID, now)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
+}
+
 func (s *Store) DeleteAPIKey(ctx context.Context, id int) error {
 	for _, q := range []string{`DELETE FROM api_key_scopes WHERE key_id = ?`, `DELETE FROM api_key_permissions WHERE key_id = ?`, `DELETE FROM api_keys WHERE id = ?`} {
 		if _, err := s.conn.ExecContext(ctx, q, id); err != nil {
@@ -91,9 +103,9 @@ func (s *Store) TouchAPIKey(ctx context.Context, id int, ip string) error {
 	return err
 }
 
-// ListAPIKeys returns the user's keys, newest first.
+// ListAPIKeys returns the user's keys (userID 0 = every user's), newest first.
 func (s *Store) ListAPIKeys(ctx context.Context, userID int) ([]models.APIKey, error) {
-	rows, err := s.conn.QueryContext(ctx, `SELECT `+apiKeyColumns+` FROM api_keys WHERE user_id = ? ORDER BY id DESC`, userID)
+	rows, err := s.conn.QueryContext(ctx, `SELECT `+apiKeyColumns+` FROM api_keys WHERE ? = 0 OR user_id = ? ORDER BY id DESC`, userID, userID)
 	if err != nil {
 		return nil, err
 	}

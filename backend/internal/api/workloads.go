@@ -131,8 +131,9 @@ func (s *Server) handleStatefulSetScale(w http.ResponseWriter, r *http.Request) 
 	name := chi.URLParam(r, "name")
 
 	if !s.can(r.Context(), user.ID, namespace, "statefulsets", "scale") {
-		s.recordStatefulSetScaleAudit(r, namespace, name, audit.Denied, reasonForbidden, nil)
-		writeError(w, http.StatusForbidden, "forbidden")
+		reason := s.denyReason(r.Context(), namespace, "statefulsets", "scale")
+		s.recordStatefulSetScaleAudit(r, namespace, name, audit.Denied, reason, nil)
+		writeError(w, http.StatusForbidden, reason)
 		return
 	}
 
