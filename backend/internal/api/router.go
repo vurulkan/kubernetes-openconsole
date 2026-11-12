@@ -1029,7 +1029,8 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := auth.ComparePassword(user.PasswordHash, request.CurrentPassword); err != nil {
-		w.WriteHeader(http.StatusUnauthorized)
+		// Not 401: the session is fine, and the UI signs out on 401.
+		writeError(w, http.StatusBadRequest, "the current password is incorrect")
 		return
 	}
 	if err := auth.CheckPasswordPolicy(request.NewPassword); err != nil {
@@ -1081,7 +1082,7 @@ func (s *Server) handleNamespaces(w http.ResponseWriter, r *http.Request) {
 	}
 	engine, ok := s.engineForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		w.WriteHeader(http.StatusForbidden)
 		return
 	}
 	allowed := engine.AllowedNamespaces(clusterIDFrom(r.Context()))
@@ -1126,7 +1127,7 @@ func (s *Server) handleNamespacePermissions(w http.ResponseWriter, r *http.Reque
 	}
 	engine, ok := s.engineForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		w.WriteHeader(http.StatusForbidden)
 		return
 	}
 	permissions := filterByFeatures(engine.AllowedResources(clusterIDFrom(r.Context()), namespace))
@@ -2456,6 +2457,8 @@ func parseTimeParam(value string) *time.Time {
 	return nil
 }
 
+// engineForRequest fails for a user who must change the password: callers answer 403,
+// never 401, because the UI signs out on 401.
 func (s *Server) engineForRequest(r *http.Request) (*rbac.Engine, bool) {
 	claims, ok := auth.FromContext(r.Context())
 	if !ok {
@@ -2492,7 +2495,7 @@ func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, resou
 	}
 	engine, ok := s.engineForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		w.WriteHeader(http.StatusForbidden)
 		return "", false
 	}
 	if !engine.Can(clusterIDFrom(r.Context()), namespace, resource, action) {

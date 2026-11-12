@@ -138,7 +138,8 @@ func httpStatusFor(err error) int {
 	case apierrors.IsForbidden(err):
 		return http.StatusForbidden
 	case apierrors.IsUnauthorized(err):
-		return http.StatusUnauthorized
+		// The cluster rejected OpenConsole's credentials; a 401 would read as "your session ended".
+		return http.StatusBadGateway
 	case apierrors.IsAlreadyExists(err):
 		return http.StatusConflict
 	case apierrors.IsInvalid(err),
