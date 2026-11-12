@@ -1,5 +1,6 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
+import { KeyRound } from 'lucide-react';
 import type { AuditEntry } from '../services/api';
 import { Badge } from './ui';
 
@@ -12,6 +13,19 @@ const OUTCOME_VARIANT: Record<string, 'success' | 'warning' | 'error' | 'default
 };
 
 const formatValue = (v: unknown) => (Array.isArray(v) ? v.join(', ') : String(v));
+
+/** The API key an action was taken with. */
+export const ApiKeyBadge: React.FC<{ name: string }> = ({ name }) => {
+  const { t } = useTranslation();
+  return (
+    <span title={t('admin.audit.viaApiKey', { name })}>
+      <Badge variant="info" className="font-mono !text-[11px] font-normal">
+        <KeyRound size={11} aria-hidden="true" />
+        {name}
+      </Badge>
+    </span>
+  );
+};
 
 /** One audit event: who did what to which resource, the outcome, and (on
  *  expand) its details and where the request came from. */
@@ -34,6 +48,7 @@ export const AuditEntryRow: React.FC<{ entry: AuditEntry }> = ({ entry }) => {
         <span>{entry.user || 'unknown'}</span>
         <span className="font-mono font-normal text-slate-600 dark:text-slate-300">{entry.action}</span>
         {entry.outcome && <Badge variant={OUTCOME_VARIANT[entry.outcome] ?? 'default'}>{entry.outcome}</Badge>}
+        {entry.apiKeyName && <ApiKeyBadge name={entry.apiKeyName} />}
       </p>
       <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{entry.timestampFormatted ?? entry.timestamp}</p>
       <p className="text-xs text-slate-500 dark:text-slate-400">

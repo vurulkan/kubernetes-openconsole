@@ -7,6 +7,8 @@ import DashboardPage from './pages/DashboardPage';
 import AdminPage from './pages/AdminPage';
 import OverviewPage from './pages/OverviewPage';
 import NodesPage from './pages/NodesPage';
+import ApiKeysPage from './pages/ApiKeysPage';
+import ApiKeyFormPage from './pages/apikeys/ApiKeyFormPage';
 import CommandPalette from './components/CommandPalette';
 import ShortcutsHelp from './components/ShortcutsHelp';
 import { ConfirmProvider } from './components/ConfirmDialog';
@@ -90,6 +92,8 @@ const App: React.FC = () => {
           path="/admin"
           element={user ? <AdminPage user={user} /> : <Navigate to="/login" />}
         />
+        <Route path="/account/api-keys" element={user ? <ApiKeysPage user={user} /> : <Navigate to="/login" />} />
+        <Route path="/account/api-keys/:id" element={user ? <ApiKeyFormPage user={user} /> : <Navigate to="/login" />} />
       </Routes>
       {user && <CommandPalette user={user} namespaces={namespaces} />}
       <ShortcutsHelp />

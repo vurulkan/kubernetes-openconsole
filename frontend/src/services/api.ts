@@ -839,6 +839,9 @@ export type AuditQuery = {
   resourceType?: string;
   cluster?: string;
   namespace?: string;
+  /** web = no API key, api_key = any key */
+  source?: '' | 'web' | 'api_key';
+  apiKey?: string;
   start?: string;
   end?: string;
 };
@@ -863,6 +866,9 @@ export type AuditEntry = {
   sourceIp?: string;
   userAgent?: string;
   authSource?: string;
+  /** Set when the action was taken with an API key. */
+  apiKeyId?: number;
+  apiKeyName?: string;
 };
 
 export type AuditFacets = {
@@ -872,11 +878,12 @@ export type AuditFacets = {
   verbs: string[];
   resourceTypes: string[];
   clusters: string[];
+  apiKeys?: string[];
 };
 
 const auditParams = (q: AuditQuery) => {
   const p = new URLSearchParams();
-  for (const key of ['user', 'action', 'verb', 'outcome', 'resourceType', 'cluster', 'namespace', 'start', 'end'] as const) {
+  for (const key of ['user', 'action', 'verb', 'outcome', 'resourceType', 'cluster', 'namespace', 'source', 'apiKey', 'start', 'end'] as const) {
     if (q[key]) p.set(key, q[key] as string);
   }
   if (q.action && q.actionExact) p.set('actionExact', '1');
@@ -1001,10 +1008,14 @@ export type SessionRecording = {
   sizeBytes: number;
   truncated: boolean;
   requestId: string;
+  apiKeyId?: number;
+  apiKeyName?: string;
 };
 
 export type RecordingFilter = {
   user?: string;
+  source?: '' | 'web' | 'api_key';
+  apiKey?: string;
   namespace?: string;
   pod?: string;
   from?: string; // YYYY-MM-DD or RFC3339
@@ -1129,3 +1140,69 @@ export const shareView = (id: number, shared: boolean) =>
 
 export const deleteView = (id: number) => apiRequest<{ status: string }>(`/api/views/${id}`, { method: 'DELETE' });
 
+
+// ─── API keys (web session only) ────────────────────────────────────────────
+
+export type ApiKeyScope = {
+  /** 0 = every cluster */
+  clusters: number[];
+  /** Every namespace the owner has, including ones granted later. */
+  allNamespaces: boolean;
+  namespaces: string[];
+  /** "pods:list" */
+  grants: string[];
+};
+
+export type ApiKey = ApiKeyScope & {
+  id: number;
+  name: string;
+  note: string;
+  /** "oc_ab12cd" — the secret is shown only once. */
+  prefix: string;
+  adminScope: boolean;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: string | null;
+  lastUsedAt: string | null;
+  lastUsedIp: string;
+  revokedAt: string | null;
+  /** Grants the owner no longer holds in any of the key's namespaces. */
+  invalidGrants?: string[];
+};
+
+/** What the caller may put into a key. */
+export type ApiKeyCeiling = {
+  isAdmin: boolean;
+  clusters: Array<{ id: number; name: string }>;
+  namespaces: Array<{ clusterId: number; namespace: string; grants: string[] }>;
+  /** Grants the operator switched off (FEATURE_*). */
+  disabled: string[];
+};
+
+export type ApiKeyInput = ApiKeyScope & { name: string; note: string; adminScope: boolean; expiresAt?: string | null };
+
+export const listApiKeys = () => apiRequest<{ items: ApiKey[] }>('/api/me/api-keys');
+export const getApiKeyCeiling = () => apiRequest<ApiKeyCeiling>('/api/me/api-keys/ceiling');
+export const createApiKey = (input: ApiKeyInput) =>
+  apiRequest<{ key: ApiKey; secret: string }>('/api/me/api-keys', { method: 'POST', body: JSON.stringify(input) });
+export const updateApiKey = (id: number, input: ApiKeyInput) =>
+  apiRequest<{ key: ApiKey }>(`/api/me/api-keys/${id}`, { method: 'PUT', body: JSON.stringify(input) });
+export const regenerateApiKey = (id: number, expiresAt: string | null) =>
+  apiRequest<{ key: ApiKey; secret: string }>(`/api/me/api-keys/${id}/regenerate`, {
+    method: 'POST',
+    body: JSON.stringify({ expiresAt }),
+  });
+export const revokeApiKey = (id: number) => apiRequest<{ status: string }>(`/api/me/api-keys/${id}/revoke`, { method: 'POST' });
+export const deleteApiKey = (id: number) => apiRequest<Record<string, never>>(`/api/me/api-keys/${id}`, { method: 'DELETE' });
+
+let featuresPromise: Promise<Record<string, boolean>> | null = null;
+/** Feature flags (FEATURE_*); fetched once. A flag missing from the answer counts as on. */
+export const getFeatures = () => {
+  featuresPromise ??= apiRequest<{ features: Record<string, boolean> }>('/api/features')
+    .then((r) => r.features)
+    .catch(() => {
+      featuresPromise = null;
+      return {};
+    });
+  return featuresPromise;
+};
