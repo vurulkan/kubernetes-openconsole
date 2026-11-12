@@ -16,6 +16,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"k8s-dashboard/backend/internal/db"
+	"k8s-dashboard/backend/internal/kube"
 	"k8s-dashboard/backend/internal/models"
 	"k8s-dashboard/backend/internal/store"
 )
@@ -370,4 +371,41 @@ func TestAPIKeysFeatureFlag(t *testing.T) {
 	t.Cleanup(e.http.Close)
 	e.expect("GET", "/api/namespaces/team-a/pods", key, nil, http.StatusUnauthorized)
 	e.expect("GET", "/api/me/api-keys", bob, nil, http.StatusForbidden)
+}
+
+// A shell opened with a key is never left unrecorded: no recorder, no shell.
+func TestAPIKeyShellMustBeRecorded(t *testing.T) {
+	e := newTestEnv(t)
+	bobID, bob := e.user("bob", false)
+	e.grant(bobID, [4]any{0, "team-a", "pods", "exec"})
+	key, _ := e.createKey(bob, keyBody("k", []string{"team-a"}, "pods:exec"))
+	// The fake clientset has no REST config; a real (unreachable) one gets the handler to the recording step.
+	m := kube.NewManager()
+	if err := m.ApplyCredentials(models.KubeCredentials{Method: "token", Server: "https://127.0.0.1:1", Token: []byte("x")}); err != nil {
+		t.Fatal(err)
+	}
+	e.server.clusters.Put(e.alphaID, m)
+	e.server.recorder = nil
+	upgrade := map[string]string{"Connection": "Upgrade", "Upgrade": "websocket", "Sec-WebSocket-Version": "13", "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ=="}
+	if code, out := e.doHeader("GET", "/ws/namespaces/team-a/pods/api-1/exec", key, upgrade); code != http.StatusServiceUnavailable {
+		t.Fatalf("key shell without a recording = %d %s", code, out)
+	}
+	e.waitAudit("pod.exec.failed", "recording_unavailable")
+}
+
+// A refused key answers every time but is audited once a minute per reason.
+func TestAPIKeyRefusalAuditThrottled(t *testing.T) {
+	e := newTestEnv(t)
+	bobID, bob := e.user("bob", false)
+	e.grant(bobID, [4]any{0, "team-a", "pods", "list"})
+	key, id := e.createKey(bob, keyBody("k", []string{"team-a"}, "pods:list"))
+	e.expect("POST", "/api/me/api-keys/"+itoa(int64(id))+"/revoke", bob, nil, http.StatusOK)
+	for i := 0; i < 5; i++ {
+		e.expect("GET", "/api/namespaces/team-a/pods", key, nil, http.StatusUnauthorized)
+	}
+	e.waitAudit("api_key.use.denied", "revoked")
+	time.Sleep(150 * time.Millisecond)
+	if n, _ := e.store.CountAuditLogsFiltered(context.Background(), store.AuditFilter{Action: "api_key.use", ActionExact: true}); n != 1 {
+		t.Fatalf("%d audit rows for 5 refused requests", n)
+	}
 }

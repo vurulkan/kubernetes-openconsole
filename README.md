@@ -576,7 +576,7 @@ curl -H "Authorization: Bearer $OPENCONSOLE_API_KEY" -H "X-OpenConsole-Cluster: 
 - 401 = the key is not valid (unknown, expired, revoked, owner disabled); 403 = not allowed (permission, feature flag, owner must change the password); 429 = more than 10 requests / s (burst 30) for the key.
 - A pod shell opened with a key is always recorded, and shows the key name in Admin → Recordings.
 
-**Audit.** Every call carries `api_key_id` / `api_key_name` (Admin → Audit Logs: *Source* = Web / API key, key name). Key events: `api_key.create` / `update` / `regenerate` / `revoke` / `delete`, and `api_key.use` with outcome `denied` (`expired`, `revoked`, `owner_inactive`, `must_change_password`) or `rate_limited` (at most once a minute). An unknown key has no user, so it is only a warning line in the console log, with the source IP. Successful reads with a key are kept `API_KEY_READ_RETENTION_DAYS` (7).
+**Audit.** Every call carries `api_key_id` / `api_key_name` (Admin → Audit Logs: *Source* = Web / API key, key name). Key events: `api_key.create` / `update` / `regenerate` / `revoke` / `delete`, and `api_key.use` with outcome `denied` (`expired`, `revoked`, `owner_inactive`, `must_change_password`) or `rate_limited`; these are written at most once a minute per key and reason, so an agent retrying with a dead key can't flood the log (every request still gets its 401 / 403 / 429). An unknown key has no user, so it is only a warning line in the console log, with the source IP. Successful reads with a key are kept `API_KEY_READ_RETENTION_DAYS` (7).
 
 ---
 

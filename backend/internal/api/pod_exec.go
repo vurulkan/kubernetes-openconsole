@@ -162,6 +162,28 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "a WebSocket upgrade is required")
 		return
 	}
+	// Built before a recording is opened, so a failure leaves none behind.
+	req := client.CoreV1().RESTClient().Post().
+		Resource("pods").
+		Name(pod).
+		Namespace(namespace).
+		SubResource("exec").
+		VersionedParams(&corev1.PodExecOptions{
+			Container: container,
+			Command:   splitCommand(command),
+			Stdin:     true,
+			Stdout:    true,
+			Stderr:    true,
+			TTY:       true,
+		}, scheme.ParameterCodec)
+
+	executor, err := remotecommand.NewSPDYExecutor(cfg, "POST", req.URL())
+	if err != nil {
+		s.recordExecAudit(r, namespace, pod, audit.Failed, "spdy_init", failDetails(err, audit.D{"container": container, "command": command}))
+		writeError(w, http.StatusBadGateway, "spdy init failed: "+err.Error())
+		return
+	}
+
 	// Recording is fail-open for a web session: if it can't start, the shell
 	// still opens and the reason lands in the audit log. The client only
 	// shows the "being recorded" banner when it receives the recording frame.
@@ -186,27 +208,6 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 		// Sent before the bridge starts, so no concurrent writer yet.
 		_ = conn.WriteMessage(websocket.TextMessage,
 			[]byte(`{"type":"recording","enabled":true,"sessionId":`+jsonString(rec.ID())+`}`))
-	}
-
-	req := client.CoreV1().RESTClient().Post().
-		Resource("pods").
-		Name(pod).
-		Namespace(namespace).
-		SubResource("exec").
-		VersionedParams(&corev1.PodExecOptions{
-			Container: container,
-			Command:   splitCommand(command),
-			Stdin:     true,
-			Stdout:    true,
-			Stderr:    true,
-			TTY:       true,
-		}, scheme.ParameterCodec)
-
-	executor, err := remotecommand.NewSPDYExecutor(cfg, "POST", req.URL())
-	if err != nil {
-		writeExecError(conn, "spdy init failed: "+err.Error())
-		s.recordExecAudit(r, namespace, pod, audit.Failed, "spdy_init", failDetails(err, audit.D{"container": container, "command": command}))
-		return
 	}
 
 	start := time.Now()

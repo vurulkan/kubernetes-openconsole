@@ -96,38 +96,52 @@ func (s *Server) keyAuth() auth.KeyAuthenticator {
 	return s
 }
 
-// apiKeyLimits holds the per-key rate limiters and last-use throttles.
+// apiKeyLimits holds the per-key rate limiters and the throttles for
+// last-use writes and for audit entries of refused requests.
 type apiKeyLimits struct {
 	mu          sync.Mutex
 	limiters    map[int]*rate.Limiter
-	lastAudit   map[int]time.Time // last rate_limited audit per key
+	lastAudit   map[string]time.Time // "<key id>:<reason>" → last refused-request audit
 	lastTouched map[int]time.Time
 }
 
-func (l *apiKeyLimits) allow(id int) (ok, audit bool) {
+func (l *apiKeyLimits) init() {
+	if l.limiters == nil {
+		l.limiters, l.lastAudit, l.lastTouched = map[int]*rate.Limiter{}, map[string]time.Time{}, map[int]time.Time{}
+	}
+}
+
+func (l *apiKeyLimits) allow(id int) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.limiters == nil {
-		l.limiters, l.lastAudit, l.lastTouched = map[int]*rate.Limiter{}, map[int]time.Time{}, map[int]time.Time{}
-	}
+	l.init()
 	lim, found := l.limiters[id]
 	if !found {
 		lim = rate.NewLimiter(apiKeyRate, apiKeyBurst)
 		l.limiters[id] = lim
 	}
-	if lim.Allow() {
-		return true, false
+	return lim.Allow()
+}
+
+// dueAudit: a refused key is audited at most once a minute per reason, so an
+// agent retrying with an expired key can't flood the audit log (every
+// request still gets its 401 / 403 / 429).
+func (l *apiKeyLimits) dueAudit(id int, reason string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.init()
+	k := strconv.Itoa(id) + ":" + reason
+	if time.Since(l.lastAudit[k]) < time.Minute {
+		return false
 	}
-	if time.Since(l.lastAudit[id]) < time.Minute {
-		return false, false
-	}
-	l.lastAudit[id] = time.Now()
-	return false, true
+	l.lastAudit[k] = time.Now()
+	return true
 }
 
 func (l *apiKeyLimits) dueTouch(id int) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.init()
 	if time.Since(l.lastTouched[id]) < apiKeyTouchEvery {
 		return false
 	}
@@ -161,6 +175,9 @@ func (s *Server) AuthenticateKey(r *http.Request, secret string, keyID int) (*au
 		return nil, http.StatusUnauthorized
 	}
 	deny := func(outcome, reason string) {
+		if !s.keyLimits.dueAudit(key.ID, reason) {
+			return
+		}
 		s.auditEvent(r, models.AuditLog{User: user.Username, AuthSource: user.AuthSource, Verb: audit.VerbUse, Outcome: outcome,
 			Reason: reason, ResourceType: audit.KindAPIKey, ResourceName: key.Name, APIKeyID: key.ID, APIKeyName: key.Name})
 	}
@@ -179,10 +196,8 @@ func (s *Server) AuthenticateKey(r *http.Request, secret string, keyID int) (*au
 		deny(audit.Denied, "must_change_password")
 		return nil, http.StatusForbidden
 	}
-	if ok, record := s.keyLimits.allow(key.ID); !ok {
-		if record {
-			deny(audit.RateLimited, reasonRateLimited)
-		}
+	if !s.keyLimits.allow(key.ID) {
+		deny(audit.RateLimited, reasonRateLimited)
 		return nil, http.StatusTooManyRequests
 	}
 	if s.keyLimits.dueTouch(key.ID) {
