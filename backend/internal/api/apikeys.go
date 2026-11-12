@@ -573,8 +573,9 @@ func expiryError(p models.SessionSettings, t *time.Time, now time.Time) error {
 		return nil
 	case !t.After(now):
 		return errors.New("the expiry must be in the future")
-	// A minute of slack for the time between the form and the request.
-	case p.APIKeyMaxDays > 0 && t.After(now.AddDate(0, 0, p.APIKeyMaxDays).Add(time.Minute)):
+	// Days of 24 h, as the UI counts them (AddDate would shift an hour across DST);
+	// a minute of slack for the time between the form and the request.
+	case p.APIKeyMaxDays > 0 && t.After(now.Add(time.Duration(p.APIKeyMaxDays)*24*time.Hour+time.Minute)):
 		return fmt.Errorf("the expiry can be at most %d days away", p.APIKeyMaxDays)
 	}
 	return nil

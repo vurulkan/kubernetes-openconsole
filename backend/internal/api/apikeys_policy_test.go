@@ -52,8 +52,8 @@ func TestAPIKeyPolicyModes(t *testing.T) {
 	_, admin := e.user("root", true)
 	bobID, bob := e.user("bob", false)
 	roleA := e.grantMode(bobID, rbac.AccessFull, [4]any{0, "team-a", "pods", "list"}, [4]any{0, "team-a", "secrets", "list"})
-	roleB := e.grantMode(bobID, rbac.AccessFull, [4]any{0, "team-b", "pods", "list"}, [4]any{0, "team-b", "secrets", "list"})
-	key, _ := e.createKey(bob, map[string]any{"name": "agent", "clusters": []int{0}, "allNamespaces": true, "grants": []string{"pods:list", "secrets:list"}})
+	roleB := e.grantMode(bobID, rbac.AccessFull, [4]any{0, "team-b", "pods", "list"}, [4]any{0, "team-b", "secrets", "list"}, [4]any{0, "team-b", "pods", "exec"})
+	key, _ := e.createKey(bob, map[string]any{"name": "agent", "clusters": []int{0}, "allNamespaces": true, "grants": []string{"pods:list", "secrets:list", "pods:exec"}})
 	if err := e.store.SetRoleAPIAccess(context.Background(), roleB, rbac.AccessSafeRead); err != nil {
 		t.Fatal(err)
 	}
@@ -64,6 +64,11 @@ func TestAPIKeyPolicyModes(t *testing.T) {
 	}
 	e.expectAll("A full, B safe", key, byRoles, reasonAPIAccessPolicy)
 	e.waitAudit("secret.list.denied", reasonAPIAccessPolicy)
+	// The WebSocket paths name the reason too (exec checks before the upgrade).
+	if code, out := e.do("GET", "/ws/namespaces/team-b/pods/api-1/exec", key, nil); code != 403 || !strings.Contains(out, reasonAPIAccessPolicy) {
+		t.Fatalf("exec under safe read = %d %s", code, out)
+	}
+	e.waitAudit("pod.exec.denied", reasonAPIAccessPolicy)
 	// The web session is never narrowed by the policy.
 	e.expect("GET", "/api/namespaces/team-b/secrets", bob, nil, http.StatusOK)
 
