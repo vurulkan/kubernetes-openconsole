@@ -188,7 +188,7 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 	// Recording is fail-open for a web session: if it can't start, the shell
 	// still opens and the reason lands in the audit log. The client only
 	// shows the "being recorded" banner when it receives the recording frame.
-	rec := s.startExecRecording(r, claims.Username, namespace, pod, container, requestID)
+	rec := s.startExecRecording(r, claims.Username, namespace, pod, container, requestID, models.RecordingModeShell)
 	defer rec.Close()
 	if rec == nil && claims.APIKey != nil {
 		// A shell opened with an API key runs with nobody watching: no recording, no shell.
@@ -278,7 +278,7 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 // startExecRecording opens a recording for the session. Returns nil (which
 // the bridge treats as "not recording") when recording is off, refused by
 // the disk guard, or failed to start.
-func (s *Server) startExecRecording(r *http.Request, user, namespace, pod, container, requestID string) *recording.Session {
+func (s *Server) startExecRecording(r *http.Request, user, namespace, pod, container, requestID, mode string) *recording.Session {
 	if s.recorder == nil {
 		return nil
 	}
@@ -293,6 +293,7 @@ func (s *Server) startExecRecording(r *http.Request, user, namespace, pod, conta
 		Pod:       pod,
 		Container: container,
 		RequestID: requestID,
+		Mode:      mode,
 		Cols:      uint16(cols),
 		Rows:      uint16(rows),
 	}

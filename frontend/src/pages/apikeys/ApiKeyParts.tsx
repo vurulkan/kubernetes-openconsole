@@ -183,45 +183,67 @@ export const ExpiryPicker: React.FC<{
 };
 
 /** The new secret, shown once: copy button, a curl example, gone when the page is left. */
-export const SecretBox: React.FC<{ secret: string; cluster?: string }> = ({ secret, cluster }) => {
+/** A value in a mono box with a Copy button (the API key, curl lines, the agent text). */
+export const CopyRow: React.FC<{ value: string; label: string; multiline?: boolean; tone?: 'success' | 'plain' }> = ({
+  value,
+  label,
+  multiline,
+  tone = 'plain',
+}) => {
   const { t } = useTranslation();
-  const [copied, setCopied] = useState('');
-  const [failed, setFailed] = useState(false);
-  const curl =
-    `curl -H "Authorization: Bearer $OPENCONSOLE_API_KEY"` +
-    (cluster ? ` -H "X-OpenConsole-Cluster: ${cluster}"` : '') +
-    ` ${window.location.origin}/api/namespaces`;
-  const copy = async (what: string, value: string) => {
+  const [state, setState] = useState<'' | 'copied' | 'failed'>('');
+  const copy = async () => {
     try {
       await navigator.clipboard.writeText(value);
-      setCopied(what);
-      setTimeout(() => setCopied((c) => (c === what ? '' : c)), 1500);
+      setState('copied');
+      setTimeout(() => setState((s) => (s === 'copied' ? '' : s)), 1500);
     } catch {
-      setFailed(true);
+      setState('failed');
     }
   };
-  const row = (what: string, value: string, label: string) => (
-    <div className="flex items-center gap-2">
-      <code className="min-w-0 flex-1 break-all rounded-md border border-emerald-200 bg-white px-2.5 py-1.5 font-mono text-xs text-slate-900 dark:border-emerald-500/30 dark:bg-slate-950 dark:text-slate-100">
-        {value}
-      </code>
-      <Button variant="outline" size="sm" onClick={() => copy(what, value)} aria-label={label}>
-        {copied === what ? <Check size={14} /> : <Copy size={14} />}
-        {copied === what ? t('apiKeys.copied') : t('apiKeys.copy')}
-      </Button>
+  const box =
+    tone === 'success'
+      ? 'border-emerald-200 bg-white dark:border-emerald-500/30 dark:bg-slate-950'
+      : 'border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-950';
+  return (
+    <div className="space-y-1">
+      <div className={`flex gap-2 ${multiline ? 'items-start' : 'items-center'}`}>
+        <code
+          className={`min-w-0 flex-1 rounded-md border px-2.5 py-1.5 font-mono text-xs text-slate-900 dark:text-slate-100 ${box} ${
+            multiline ? 'whitespace-pre-wrap break-words' : 'break-all'
+          }`}
+        >
+          {value}
+        </code>
+        <Button variant="outline" size="sm" onClick={copy} aria-label={label}>
+          {state === 'copied' ? <Check size={14} /> : <Copy size={14} />}
+          {state === 'copied' ? t('apiKeys.copied') : t('apiKeys.copy')}
+        </Button>
+      </div>
+      {state === 'failed' && <Alert severity="error">{t('apiKeys.copyFailed')}</Alert>}
     </div>
   );
+};
+
+/** A curl line for an API key call, with the cluster header when one is named. */
+export const curlLine = (path: string, cluster?: string, method = 'GET', body?: string) =>
+  `curl${method === 'GET' ? '' : ` -X ${method}`} -H "Authorization: Bearer $OPENCONSOLE_API_KEY"` +
+  (cluster ? ` -H "X-OpenConsole-Cluster: ${cluster}"` : '') +
+  (body ? ` -H "Content-Type: application/json" -d '${body}'` : '') +
+  ` ${window.location.origin}${path}`;
+
+export const SecretBox: React.FC<{ secret: string; cluster?: string }> = ({ secret, cluster }) => {
+  const { t } = useTranslation();
   return (
     <section
       aria-label={t('apiKeys.newSecret')}
       className="space-y-3 rounded-xl border border-emerald-300 bg-emerald-50 p-4 dark:border-emerald-500/40 dark:bg-emerald-500/10"
     >
       <p className="text-sm font-semibold text-emerald-900 dark:text-emerald-100">{t('apiKeys.newSecret')}</p>
-      {row('secret', secret, t('apiKeys.copySecret'))}
+      <CopyRow value={secret} label={t('apiKeys.copySecret')} tone="success" />
       <p className="text-xs font-medium text-emerald-900 dark:text-emerald-100">{t('apiKeys.onceOnly')}</p>
       <p className="text-xs text-emerald-900 dark:text-emerald-100">{t('apiKeys.curlHint')}</p>
-      {row('curl', curl, t('apiKeys.copyCurl'))}
-      {failed && <Alert severity="error">{t('apiKeys.copyFailed')}</Alert>}
+      <CopyRow value={curlLine('/api/namespaces', cluster)} label={t('apiKeys.copyCurl')} tone="success" />
     </section>
   );
 };

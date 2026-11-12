@@ -257,6 +257,11 @@ export const RecordingsSection: React.FC = () => {
         <span className="flex flex-wrap items-center gap-1.5">
           <span className="font-mono text-[13px] font-medium text-slate-900 dark:text-slate-100">{row.user}</span>
           {row.apiKeyName && <ApiKeyBadge name={row.apiKeyName} />}
+          {row.mode === 'command' && (
+            <Badge variant="info" className="!px-1.5 !py-0 text-[10px]">
+              {t('recordings.command')}
+            </Badge>
+          )}
         </span>
       ),
     },

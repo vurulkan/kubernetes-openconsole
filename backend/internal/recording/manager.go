@@ -210,6 +210,7 @@ func (m *Manager) Start(ctx context.Context, meta Meta) (*Session, error) {
 		Path:       path,
 		APIKeyID:   meta.APIKeyID,
 		APIKeyName: meta.APIKeyName,
+		Mode:       meta.Mode,
 	})
 	if err != nil {
 		_ = f.Close()

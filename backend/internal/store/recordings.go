@@ -11,7 +11,7 @@ import (
 )
 
 const recordingColumns = `id, session_id, user, cluster, namespace, pod, container,
-	started_at, ended_at, size_bytes, truncated, request_id, path, api_key_id, api_key_name`
+	started_at, ended_at, size_bytes, truncated, request_id, path, api_key_id, api_key_name, mode`
 
 // EnsureRecordingSettings seeds the singleton settings row on first boot.
 // An existing row is left untouched so admin edits survive restarts.
@@ -57,10 +57,10 @@ func (s *Store) UpdateRecordingSettings(ctx context.Context, in models.Recording
 func (s *Store) CreateRecording(ctx context.Context, rec models.SessionRecording) (int, error) {
 	res, err := s.conn.ExecContext(ctx,
 		`INSERT INTO session_recordings
-		 (session_id, user, cluster, namespace, pod, container, started_at, request_id, path, api_key_id, api_key_name)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 (session_id, user, cluster, namespace, pod, container, started_at, request_id, path, api_key_id, api_key_name, mode)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		rec.SessionID, rec.User, rec.Cluster, rec.Namespace, rec.Pod, rec.Container,
-		rec.StartedAt.UTC(), rec.RequestID, rec.Path, rec.APIKeyID, rec.APIKeyName,
+		rec.StartedAt.UTC(), rec.RequestID, rec.Path, rec.APIKeyID, rec.APIKeyName, recordingMode(rec.Mode),
 	)
 	if err != nil {
 		return 0, fmt.Errorf("create recording: %w", err)
@@ -228,7 +228,7 @@ func scanRecording(row rowScanner) (models.SessionRecording, error) {
 	)
 	err := row.Scan(&rec.ID, &rec.SessionID, &rec.User, &rec.Cluster, &rec.Namespace, &rec.Pod,
 		&rec.Container, &rec.StartedAt, &endedAt, &rec.SizeBytes, &truncated, &rec.RequestID, &rec.Path,
-		&rec.APIKeyID, &rec.APIKeyName)
+		&rec.APIKeyID, &rec.APIKeyName, &rec.Mode)
 	if err != nil {
 		return rec, err
 	}
@@ -258,4 +258,12 @@ func boolToInt(v bool) int {
 		return 1
 	}
 	return 0
+}
+
+// recordingMode defaults an unset mode to a shell (the only kind before 2.22.0).
+func recordingMode(m string) string {
+	if m == "" {
+		return models.RecordingModeShell
+	}
+	return m
 }

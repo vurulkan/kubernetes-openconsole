@@ -1,12 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, KeyRound, MoreHorizontal, Pencil, Plus, RefreshCw, Ban, Trash2 } from 'lucide-react';
 import Layout from '../components/Layout';
 import { DataTable, type Column } from '../components/DataTable';
 import { MenuPopover, menuItemClass } from '../components/MenuPopover';
 import { confirm } from '../components/ConfirmDialog';
-import { Alert, Badge, Button, Modal, Spinner } from '../components/ui';
+import { Alert, Badge, Button, Modal, Segmented, Spinner } from '../components/ui';
 import {
   deleteApiKey,
   getApiKeyCeiling,
@@ -30,6 +30,7 @@ import {
   type ExpiryChoice,
   type ExpiryPolicy,
 } from './apikeys/ApiKeyParts';
+import ApiDocs from './apikeys/ApiDocs';
 
 /** Every grant the ceiling holds somewhere, for naming a key "all my permissions". */
 const ceilingGrants = (c: ApiKeyCeiling | null) => new Set(c?.namespaces.flatMap((n) => n.grants) ?? []);
@@ -46,6 +47,8 @@ const ApiKeysPage: React.FC<{ user: User }> = ({ user }) => {
   const [menu, setMenu] = useState<{ key: ApiKey; anchor: HTMLElement } | null>(null);
   const [regen, setRegen] = useState<ApiKey | null>(null);
   const [secret, setSecret] = useState<{ value: string; cluster?: string } | null>(null);
+  const [params, setParams] = useSearchParams();
+  const tab = params.get('tab') === 'docs' ? 'docs' : 'keys';
 
   const load = useCallback(async () => {
     try {
@@ -191,13 +194,29 @@ const ApiKeysPage: React.FC<{ user: User }> = ({ user }) => {
             </h1>
             <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">{t('apiKeys.subtitle')}</p>
           </div>
-          <Button className="ml-auto" size="sm" onClick={() => navigate('/account/api-keys/new')}>
-            <Plus size={14} />
-            {t('apiKeys.new')}
-          </Button>
+          {tab === 'keys' && (
+            <Button className="ml-auto" size="sm" onClick={() => navigate('/account/api-keys/new')}>
+              <Plus size={14} />
+              {t('apiKeys.new')}
+            </Button>
+          )}
         </header>
 
+        <Segmented
+          label={t('apiKeys.tabs')}
+          value={tab}
+          options={[
+            ['keys', t('apiKeys.tabKeys')],
+            ['docs', t('apiKeys.tabDocs')],
+          ]}
+          onChange={(v) => setParams(v === 'docs' ? { tab: 'docs' } : {}, { replace: true })}
+        />
+
         {error && <Alert severity="error">{error}</Alert>}
+        {tab === 'docs' ? (
+          ceiling ? <ApiDocs ceiling={ceiling} /> : !error && <Spinner />
+        ) : (
+          <>
         {secret && <SecretBox secret={secret.value} cluster={secret.cluster} />}
 
         {keys === null ? (
@@ -224,6 +243,8 @@ const ApiKeysPage: React.FC<{ user: User }> = ({ user }) => {
               if (isLive(k)) navigate(`/account/api-keys/${k.id}`);
             }}
           />
+        )}
+          </>
         )}
       </div>
 

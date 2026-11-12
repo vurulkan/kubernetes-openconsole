@@ -304,6 +304,27 @@ func TestLoginLockout(t *testing.T) {
 	e.waitAudit("user.login.locked", "")
 }
 
+// The API description needs no sign-in; the one-command exec and the REST log
+// are pods:exec / pods:logs in the path's namespace.
+func TestOpenAPIAndAgentEndpoints(t *testing.T) {
+	e := newTestEnv(t)
+	fakeCommands(t)
+	e.runningPod()
+	if out := e.expect("GET", "/api/openapi.json", "", nil, http.StatusOK); !strings.Contains(out, `"openapi":"3.1.0"`) {
+		t.Fatalf("openapi.json = %.100s", out)
+	}
+	bobID, bob := e.user("bob", false)
+	e.grant(bobID, [4]any{0, "team-a", "pods", "logs"})
+	cmd := map[string]any{"command": []string{"cat", "/etc/os-release"}}
+	e.expect("GET", "/api/namespaces/team-a/pods/app-1/logs", bob, nil, http.StatusOK)
+	e.expect("POST", "/api/namespaces/team-a/pods/app-1/exec", bob, cmd, http.StatusForbidden)
+	e.grant(bobID, [4]any{0, "team-a", "pods", "exec"})
+	e.expect("POST", "/api/namespaces/team-a/pods/app-1/exec", bob, cmd, http.StatusOK)
+	e.expect("GET", "/api/namespaces/team-b/pods/api-1/logs", bob, nil, http.StatusForbidden)
+	e.expect("POST", "/api/namespaces/team-b/pods/api-1/exec", bob, cmd, http.StatusForbidden)
+	e.expect("POST", "/api/namespaces/team-a/pods/app-1/exec", "", cmd, http.StatusUnauthorized)
+}
+
 // ─── Admin-only surface ─────────────────────────────────────────────────────
 
 func TestAdminEndpointsRequireAdmin(t *testing.T) {

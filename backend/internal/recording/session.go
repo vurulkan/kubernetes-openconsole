@@ -37,6 +37,8 @@ type Meta struct {
 	// when recording is switched off (nobody watches an agent's session).
 	APIKeyID   int
 	APIKeyName string
+	// Mode is models.RecordingModeShell (default) or RecordingModeCommand.
+	Mode string
 	// Initial terminal size if the client sent one; 0 → wait for the first
 	// resize (or fall back to 80x24 when output arrives first).
 	Cols, Rows uint16

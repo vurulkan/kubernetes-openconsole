@@ -146,6 +146,23 @@ func NewServer(st *store.Store, auditLogger *audit.Logger, clusters *kube.Regist
 }
 
 func (s *Server) Router() http.Handler {
+	r := s.routes()
+	// Tracing: one server span per request, named after the chi route
+	// pattern (set in requestLogger); probes and metrics are not traced.
+	// With no OTLP endpoint configured the global provider is a no-op.
+	return otelhttp.NewHandler(r, "http.request",
+		otelhttp.WithFilter(func(r *http.Request) bool {
+			switch r.URL.Path {
+			case "/healthz", "/livez", "/readyz", "/metrics":
+				return false
+			}
+			return true
+		}),
+	)
+}
+
+// routes is every route; openapi_test.go walks it against openapi.yaml.
+func (s *Server) routes() *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(corsMiddleware)
 	r.Use(securityHeaders)
@@ -189,6 +206,8 @@ func (s *Server) Router() http.Handler {
 	})
 
 	r.Get("/api/customization/logo", s.handleGetLogo)
+	// The API description; no sign-in, nothing secret in it.
+	r.Get("/api/openapi.json", handleOpenAPI)
 
 	r.Group(func(r chi.Router) {
 		r.Use(auth.AuthMiddleware(s.jwtKey, s.authValidator(), s.keyAuth()))
@@ -270,6 +289,8 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/namespaces/{namespace}/cronjobs/{name}/yaml", s.handleCronJobYAML)
 		r.Get("/api/namespaces/{namespace}/jobs", s.handleJobs)
 		r.Get("/api/namespaces/{namespace}/jobs/{name}/yaml", s.handleJobYAML)
+		r.Get("/api/namespaces/{namespace}/pods/{name}/logs", s.handlePodLogs)
+		r.Post("/api/namespaces/{namespace}/pods/{name}/exec", s.handlePodExecCommand)
 		r.Get("/ws/namespaces/{namespace}/pods/{name}/logs", s.handlePodLogsWS)
 		r.Get("/ws/namespaces/{namespace}/pods/{name}/exec", s.handlePodExecWS)
 		r.Get("/ws/namespaces/{namespace}/deployments/{name}/logs", s.handleDeploymentLogsWS)
@@ -373,18 +394,7 @@ func (s *Server) Router() http.Handler {
 		r.MethodNotAllowed(s.serveSPA)
 	}
 
-	// Tracing: one server span per request, named after the chi route
-	// pattern (set in requestLogger); probes and metrics are not traced.
-	// With no OTLP endpoint configured the global provider is a no-op.
-	return otelhttp.NewHandler(r, "http.request",
-		otelhttp.WithFilter(func(r *http.Request) bool {
-			switch r.URL.Path {
-			case "/healthz", "/livez", "/readyz", "/metrics":
-				return false
-			}
-			return true
-		}),
-	)
+	return r
 }
 
 func corsMiddleware(next http.Handler) http.Handler {

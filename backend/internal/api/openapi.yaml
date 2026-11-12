@@ -1,0 +1,949 @@
+# OpenConsole API, hand-written (M16). Served as JSON at GET /api/openapi.json without sign-in:
+# keep it free of hostnames, user names and secrets. openapi_test.go checks that every /api and
+# /ws route in router.go is here (and nothing else), one tag each, and that permissions exist.
+#
+# Extensions the in-app documentation (API keys → Documentation) reads:
+#   x-openconsole-permission: [resource:action, …]  all of them are needed, in the namespace of the path
+#                                                    ("*:edit" = edit on the resource in the path)
+#   x-openconsole-admin: true                        admin only; with an API key, only one with the Admin API scope
+#   x-openconsole-api-key: false                     web session only (an API key gets 403 api_key_not_allowed)
+openapi: 3.1.0
+info:
+  title: OpenConsole API
+  version: "2.22"
+  description: |
+    Kubernetes workloads across several clusters, limited to what your roles allow; every call is audited.
+
+    **Sign in with an API key:** `Authorization: Bearer oc_…` (create one under your account → API keys).
+    A key can do at most what its owner can, as far as the admin's API access policy lets keys go, and only
+    what the key itself was given. `GET /api/auth/me` shows who you are and what the key reaches.
+
+    **Cluster:** `X-OpenConsole-Cluster: <name or id>` on each request; without it, the owner's selected cluster.
+
+    **WebSockets** (`/ws/…`, live logs, shell, events): first `POST /api/ws-ticket` with `{"path": "/ws/…"}`,
+    then connect to that path with `?ticket=<ticket>` (single use, short-lived). For one command or a log
+    snapshot, use the plain HTTP endpoints instead: `POST …/pods/{name}/exec`, `GET …/pods/{name}/logs`.
+
+    **Errors** have a JSON body `{"error": "<reason>"}`:
+    - `401`: the key (or session) is not valid: unknown, expired or revoked.
+    - `403`: the key is valid but may not do this. Reasons: `forbidden` (no permission here),
+      `api_access_policy` (the owner has it, the admin's policy keeps it from keys), `api_access_off`
+      (the policy turns API access off for this user), `api_key_not_allowed` (web session only),
+      `feature_disabled` (switched off by the operator), `admin_only`.
+    - `429`: too many requests (10 per second per key, bursts of 30) or too many open shells / log streams.
+
+    Every call made with a key is written to the audit log with the key's name, reads included.
+servers:
+  - url: /
+security:
+  - apiKey: []
+tags:
+  - {name: Account, description: "Who you are, clusters, namespaces, your permissions, WebSocket tickets."}
+  - {name: Workloads, description: "Deployments, StatefulSets, DaemonSets, HPAs, Jobs, CronJobs."}
+  - {name: Pods, description: "Pods, their events, restart history and resource usage."}
+  - {name: Logs, description: "Pod logs as text, or followed live over a WebSocket."}
+  - {name: Exec, description: "Run one command in a container, or open an interactive shell. Always recorded."}
+  - {name: Config, description: "Services, ingresses, ConfigMaps and Secrets."}
+  - {name: Events, description: "Live Kubernetes events over a WebSocket."}
+  - {name: Admin, description: "Users, roles, clusters, audit log, recordings. Admin only."}
+
+components:
+  securitySchemes:
+    apiKey:
+      type: http
+      scheme: bearer
+      description: An API key (`oc_…`) or a web session token.
+  parameters:
+    namespace: {name: namespace, in: path, required: true, schema: {type: string}, example: default}
+    name: {name: name, in: path, required: true, schema: {type: string}}
+    id: {name: id, in: path, required: true, schema: {type: integer}}
+    cluster:
+      name: X-OpenConsole-Cluster
+      in: header
+      required: false
+      schema: {type: string}
+      description: Cluster name or id (API keys only); defaults to your selected cluster.
+    ticket: {name: ticket, in: query, required: true, schema: {type: string}, description: From POST /api/ws-ticket.}
+    container: {name: container, in: query, schema: {type: string}, description: Container name; defaults to the pod's default container.}
+  responses:
+    list:
+      description: A Kubernetes list.
+      content:
+        application/json:
+          schema: {type: object, properties: {items: {type: array, items: {type: object}}}}
+    object:
+      description: The Kubernetes object as JSON.
+      content: {application/json: {schema: {type: object}}}
+    yaml:
+      description: The object as YAML (managed fields removed).
+      content:
+        application/json:
+          schema: {type: object, properties: {yaml: {type: string}}}
+          example: {yaml: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: web-7c9f\n…"}
+    ok:
+      description: Done.
+      content: {application/json: {schema: {type: object}}}
+    websocket:
+      description: Switching protocols (WebSocket). Connect with ?ticket= from POST /api/ws-ticket.
+    error:
+      description: Error with a reason.
+      content:
+        application/json:
+          schema: {type: object, properties: {error: {type: string}}}
+          example: {error: forbidden}
+
+paths:
+  # ─── Account ────────────────────────────────────────────────────────────────
+  /api/openapi.json:
+    get:
+      tags: [Account]
+      summary: This API description
+      security: []
+      responses: {"200": {description: OpenAPI 3.1 document.}}
+  /api/auth/login:
+    post:
+      tags: [Account]
+      summary: Sign in with a user name and password (web)
+      security: []
+      x-openconsole-api-key: false
+      responses: {"200": {$ref: '#/components/responses/ok'}}
+  /api/auth/providers:
+    get:
+      tags: [Account]
+      summary: Sign-in methods offered on the login page
+      security: []
+      x-openconsole-api-key: false
+      responses: {"200": {$ref: '#/components/responses/ok'}}
+  /api/auth/azure/start:
+    get:
+      tags: [Account]
+      summary: Start an Azure AD sign-in (web)
+      security: []
+      x-openconsole-api-key: false
+      responses: {"302": {description: Redirect to Azure AD.}}
+  /api/auth/azure/callback:
+    get:
+      tags: [Account]
+      summary: Azure AD sign-in callback (web)
+      security: []
+      x-openconsole-api-key: false
+      responses: {"302": {description: Redirect to the app.}}
+  /api/auth/me:
+    get:
+      tags: [Account]
+      summary: Who you are, and what your API key reaches
+      description: Call this first. With a key, `apiKey` describes the key (never its secret) and `permissions` are what the key reaches now.
+      responses:
+        "200":
+          description: The caller.
+          content:
+            application/json:
+              example:
+                user: {id: 7, username: jdoe, isAdmin: false, isActive: true}
+                apiKey: {id: 3, name: claude-dev, prefix: oc_ab12cd, clusters: [0], allNamespaces: false, namespaces: [ci-dev], grants: ["pods:list", "pods:get", "pods:logs"], expiresAt: "2026-12-12T00:00:00Z"}
+                namespaces: [ci-dev]
+                permissions: [{clusterId: 0, namespace: ci-dev, resource: pods, action: list}]
+  /api/auth/change-password:
+    post:
+      tags: [Account]
+      summary: Change your password (web)
+      x-openconsole-api-key: false
+      responses: {"200": {$ref: '#/components/responses/ok'}}
+  /api/customization/logo:
+    get:
+      tags: [Account]
+      summary: The custom logo, if one was uploaded
+      security: []
+      responses: {"200": {description: An image.}, "404": {description: No custom logo.}}
+  /api/cluster/active:
+    get:
+      tags: [Account]
+      summary: The cluster your requests go to
+      responses:
+        "200":
+          description: The cluster.
+          content: {application/json: {example: {active: {id: 1, name: nonprod, description: '', isDefault: true}}}}
+  /api/cluster/select:
+    post:
+      tags: [Account]
+      summary: Switch your selected cluster (web; keys send X-OpenConsole-Cluster)
+      x-openconsole-api-key: false
+      responses: {"200": {$ref: '#/components/responses/ok'}}
+  /api/clusters/public:
+    get:
+      tags: [Account]
+      summary: Clusters you can use
+      responses:
+        "200":
+          description: Clusters.
+          content: {application/json: {example: {items: [{id: 1, name: nonprod, isActive: true, selected: true}]}}}
+  /api/features:
+    get:
+      tags: [Account]
+      summary: Feature flags the operator set (pod_exec, secrets, …)
+      responses:
+        "200":
+          description: Flags.
+          content: {application/json: {example: {features: {pod_exec: true, yaml_edit: true, workload_actions: true, secrets: true, secret_reveal: true, secret_edit: true, api_keys: true}}}}
+  /api/version:
+    get:
+      tags: [Account]
+      summary: Server version
+      responses:
+        "200":
+          description: Version.
+          content: {application/json: {example: {version: "2.22.0"}}}
+  /api/ws-ticket:
+    post:
+      tags: [Account]
+      summary: A single-use ticket for one WebSocket path
+      requestBody:
+        content: {application/json: {example: {path: /ws/namespaces/ci-dev/pods/web-7c9f/logs}}}
+      responses:
+        "200":
+          description: Use as ?ticket= on that path, once, within a minute.
+          content: {application/json: {example: {ticket: 9f2c…}}}
+  /api/namespaces:
+    get:
+      tags: [Account]
+      summary: Namespaces you can see on this cluster
+      parameters: [{$ref: '#/components/parameters/cluster'}]
+      responses:
+        "200":
+          description: Namespace names.
+          content: {application/json: {example: {namespaces: [ci-dev, ci-test]}}}
+  /api/namespaces/{namespace}/permissions:
+    parameters: [{$ref: '#/components/parameters/namespace'}]
+    get:
+      tags: [Account]
+      summary: What you may do in a namespace (resource → actions)
+      responses:
+        "200":
+          description: Allowed actions, feature flags applied.
+          content: {application/json: {example: {resources: {pods: [list, get, logs], deployments: [list, get]}}}}
+        "403": {$ref: '#/components/responses/error'}
+  /api/views:
+    get:
+      tags: [Account]
+      summary: Your saved Dashboard views
+      responses: {"200": {$ref: '#/components/responses/list'}}
+    post:
+      tags: [Account]
+      summary: Save a Dashboard view (web)
+      x-openconsole-api-key: false
+      responses: {"200": {$ref: '#/components/responses/ok'}}
+  /api/views/{id}:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    put:
+      tags: [Account]
+      summary: Share or unshare a saved view (web)
+      x-openconsole-api-key: false
+      responses: {"200": {$ref: '#/components/responses/ok'}}
+    delete:
+      tags: [Account]
+      summary: Delete a saved view (web)
+      x-openconsole-api-key: false
+      responses: {"200": {$ref: '#/components/responses/ok'}}
+  /api/me/api-keys:
+    get:
+      tags: [Account]
+      summary: Your API keys (web)
+      x-openconsole-api-key: false
+      responses: {"200": {$ref: '#/components/responses/list'}}
+    post:
+      tags: [Account]
+      summary: Create an API key (web)
+      x-openconsole-api-key: false
+      responses: {"200": {$ref: '#/components/responses/ok'}}
+  /api/me/api-keys/ceiling:
+    get:
+      tags: [Account]
+      summary: What a key of yours may be given (web)
+      x-openconsole-api-key: false
+      responses: {"200": {$ref: '#/components/responses/ok'}}
+  /api/me/api-keys/{id}:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    put:
+      tags: [Account]
+      summary: Edit an API key (web)
+      x-openconsole-api-key: false
+      responses: {"200": {$ref: '#/components/responses/ok'}}
+    delete:
+      tags: [Account]
+      summary: Delete an API key (web)
+      x-openconsole-api-key: false
+      responses: {"200": {$ref: '#/components/responses/ok'}}
+  /api/me/api-keys/{id}/regenerate:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    post:
+      tags: [Account]
+      summary: New secret and expiry for an API key (web)
+      x-openconsole-api-key: false
+      responses: {"200": {$ref: '#/components/responses/ok'}}
+  /api/me/api-keys/{id}/revoke:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    post:
+      tags: [Account]
+      summary: Revoke an API key (web)
+      x-openconsole-api-key: false
+      responses: {"200": {$ref: '#/components/responses/ok'}}
+
+  # ─── Pods ───────────────────────────────────────────────────────────────────
+  /api/namespaces/{namespace}/pods:
+    parameters: [{$ref: '#/components/parameters/namespace'}]
+    get:
+      tags: [Pods]
+      summary: List pods
+      x-openconsole-permission: ["pods:list"]
+      responses:
+        "200":
+          description: Kubernetes Pods (core/v1).
+          content:
+            application/json:
+              example:
+                items:
+                  - metadata: {name: web-7c9f, namespace: ci-dev, labels: {app: web}}
+                    spec: {nodeName: node-1, containers: [{name: app, image: "nginx:1.27"}]}
+                    status: {phase: Running, containerStatuses: [{name: app, ready: false, restartCount: 12, state: {waiting: {reason: CrashLoopBackOff}}, lastState: {terminated: {exitCode: 1, reason: Error}}}]}
+  /api/namespaces/{namespace}/pods/{name}:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Pods]
+      summary: One pod
+      x-openconsole-permission: ["pods:get"]
+      responses: {"200": {$ref: '#/components/responses/object'}, "404": {description: No such pod.}}
+  /api/namespaces/{namespace}/pods/{name}/yaml:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Pods]
+      summary: A pod as YAML
+      x-openconsole-permission: ["pods:get"]
+      responses: {"200": {$ref: '#/components/responses/yaml'}}
+  /api/namespaces/{namespace}/pods/{name}/events:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Pods]
+      summary: Kubernetes events of a pod
+      x-openconsole-permission: ["pods:get"]
+      responses:
+        "200":
+          description: Kubernetes Events (core/v1).
+          content:
+            application/json:
+              example: {items: [{type: Warning, reason: BackOff, message: "Back-off restarting failed container app", count: 41, lastTimestamp: "2026-11-12T09:14:03Z"}]}
+  /api/namespaces/{namespace}/pods/{name}/restarts:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Pods]
+      summary: Restart history of a pod (container exits, exit codes)
+      x-openconsole-permission: ["pods:get"]
+      responses:
+        "200":
+          description: Container terminations, newest first.
+          content:
+            application/json:
+              example: {items: [{pod: web-7c9f, container: app, exitCode: 137, reason: OOMKilled, finishedAt: "2026-11-12T09:10:00Z"}]}
+  /api/namespaces/{namespace}/metrics/pods:
+    parameters: [{$ref: '#/components/parameters/namespace'}]
+    get:
+      tags: [Pods]
+      summary: CPU and memory of the namespace's pods now (metrics-server)
+      x-openconsole-permission: ["pods:list"]
+      responses: {"200": {$ref: '#/components/responses/ok'}}
+  /api/namespaces/{namespace}/metrics/pods/{name}:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Pods]
+      summary: CPU and memory history of a pod
+      x-openconsole-permission: ["pods:list"]
+      responses: {"200": {$ref: '#/components/responses/ok'}}
+
+  # ─── Logs ───────────────────────────────────────────────────────────────────
+  /api/namespaces/{namespace}/pods/{name}/logs:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Logs]
+      summary: The end of a pod's log, as text
+      description: |
+        Not followed: returns what is there now. At most 10 000 lines and 5 MiB; a cut log
+        has the header `X-OpenConsole-Truncated: true` (cut at a line end). To follow a log live,
+        use the WebSocket below. Audited as `pod.logs`.
+      x-openconsole-permission: ["pods:logs"]
+      parameters:
+        - {$ref: '#/components/parameters/container'}
+        - {name: tailLines, in: query, schema: {type: integer, minimum: 1, maximum: 10000, default: 500}}
+        - {name: sinceSeconds, in: query, schema: {type: integer, minimum: 1}, description: Only lines newer than this.}
+        - {name: previous, in: query, schema: {type: boolean}, description: The previous (crashed) instance of the container.}
+        - {name: timestamps, in: query, schema: {type: boolean}, description: Prefix each line with an RFC 3339 time.}
+      responses:
+        "200":
+          description: Log lines.
+          headers:
+            X-OpenConsole-Truncated: {schema: {type: string}, description: '"true" when the 5 MiB limit cut the log.'}
+          content:
+            text/plain:
+              example: "2026-11-12 09:13:58 starting server\npanic: connect to db: connection refused\n"
+        "400": {description: "Bad parameter, or `container_not_found` / `previous_unavailable` / `not_ready`.", content: {application/json: {example: {error: previous_unavailable}}}}
+        "404": {description: "`pod_not_found`", content: {application/json: {example: {error: pod_not_found}}}}
+        "429": {description: "`rate_limited`: too many log requests at once."}
+  /ws/namespaces/{namespace}/pods/{name}/logs:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}, {$ref: '#/components/parameters/ticket'}]
+    get:
+      tags: [Logs]
+      summary: Follow a pod's log live (WebSocket, JSON frames)
+      description: |
+        Frames: `{"t":"line","ts":"…","c":"app","text":"…"}`, then `{"t":"end","reason":"…","retry":bool}`
+        or `{"t":"error","reason":"…"}`. Query: `container`, `tail` (default 100), `previous=true`.
+      x-openconsole-permission: ["pods:logs"]
+      responses: {"101": {$ref: '#/components/responses/websocket'}}
+  /ws/namespaces/{namespace}/deployments/{name}/logs:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}, {$ref: '#/components/parameters/ticket'}]
+    get:
+      tags: [Logs]
+      summary: Follow every pod and container of a Deployment (WebSocket)
+      x-openconsole-permission: ["deployments:get", "pods:logs"]
+      responses: {"101": {$ref: '#/components/responses/websocket'}}
+  /ws/namespaces/{namespace}/jobs/{name}/logs:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}, {$ref: '#/components/parameters/ticket'}]
+    get:
+      tags: [Logs]
+      summary: Follow every pod of a Job (WebSocket)
+      x-openconsole-permission: ["jobs:get", "pods:logs"]
+      responses: {"101": {$ref: '#/components/responses/websocket'}}
+
+  # ─── Exec ───────────────────────────────────────────────────────────────────
+  /api/namespaces/{namespace}/pods/{name}/exec:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    post:
+      tags: [Exec]
+      summary: Run one command in a container
+      description: |
+        `command` is an argv array and is not run in a shell (for pipes, pass `["sh", "-c", "…"]`).
+        No stdin. Output is kept up to 1 MiB per stream; the rest is dropped and `truncated` is true,
+        but the command runs to its end. `timeoutSeconds` 1–120 (default 30): past it the output so far
+        comes back with `exitCode: -1` and `truncated: true` (Kubernetes does not stop the process; it
+        may run on in the container). A non-zero exit code is a normal answer (200).
+        Output is text: bytes that are not UTF-8 come back as U+FFFD, so pipe binary output through `base64`.
+        Recorded like a shell (Admin → Recordings, "command"); the audit log keeps the program name
+        (`command[0]`), never the whole command line.
+      x-openconsole-permission: ["pods:exec"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [command]
+              properties:
+                command: {type: array, items: {type: string}, minItems: 1}
+                container: {type: string}
+                timeoutSeconds: {type: integer, minimum: 1, maximum: 120, default: 30}
+            example: {container: app, command: [cat, /etc/os-release], timeoutSeconds: 30}
+      responses:
+        "200":
+          description: The command ran (whatever its exit code).
+          content:
+            application/json:
+              example: {stdout: "NAME=\"Alpine Linux\"\nID=alpine\n", stderr: "", exitCode: 0, truncated: false, durationMs: 184}
+        "400": {description: "Bad body, `container_not_found` or `not_ready` (the container is not running).", content: {application/json: {example: {error: container_not_found}}}}
+        "403": {description: "`forbidden`, `api_access_policy` or `feature_disabled`.", content: {application/json: {example: {error: api_access_policy}}}}
+        "404": {description: "`pod_not_found`"}
+        "429": {description: "`too_many_sessions`: your shells and commands at once are over the limit."}
+        "503": {description: "`recording_unavailable`: a command run with an API key is always recorded, and recording failed."}
+  /ws/namespaces/{namespace}/pods/{name}/exec:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}, {$ref: '#/components/parameters/ticket'}]
+    get:
+      tags: [Exec]
+      summary: Interactive shell (WebSocket, TTY)
+      description: |
+        Binary frames are stdin / stdout; text frame `{"type":"resize","cols":120,"rows":40}`.
+        Query `container`, `command` (default: the first of bash, ash, sh). Recorded.
+      x-openconsole-permission: ["pods:exec"]
+      responses: {"101": {$ref: '#/components/responses/websocket'}}
+
+  # ─── Events ─────────────────────────────────────────────────────────────────
+  /ws/events:
+    parameters: [{$ref: '#/components/parameters/ticket'}]
+    get:
+      tags: [Events]
+      summary: Live Kubernetes events and object changes (WebSocket)
+      description: Query `namespace` to filter; only namespaces you can see.
+      responses: {"101": {$ref: '#/components/responses/websocket'}}
+
+  # ─── Workloads ──────────────────────────────────────────────────────────────
+  /api/namespaces/{namespace}/deployments:
+    parameters: [{$ref: '#/components/parameters/namespace'}]
+    get:
+      tags: [Workloads]
+      summary: List Deployments
+      x-openconsole-permission: ["deployments:list"]
+      responses:
+        "200":
+          description: Kubernetes Deployments (apps/v1).
+          content:
+            application/json:
+              example: {items: [{metadata: {name: web, namespace: ci-dev}, spec: {replicas: 2}, status: {replicas: 2, readyReplicas: 1, unavailableReplicas: 1}}]}
+  /api/namespaces/{namespace}/deployments/{name}:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Workloads]
+      summary: One Deployment
+      x-openconsole-permission: ["deployments:get"]
+      responses: {"200": {$ref: '#/components/responses/object'}}
+  /api/namespaces/{namespace}/deployments/{name}/yaml:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Workloads]
+      summary: A Deployment as YAML
+      x-openconsole-permission: ["deployments:get"]
+      responses: {"200": {$ref: '#/components/responses/yaml'}}
+  /api/namespaces/{namespace}/deployments/{name}/replicasets:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Workloads]
+      summary: Revisions of a Deployment (its ReplicaSets)
+      x-openconsole-permission: ["deployments:get"]
+      responses:
+        "200":
+          description: Revisions, newest first.
+          content: {application/json: {example: {items: [{name: web-7c9f, revision: "4", podTemplateHash: 7c9f, images: ["nginx:1.27"], replicas: 2, readyReplicas: 1, createdAt: "2026-11-10T08:00:00Z"}]}}}
+  /api/namespaces/{namespace}/deployments/{name}/events:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Workloads]
+      summary: Kubernetes events of a Deployment (its pods' events are on the pods)
+      x-openconsole-permission: ["deployments:get"]
+      responses: {"200": {$ref: '#/components/responses/list'}}
+  /api/namespaces/{namespace}/deployments/{name}/restarts:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Workloads]
+      summary: Restart history of a Deployment's pods, deleted pods included
+      x-openconsole-permission: ["deployments:get"]
+      responses: {"200": {$ref: '#/components/responses/list'}}
+  /api/namespaces/{namespace}/metrics/deployments/{name}:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Workloads]
+      summary: CPU and memory history of a Deployment
+      x-openconsole-permission: ["deployments:get"]
+      responses: {"200": {$ref: '#/components/responses/ok'}}
+  /api/namespaces/{namespace}/deployments/{name}/restart:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    post:
+      tags: [Workloads]
+      summary: Rolling restart of a Deployment
+      x-openconsole-permission: ["deployments:restart"]
+      responses: {"200": {$ref: '#/components/responses/ok'}}
+  /api/namespaces/{namespace}/deployments/{name}/scale:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    post:
+      tags: [Workloads]
+      summary: Scale a Deployment
+      x-openconsole-permission: ["deployments:scale"]
+      requestBody:
+        content: {application/json: {example: {replicas: 3}}}
+      responses: {"200": {$ref: '#/components/responses/ok'}}
+  /api/namespaces/{namespace}/statefulsets:
+    parameters: [{$ref: '#/components/parameters/namespace'}]
+    get:
+      tags: [Workloads]
+      summary: List StatefulSets
+      x-openconsole-permission: ["statefulsets:list"]
+      responses: {"200": {$ref: '#/components/responses/list'}}
+  /api/namespaces/{namespace}/statefulsets/{name}:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Workloads]
+      summary: One StatefulSet
+      x-openconsole-permission: ["statefulsets:get"]
+      responses: {"200": {$ref: '#/components/responses/object'}}
+  /api/namespaces/{namespace}/statefulsets/{name}/yaml:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Workloads]
+      summary: A StatefulSet as YAML
+      x-openconsole-permission: ["statefulsets:get"]
+      responses: {"200": {$ref: '#/components/responses/yaml'}}
+  /api/namespaces/{namespace}/statefulsets/{name}/events:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Workloads]
+      summary: Kubernetes events of a StatefulSet
+      x-openconsole-permission: ["statefulsets:get"]
+      responses: {"200": {$ref: '#/components/responses/list'}}
+  /api/namespaces/{namespace}/statefulsets/{name}/restarts:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Workloads]
+      summary: Restart history of a StatefulSet's pods
+      x-openconsole-permission: ["statefulsets:get"]
+      responses: {"200": {$ref: '#/components/responses/list'}}
+  /api/namespaces/{namespace}/metrics/statefulsets/{name}:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Workloads]
+      summary: CPU and memory history of a StatefulSet
+      x-openconsole-permission: ["statefulsets:get"]
+      responses: {"200": {$ref: '#/components/responses/ok'}}
+  /api/namespaces/{namespace}/statefulsets/{name}/scale:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    post:
+      tags: [Workloads]
+      summary: Scale a StatefulSet
+      x-openconsole-permission: ["statefulsets:scale"]
+      requestBody:
+        content: {application/json: {example: {replicas: 3}}}
+      responses: {"200": {$ref: '#/components/responses/ok'}}
+  /api/namespaces/{namespace}/daemonsets:
+    parameters: [{$ref: '#/components/parameters/namespace'}]
+    get:
+      tags: [Workloads]
+      summary: List DaemonSets
+      x-openconsole-permission: ["daemonsets:list"]
+      responses: {"200": {$ref: '#/components/responses/list'}}
+  /api/namespaces/{namespace}/daemonsets/{name}:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Workloads]
+      summary: One DaemonSet
+      x-openconsole-permission: ["daemonsets:get"]
+      responses: {"200": {$ref: '#/components/responses/object'}}
+  /api/namespaces/{namespace}/daemonsets/{name}/yaml:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Workloads]
+      summary: A DaemonSet as YAML
+      x-openconsole-permission: ["daemonsets:get"]
+      responses: {"200": {$ref: '#/components/responses/yaml'}}
+  /api/namespaces/{namespace}/daemonsets/{name}/events:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Workloads]
+      summary: Kubernetes events of a DaemonSet
+      x-openconsole-permission: ["daemonsets:get"]
+      responses: {"200": {$ref: '#/components/responses/list'}}
+  /api/namespaces/{namespace}/daemonsets/{name}/restarts:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Workloads]
+      summary: Restart history of a DaemonSet's pods
+      x-openconsole-permission: ["daemonsets:get"]
+      responses: {"200": {$ref: '#/components/responses/list'}}
+  /api/namespaces/{namespace}/metrics/daemonsets/{name}:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Workloads]
+      summary: CPU and memory history of a DaemonSet
+      x-openconsole-permission: ["daemonsets:get"]
+      responses: {"200": {$ref: '#/components/responses/ok'}}
+  /api/namespaces/{namespace}/hpas:
+    parameters: [{$ref: '#/components/parameters/namespace'}]
+    get:
+      tags: [Workloads]
+      summary: List HorizontalPodAutoscalers
+      x-openconsole-permission: ["hpas:list"]
+      responses: {"200": {$ref: '#/components/responses/list'}}
+  /api/namespaces/{namespace}/hpas/{name}:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Workloads]
+      summary: One HorizontalPodAutoscaler
+      x-openconsole-permission: ["hpas:get"]
+      responses: {"200": {$ref: '#/components/responses/object'}}
+  /api/namespaces/{namespace}/hpas/{name}/yaml:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Workloads]
+      summary: A HorizontalPodAutoscaler as YAML
+      x-openconsole-permission: ["hpas:get"]
+      responses: {"200": {$ref: '#/components/responses/yaml'}}
+  /api/namespaces/{namespace}/jobs:
+    parameters: [{$ref: '#/components/parameters/namespace'}]
+    get:
+      tags: [Workloads]
+      summary: List Jobs
+      x-openconsole-permission: ["jobs:list"]
+      responses:
+        "200":
+          description: Kubernetes Jobs (batch/v1).
+          content: {application/json: {example: {items: [{metadata: {name: migrate-28839, namespace: ci-dev}, status: {failed: 3, conditions: [{type: Failed, reason: BackoffLimitExceeded}]}}]}}}
+  /api/namespaces/{namespace}/jobs/{name}/yaml:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Workloads]
+      summary: A Job as YAML
+      x-openconsole-permission: ["jobs:get"]
+      responses: {"200": {$ref: '#/components/responses/yaml'}}
+  /api/namespaces/{namespace}/cronjobs:
+    parameters: [{$ref: '#/components/parameters/namespace'}]
+    get:
+      tags: [Workloads]
+      summary: List CronJobs
+      x-openconsole-permission: ["cronjobs:list"]
+      responses: {"200": {$ref: '#/components/responses/list'}}
+  /api/namespaces/{namespace}/cronjobs/{name}/yaml:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Workloads]
+      summary: A CronJob as YAML
+      x-openconsole-permission: ["cronjobs:get"]
+      responses: {"200": {$ref: '#/components/responses/yaml'}}
+  /api/namespaces/{namespace}/{resource}/{name}/apply:
+    parameters:
+      - {$ref: '#/components/parameters/namespace'}
+      - {name: resource, in: path, required: true, schema: {type: string, enum: [pods, deployments, daemonsets, statefulsets, hpas, services, configmaps, secrets, ingresses, cronjobs, jobs]}}
+      - {$ref: '#/components/parameters/name'}
+    post:
+      tags: [Workloads]
+      summary: Apply edited YAML to an object (dry run first)
+      description: |
+        Needs `<resource>:edit`. Send `dryRun: true` to see the diff without changing anything;
+        a stale YAML answers 409.
+      x-openconsole-permission: ["*:edit"]
+      requestBody:
+        content: {application/json: {example: {yaml: "apiVersion: apps/v1\nkind: Deployment\n…", dryRun: true}}}
+      responses: {"200": {$ref: '#/components/responses/ok'}, "409": {description: The object changed since the YAML was read.}}
+
+  # ─── Config ─────────────────────────────────────────────────────────────────
+  /api/namespaces/{namespace}/services:
+    parameters: [{$ref: '#/components/parameters/namespace'}]
+    get:
+      tags: [Config]
+      summary: List Services
+      x-openconsole-permission: ["services:list"]
+      responses: {"200": {$ref: '#/components/responses/list'}}
+  /api/namespaces/{namespace}/services/{name}:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Config]
+      summary: One Service
+      x-openconsole-permission: ["services:get"]
+      responses: {"200": {$ref: '#/components/responses/object'}}
+  /api/namespaces/{namespace}/services/{name}/yaml:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Config]
+      summary: A Service as YAML
+      x-openconsole-permission: ["services:get"]
+      responses: {"200": {$ref: '#/components/responses/yaml'}}
+  /api/namespaces/{namespace}/ingresses:
+    parameters: [{$ref: '#/components/parameters/namespace'}]
+    get:
+      tags: [Config]
+      summary: List Ingresses
+      x-openconsole-permission: ["ingresses:list"]
+      responses: {"200": {$ref: '#/components/responses/list'}}
+  /api/namespaces/{namespace}/ingresses/{name}/yaml:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Config]
+      summary: An Ingress as YAML
+      x-openconsole-permission: ["ingresses:get"]
+      responses: {"200": {$ref: '#/components/responses/yaml'}}
+  /api/namespaces/{namespace}/configmaps:
+    parameters: [{$ref: '#/components/parameters/namespace'}]
+    get:
+      tags: [Config]
+      summary: List ConfigMaps
+      x-openconsole-permission: ["configmaps:list"]
+      responses: {"200": {$ref: '#/components/responses/list'}}
+  /api/namespaces/{namespace}/configmaps/{name}:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Config]
+      summary: One ConfigMap
+      x-openconsole-permission: ["configmaps:get"]
+      responses: {"200": {$ref: '#/components/responses/object'}}
+  /api/namespaces/{namespace}/configmaps/{name}/yaml:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Config]
+      summary: A ConfigMap as YAML
+      x-openconsole-permission: ["configmaps:get"]
+      responses: {"200": {$ref: '#/components/responses/yaml'}}
+  /api/namespaces/{namespace}/configmaps/{name}/data:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Config]
+      summary: The data of a ConfigMap
+      x-openconsole-permission: ["configmaps:get"]
+      responses: {"200": {$ref: '#/components/responses/ok'}}
+  /api/namespaces/{namespace}/secrets:
+    parameters: [{$ref: '#/components/parameters/namespace'}]
+    get:
+      tags: [Config]
+      summary: List Secrets (key names and sizes, never values)
+      x-openconsole-permission: ["secrets:list"]
+      responses: {"200": {$ref: '#/components/responses/list'}}
+  /api/namespaces/{namespace}/secrets/{name}:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Config]
+      summary: One Secret (key names and sizes, never values)
+      x-openconsole-permission: ["secrets:get"]
+      responses:
+        "200":
+          description: Metadata and keys.
+          content: {application/json: {example: {metadata: {name: db, namespace: ci-dev}, type: Opaque, immutable: false, keys: [{name: password, size: 18}]}}}
+  /api/namespaces/{namespace}/secrets/{name}/reveal:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    post:
+      tags: [Config]
+      summary: The value of one Secret key (audited)
+      x-openconsole-permission: ["secrets:reveal"]
+      requestBody:
+        content: {application/json: {example: {key: password}}}
+      responses: {"200": {$ref: '#/components/responses/ok'}}
+  /api/namespaces/{namespace}/secrets/{name}/yaml:
+    parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Config]
+      summary: A Secret as YAML, values included (for editing)
+      x-openconsole-permission: ["secrets:edit"]
+      responses: {"200": {$ref: '#/components/responses/yaml'}}
+
+  # ─── Admin ──────────────────────────────────────────────────────────────────
+  /api/admin/overview:
+    get: {tags: [Admin], x-openconsole-admin: true, summary: 'Cluster overview (nodes, pods, usage)', responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/overview/history:
+    get: {tags: [Admin], x-openconsole-admin: true, summary: Cluster usage history, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/nodes:
+    get: {tags: [Admin], x-openconsole-admin: true, summary: List nodes, responses: {"200": {$ref: '#/components/responses/list'}}}
+  /api/admin/nodes/{name}:
+    parameters: [{$ref: '#/components/parameters/name'}]
+    get: {tags: [Admin], x-openconsole-admin: true, summary: One node with its pods, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/nodes/{name}/metrics/history:
+    parameters: [{$ref: '#/components/parameters/name'}]
+    get: {tags: [Admin], x-openconsole-admin: true, summary: Node usage history, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/users:
+    get: {tags: [Admin], x-openconsole-admin: true, summary: List users, responses: {"200": {$ref: '#/components/responses/list'}}}
+    post: {tags: [Admin], x-openconsole-admin: true, summary: Create a user, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/users/export:
+    get: {tags: [Admin], x-openconsole-admin: true, summary: Users as CSV, responses: {"200": {description: CSV.}}}
+  /api/admin/users/{id}:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    put: {tags: [Admin], x-openconsole-admin: true, summary: 'Update a user (admin, active, API access override)', responses: {"200": {$ref: '#/components/responses/ok'}}}
+    delete: {tags: [Admin], x-openconsole-admin: true, summary: Delete a user, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/users/{id}/groups:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    get: {tags: [Admin], x-openconsole-admin: true, summary: A user's groups, responses: {"200": {$ref: '#/components/responses/ok'}}}
+    put: {tags: [Admin], x-openconsole-admin: true, summary: Set a user's groups, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/users/{id}/reset-password:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    post: {tags: [Admin], x-openconsole-admin: true, summary: Reset a local user's password, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/users/{id}/revoke-sessions:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    post: {tags: [Admin], x-openconsole-admin: true, summary: Sign a user out everywhere, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/users/{id}/api-access:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    get: {tags: [Admin], x-openconsole-admin: true, summary: Preview what a user's API keys may get, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/users/{id}/revoke-api-keys:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    post: {tags: [Admin], x-openconsole-admin: true, x-openconsole-api-key: false, summary: Revoke all of a user's API keys (web), responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/api-keys:
+    get: {tags: [Admin], x-openconsole-admin: true, x-openconsole-api-key: false, summary: Every user's API keys (web), responses: {"200": {$ref: '#/components/responses/list'}}}
+  /api/admin/api-keys/export:
+    get: {tags: [Admin], x-openconsole-admin: true, x-openconsole-api-key: false, summary: Every user's API keys as CSV (web), responses: {"200": {description: CSV.}}}
+  /api/admin/api-keys/{id}/revoke:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    post: {tags: [Admin], x-openconsole-admin: true, x-openconsole-api-key: false, summary: Revoke a user's API key (web), responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/groups:
+    get: {tags: [Admin], x-openconsole-admin: true, summary: List groups, responses: {"200": {$ref: '#/components/responses/list'}}}
+    post: {tags: [Admin], x-openconsole-admin: true, summary: Create a group, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/groups/export:
+    get: {tags: [Admin], x-openconsole-admin: true, summary: Groups as CSV, responses: {"200": {description: CSV.}}}
+  /api/admin/groups/{id}:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    put: {tags: [Admin], x-openconsole-admin: true, summary: Rename a group, responses: {"200": {$ref: '#/components/responses/ok'}}}
+    delete: {tags: [Admin], x-openconsole-admin: true, summary: Delete a group, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/groups/{id}/roles:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    get: {tags: [Admin], x-openconsole-admin: true, summary: A group's roles, responses: {"200": {$ref: '#/components/responses/ok'}}}
+    put: {tags: [Admin], x-openconsole-admin: true, summary: Set a group's roles, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/roles:
+    get: {tags: [Admin], x-openconsole-admin: true, summary: List roles, responses: {"200": {$ref: '#/components/responses/list'}}}
+    post: {tags: [Admin], x-openconsole-admin: true, summary: Create a role, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/roles/{id}:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    put: {tags: [Admin], x-openconsole-admin: true, summary: 'Update a role (name, API access mode)', responses: {"200": {$ref: '#/components/responses/ok'}}}
+    delete: {tags: [Admin], x-openconsole-admin: true, summary: Delete a role, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/roles/{id}/permissions:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    get: {tags: [Admin], x-openconsole-admin: true, summary: A role's permissions, responses: {"200": {$ref: '#/components/responses/list'}}}
+    post: {tags: [Admin], x-openconsole-admin: true, summary: Add a permission to a role, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/permissions/{id}:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    delete: {tags: [Admin], x-openconsole-admin: true, summary: Remove a permission from a role, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/ldap:
+    get: {tags: [Admin], x-openconsole-admin: true, summary: LDAP settings (no password), responses: {"200": {$ref: '#/components/responses/ok'}}}
+    put: {tags: [Admin], x-openconsole-admin: true, summary: Save LDAP settings, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/ldap/test:
+    post: {tags: [Admin], x-openconsole-admin: true, summary: Test the LDAP connection, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/ldap/users/search:
+    post: {tags: [Admin], x-openconsole-admin: true, summary: Search the directory, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/ldap/users/import:
+    post: {tags: [Admin], x-openconsole-admin: true, summary: Import directory users, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/azure-ad:
+    get: {tags: [Admin], x-openconsole-admin: true, summary: Azure AD settings (no secret), responses: {"200": {$ref: '#/components/responses/ok'}}}
+    put: {tags: [Admin], x-openconsole-admin: true, summary: Save Azure AD settings, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/azure-ad/test:
+    post: {tags: [Admin], x-openconsole-admin: true, summary: Test the Azure AD settings, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/session:
+    get: {tags: [Admin], x-openconsole-admin: true, summary: Session and API key expiry settings, responses: {"200": {$ref: '#/components/responses/ok'}}}
+    put: {tags: [Admin], x-openconsole-admin: true, summary: Save session and API key expiry settings, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/sessions:
+    get: {tags: [Admin], x-openconsole-admin: true, summary: Web sessions, responses: {"200": {$ref: '#/components/responses/list'}}}
+  /api/admin/sessions/{id}:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+    delete: {tags: [Admin], x-openconsole-admin: true, summary: Revoke a web session, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/cluster:
+    get: {tags: [Admin], x-openconsole-admin: true, summary: The default cluster's connection (legacy), responses: {"200": {$ref: '#/components/responses/ok'}}}
+    post: {tags: [Admin], x-openconsole-admin: true, summary: Save the default cluster's connection (legacy), responses: {"200": {$ref: '#/components/responses/ok'}}}
+    put: {tags: [Admin], x-openconsole-admin: true, summary: Save the default cluster's connection (legacy), responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/cluster/validate:
+    post: {tags: [Admin], x-openconsole-admin: true, summary: Check cluster credentials without saving, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/clusters:
+    get: {tags: [Admin], x-openconsole-admin: true, summary: List clusters, responses: {"200": {$ref: '#/components/responses/list'}}}
+    post: {tags: [Admin], x-openconsole-admin: true, summary: Add a cluster, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/clusters/{id}:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    put: {tags: [Admin], x-openconsole-admin: true, summary: Update a cluster, responses: {"200": {$ref: '#/components/responses/ok'}}}
+    delete: {tags: [Admin], x-openconsole-admin: true, summary: Delete a cluster, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/clusters/{id}/activate:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    post: {tags: [Admin], x-openconsole-admin: true, summary: Make a cluster the default, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/clusters/{id}/deactivate:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    post: {tags: [Admin], x-openconsole-admin: true, summary: Unset the default cluster, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/clusters/{id}/prometheus:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    get: {tags: [Admin], x-openconsole-admin: true, summary: A cluster's Prometheus settings (no credentials), responses: {"200": {$ref: '#/components/responses/ok'}}}
+    put: {tags: [Admin], x-openconsole-admin: true, summary: Save a cluster's Prometheus settings, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/clusters/{id}/prometheus/test:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    post: {tags: [Admin], x-openconsole-admin: true, summary: Test Prometheus settings, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/clusters/{id}/prometheus/discover:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    get: {tags: [Admin], x-openconsole-admin: true, summary: Find a Prometheus in the cluster, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/audit-logs:
+    get: {tags: [Admin], x-openconsole-admin: true, summary: The audit log (filters as query parameters), responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/audit-logs/export:
+    get: {tags: [Admin], x-openconsole-admin: true, summary: The audit log as CSV, responses: {"200": {description: CSV.}}}
+  /api/admin/audit-logs/facets:
+    get: {tags: [Admin], x-openconsole-admin: true, summary: Values for the audit log filters, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/recordings:
+    get: {tags: [Admin], x-openconsole-admin: true, summary: Shell and command recordings, responses: {"200": {$ref: '#/components/responses/list'}}}
+  /api/admin/recordings/settings:
+    get: {tags: [Admin], x-openconsole-admin: true, summary: Recording settings, responses: {"200": {$ref: '#/components/responses/ok'}}}
+    put: {tags: [Admin], x-openconsole-admin: true, summary: Save recording settings, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/recordings/{id}:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    get: {tags: [Admin], x-openconsole-admin: true, summary: One recording's metadata, responses: {"200": {$ref: '#/components/responses/ok'}}}
+    delete: {tags: [Admin], x-openconsole-admin: true, summary: Delete a recording, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/recordings/{id}/cast:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    get: {tags: [Admin], x-openconsole-admin: true, summary: A recording as an asciicast file, responses: {"200": {description: asciicast v2.}}}
+  /api/admin/customization/logo:
+    post: {tags: [Admin], x-openconsole-admin: true, summary: Upload a custom logo, responses: {"200": {$ref: '#/components/responses/ok'}}}
+    delete: {tags: [Admin], x-openconsole-admin: true, summary: Remove the custom logo, responses: {"200": {$ref: '#/components/responses/ok'}}}
