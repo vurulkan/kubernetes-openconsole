@@ -567,15 +567,23 @@ func (s *Server) handlePodLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.auditEvent(r, ev)
-	if len(body) > restLogMaxBytes {
-		// Cut at the last whole line within the limit.
-		body = body[:restLogMaxBytes]
-		if i := bytes.LastIndexByte(body, '\n'); i >= 0 {
-			body = body[:i+1]
-		}
+	body, cut := cutLog(body, restLogMaxBytes)
+	if cut {
 		w.Header().Set("X-OpenConsole-Truncated", "true")
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
+}
+
+// cutLog keeps at most max bytes of a log, ending at the last whole line within them.
+func cutLog(body []byte, max int) ([]byte, bool) {
+	if len(body) <= max {
+		return body, false
+	}
+	body = body[:max]
+	if i := bytes.LastIndexByte(body, '\n'); i >= 0 {
+		body = body[:i+1]
+	}
+	return body, true
 }

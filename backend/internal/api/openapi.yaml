@@ -423,6 +423,7 @@ paths:
         but the command runs to its end. `timeoutSeconds` 1–120 (default 30): past it the output so far
         comes back with `exitCode: -1` and `truncated: true` (Kubernetes does not stop the process; it
         may run on in the container). A non-zero exit code is a normal answer (200).
+        Output is text: bytes that are not UTF-8 come back as U+FFFD, so pipe binary output through `base64`.
         Recorded like a shell (Admin → Recordings, "command"); the audit log keeps the program name
         (`command[0]`), never the whole command line.
       x-openconsole-permission: ["pods:exec"]

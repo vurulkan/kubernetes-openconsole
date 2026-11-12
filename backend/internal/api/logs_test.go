@@ -182,3 +182,19 @@ func TestPodLogsREST(t *testing.T) {
 	e.expect("GET", "/api/namespaces/team-b/pods/api-1/logs", bob, nil, http.StatusForbidden)
 	e.waitAudit("pod.logs.denied", "forbidden")
 }
+
+func TestCutLog(t *testing.T) {
+	for _, c := range []struct {
+		in, want string
+		cut      bool
+	}{
+		{"a\nb\n", "a\nb\n", false},
+		{"a\nbb\nccc\n", "a\nbb\n", true}, // 8 bytes: "a\nbb\ncc" → up to the last newline
+		{"abcdefghij", "abcdefgh", true},  // one long line: cut at the limit
+	} {
+		got, cut := cutLog([]byte(c.in), 8)
+		if string(got) != c.want || cut != c.cut {
+			t.Errorf("cutLog(%q) = %q, %v; want %q, %v", c.in, got, cut, c.want, c.cut)
+		}
+	}
+}
