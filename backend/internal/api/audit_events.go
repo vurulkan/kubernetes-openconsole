@@ -17,7 +17,7 @@ import (
 
 // refreshHeader marks the list requests the UI sends on its own every few
 // seconds. They are not audited: the list the user opened already was, and
-// the HTTP request log still shows every request.
+// the HTTP request log still shows every request. Ignored with an API key.
 const refreshHeader = "X-OpenConsole-Refresh"
 
 // auditEvent records e for request r. It fills in the acting user (from the
@@ -26,7 +26,9 @@ const refreshHeader = "X-OpenConsole-Refresh"
 // the caller set none. Everything else (cluster of non-Kubernetes targets,
 // details) is the caller's. The write happens in the background.
 func (s *Server) auditEvent(r *http.Request, e models.AuditLog) {
-	if r.Header.Get(refreshHeader) == "auto" && (e.Verb == audit.VerbList || e.Verb == audit.VerbGet || e.Verb == audit.VerbViewOverview) {
+	key := apiKeyFrom(r.Context())
+	// A key's reads are always recorded: otherwise an agent could add the header and leave no trace.
+	if key == nil && r.Header.Get(refreshHeader) == "auto" && (e.Verb == audit.VerbList || e.Verb == audit.VerbGet || e.Verb == audit.VerbViewOverview) {
 		return
 	}
 	userID := 0
@@ -35,6 +37,9 @@ func (s *Server) auditEvent(r *http.Request, e models.AuditLog) {
 		if e.User == "" {
 			e.User = claims.Username
 		}
+	}
+	if key != nil {
+		e.APIKeyID, e.APIKeyName = key.ID, key.Name
 	}
 	e.RequestID = logpkg.RequestIDFrom(r.Context())
 	e.SourceIP = clientIP(r)

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -14,7 +16,6 @@ import (
 	"k8s-dashboard/backend/internal/kube"
 	logpkg "k8s-dashboard/backend/internal/logging"
 	"k8s-dashboard/backend/internal/models"
-	"k8s-dashboard/backend/internal/rbac"
 )
 
 // Every user works on the cluster they picked in the header switcher
@@ -61,6 +62,13 @@ func (s *Server) clusterMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		ci := s.resolveCluster(r.Context(), user)
+		if claims.APIKey != nil && r.Header.Get(clusterHeader) != "" {
+			var status int
+			if ci, status = s.headerCluster(r, user, claims.APIKey); status != 0 {
+				writeError(w, status, "cluster "+strconv.Quote(r.Header.Get(clusterHeader))+" is unknown or not reachable with this key")
+				return
+			}
+		}
 		metricsRecordClusterRequest(ci.Name)
 		trace.SpanFromContext(r.Context()).SetAttributes(
 			attribute.String("enduser.id", user.Username),
@@ -106,16 +114,31 @@ func (s *Server) resolveCluster(ctx context.Context, user *models.User) clusterI
 
 // canUseCluster: admins can use every cluster; other users any cluster that
 // at least one of their grants covers (a grant for that cluster or for all
-// clusters).
+// clusters). An API key narrows that to its clusters.
 func (s *Server) canUseCluster(ctx context.Context, user *models.User, clusterID int) bool {
-	if user.IsAdmin {
-		return true
-	}
-	perms, err := s.store.ListPermissionsByUser(ctx, user.ID)
+	engine, err := s.accessFor(ctx, user)
+	return err == nil && engine.CoversCluster(clusterID)
+}
+
+// headerCluster resolves X-OpenConsole-Cluster (name or id) on an API key
+// request: an agent picks the cluster per call and never changes the user's
+// web selection. Unknown → 400; one the key or its owner cannot use → 403.
+func (s *Server) headerCluster(r *http.Request, user *models.User, key *models.APIKey) (clusterInfo, int) {
+	value := strings.TrimSpace(r.Header.Get(clusterHeader))
+	id, err := strconv.Atoi(value)
 	if err != nil {
-		return false
+		id = s.store.ClusterIDByName(r.Context(), value)
 	}
-	return rbac.New(perms).CoversCluster(clusterID)
+	name, err := s.store.GetClusterName(r.Context(), id)
+	if id <= 0 || err != nil {
+		return clusterInfo{}, http.StatusBadRequest
+	}
+	if !s.canUseCluster(r.Context(), user, id) {
+		s.auditEvent(r, models.AuditLog{Verb: audit.VerbUse, Outcome: audit.Denied, Reason: reasonForbidden,
+			ResourceType: audit.KindAPIKey, ResourceName: key.Name, Cluster: name, ClusterID: id})
+		return clusterInfo{}, http.StatusForbidden
+	}
+	return clusterInfo{ID: id, Name: name}, 0
 }
 
 // handleSelectCluster stores the caller's cluster choice. Body
@@ -124,6 +147,10 @@ func (s *Server) handleSelectCluster(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.userForRequest(r)
 	if !ok {
 		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	// An agent's pick must not change the user's web screen; keys send X-OpenConsole-Cluster instead.
+	if s.denyAPIKey(w, r, models.AuditLog{Verb: audit.VerbSelect, ResourceType: audit.KindCluster}) {
 		return
 	}
 	var body struct {

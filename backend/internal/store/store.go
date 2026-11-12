@@ -167,9 +167,19 @@ func (s *Store) CountActiveAdmins(ctx context.Context) (int, error) {
 	return n, err
 }
 
+// DeleteUser removes the account and its API keys.
 func (s *Store) DeleteUser(ctx context.Context, id int) error {
-	_, err := s.conn.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id)
-	return err
+	for _, q := range []string{
+		`DELETE FROM api_key_scopes WHERE key_id IN (SELECT id FROM api_keys WHERE user_id = ?)`,
+		`DELETE FROM api_key_permissions WHERE key_id IN (SELECT id FROM api_keys WHERE user_id = ?)`,
+		`DELETE FROM api_keys WHERE user_id = ?`,
+		`DELETE FROM users WHERE id = ?`,
+	} {
+		if _, err := s.conn.ExecContext(ctx, q, id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) ListGroups(ctx context.Context) ([]models.Group, error) {
@@ -644,11 +654,11 @@ func (s *Store) AddAuditLog(ctx context.Context, entry models.AuditLog) error {
 	}
 	_, err := s.conn.ExecContext(ctx, `INSERT INTO audit_logs
 		(timestamp, user, action, verb, outcome, reason, namespace, resource_type, resource_name,
-		 cluster, cluster_id, details, request_id, source_ip, user_agent, auth_source)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 cluster, cluster_id, details, request_id, source_ip, user_agent, auth_source, api_key_id, api_key_name)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		entry.Timestamp, entry.User, entry.Action, entry.Verb, entry.Outcome, entry.Reason,
 		entry.Namespace, entry.ResourceType, entry.ResourceName, entry.Cluster, entry.ClusterID,
-		details, entry.RequestID, entry.SourceIP, entry.UserAgent, entry.AuthSource)
+		details, entry.RequestID, entry.SourceIP, entry.UserAgent, entry.AuthSource, entry.APIKeyID, entry.APIKeyName)
 	return err
 }
 
@@ -668,7 +678,10 @@ type AuditFilter struct {
 	ResourceName string
 	Cluster      string
 	Namespace    string
-	Start, End   *time.Time
+	// Source: "web" (no API key) | "api_key" (any key); APIKey matches the key name.
+	Source     string
+	APIKey     string
+	Start, End *time.Time
 }
 
 // auditOutcomeSuffixes are the outcomes a pre-2.17 action ended in.
@@ -727,6 +740,15 @@ func (f AuditFilter) where() (string, []interface{}) {
 	if f.Namespace != "" {
 		contains("namespace", f.Namespace)
 	}
+	switch f.Source {
+	case "web":
+		conditions = append(conditions, "api_key_id = 0")
+	case "api_key":
+		conditions = append(conditions, "api_key_id > 0")
+	}
+	if f.APIKey != "" {
+		contains("api_key_name", f.APIKey)
+	}
 	if f.Start != nil {
 		conditions = append(conditions, "timestamp >= ?")
 		args = append(args, *f.Start)
@@ -746,7 +768,7 @@ func (s *Store) ListAuditLogs(ctx context.Context, limit, offset int, userFilter
 }
 
 const auditColumns = `id, timestamp, user, action, verb, outcome, reason, namespace, resource_type,
-	resource_name, cluster, cluster_id, details, request_id, source_ip, user_agent, auth_source`
+	resource_name, cluster, cluster_id, details, request_id, source_ip, user_agent, auth_source, api_key_id, api_key_name`
 
 func (s *Store) ListAuditLogsFiltered(ctx context.Context, limit, offset int, f AuditFilter) ([]models.AuditLog, error) {
 	where, args := f.where()
@@ -764,7 +786,7 @@ func (s *Store) ListAuditLogsFiltered(ctx context.Context, limit, offset int, f 
 		if err := rows.Scan(&entry.ID, &entry.Timestamp, &entry.User, &entry.Action, &entry.Verb,
 			&entry.Outcome, &entry.Reason, &entry.Namespace, &entry.ResourceType, &entry.ResourceName,
 			&entry.Cluster, &entry.ClusterID, &details, &entry.RequestID, &entry.SourceIP,
-			&entry.UserAgent, &entry.AuthSource); err != nil {
+			&entry.UserAgent, &entry.AuthSource, &entry.APIKeyID, &entry.APIKeyName); err != nil {
 			return nil, err
 		}
 		if details != "" {
@@ -797,6 +819,7 @@ type AuditFacets struct {
 	Verbs         []string `json:"verbs"`
 	ResourceTypes []string `json:"resourceTypes"`
 	Clusters      []string `json:"clusters"`
+	APIKeys       []string `json:"apiKeys"`
 }
 
 // AuditFacets returns up to limit distinct values per column.
@@ -825,6 +848,7 @@ func (s *Store) AuditFacets(ctx context.Context, limit int) (AuditFacets, error)
 	}{
 		{"action", &f.Actions}, {"user", &f.Users}, {"namespace", &f.Namespaces},
 		{"verb", &f.Verbs}, {"resource_type", &f.ResourceTypes}, {"cluster", &f.Clusters},
+		{"api_key_name", &f.APIKeys},
 	} {
 		v, err := distinct(c.column)
 		if err != nil {
@@ -880,6 +904,17 @@ func (s *Store) UpgradeAuditLogs(ctx context.Context, entries []models.AuditLog)
 
 func (s *Store) PurgeAuditLogs(ctx context.Context, olderThan time.Time) error {
 	_, err := s.conn.ExecContext(ctx, `DELETE FROM audit_logs WHERE timestamp < ?`, olderThan)
+	return err
+}
+
+// APIKeyReadVerbs are the reads an API key's successful calls are kept a
+// shorter time for (API_KEY_READ_RETENTION_DAYS).
+var APIKeyReadVerbs = []string{"list", "get", "logs", "view_yaml", "view_overview"}
+
+// PurgeAPIKeyReads deletes successful API key reads older than olderThan.
+func (s *Store) PurgeAPIKeyReads(ctx context.Context, olderThan time.Time) error {
+	_, err := s.conn.ExecContext(ctx, `DELETE FROM audit_logs WHERE api_key_id > 0 AND outcome = 'success'
+		AND verb IN ('`+strings.Join(APIKeyReadVerbs, "','")+`') AND timestamp < ?`, olderThan)
 	return err
 }
 

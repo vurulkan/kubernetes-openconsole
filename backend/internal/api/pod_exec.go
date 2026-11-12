@@ -157,6 +157,23 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !websocket.IsWebSocketUpgrade(r) {
+		// Checked before a recording is opened for a session that never starts.
+		writeError(w, http.StatusBadRequest, "a WebSocket upgrade is required")
+		return
+	}
+	// Recording is fail-open for a web session: if it can't start, the shell
+	// still opens and the reason lands in the audit log. The client only
+	// shows the "being recorded" banner when it receives the recording frame.
+	rec := s.startExecRecording(r, claims.Username, namespace, pod, container, requestID)
+	defer rec.Close()
+	if rec == nil && claims.APIKey != nil {
+		// A shell opened with an API key runs with nobody watching: no recording, no shell.
+		s.recordExecAudit(r, namespace, pod, audit.Failed, "recording_unavailable", audit.D{"container": container, "command": command})
+		writeError(w, http.StatusServiceUnavailable, "the session cannot be recorded, and a shell opened with an API key always is; try again later")
+		return
+	}
+
 	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -165,6 +182,11 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 	writeExecSessionInfo(conn)
+	if rec != nil {
+		// Sent before the bridge starts, so no concurrent writer yet.
+		_ = conn.WriteMessage(websocket.TextMessage,
+			[]byte(`{"type":"recording","enabled":true,"sessionId":`+jsonString(rec.ID())+`}`))
+	}
 
 	req := client.CoreV1().RESTClient().Post().
 		Resource("pods").
@@ -186,12 +208,6 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 		s.recordExecAudit(r, namespace, pod, audit.Failed, "spdy_init", failDetails(err, audit.D{"container": container, "command": command}))
 		return
 	}
-
-	// Recording is fail-open: if it can't start, the shell still opens and
-	// the reason lands in the audit log. The client only shows the
-	// "being recorded" banner when it receives the recording frame.
-	rec := s.startExecRecording(r, conn, claims.Username, namespace, pod, container, requestID)
-	defer rec.Close()
 
 	start := time.Now()
 	MetricsExecIncr()
@@ -257,17 +273,18 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// startExecRecording opens a recording for the session and tells the client
-// about it. Returns nil (which the bridge treats as "not recording") when
-// recording is off, refused by the disk guard, or failed to start.
-func (s *Server) startExecRecording(r *http.Request, conn *websocket.Conn, user, namespace, pod, container, requestID string) *recording.Session {
+// startExecRecording opens a recording for the session. Returns nil (which
+// the bridge treats as "not recording") when recording is off, refused by
+// the disk guard, or failed to start.
+func (s *Server) startExecRecording(r *http.Request, user, namespace, pod, container, requestID string) *recording.Session {
 	if s.recorder == nil {
 		return nil
 	}
 	cluster := clusterFrom(r.Context()).Name
 	cols, _ := strconv.ParseUint(r.URL.Query().Get("cols"), 10, 16)
 	rows, _ := strconv.ParseUint(r.URL.Query().Get("rows"), 10, 16)
-	rec, err := s.recorder.Start(r.Context(), recording.Meta{
+	key := apiKeyFrom(r.Context())
+	meta := recording.Meta{
 		User:      user,
 		Cluster:   cluster,
 		Namespace: namespace,
@@ -276,12 +293,13 @@ func (s *Server) startExecRecording(r *http.Request, conn *websocket.Conn, user,
 		RequestID: requestID,
 		Cols:      uint16(cols),
 		Rows:      uint16(rows),
-	})
+	}
+	if key != nil {
+		meta.APIKeyID, meta.APIKeyName = key.ID, key.Name
+	}
+	rec, err := s.recorder.Start(r.Context(), meta)
 	switch {
 	case err == nil:
-		// Sent before the bridge starts, so no concurrent writer yet.
-		_ = conn.WriteMessage(websocket.TextMessage,
-			[]byte(`{"type":"recording","enabled":true,"sessionId":`+jsonString(rec.ID())+`}`))
 		return rec
 	case errors.Is(err, recording.ErrDisabled):
 	case errors.Is(err, recording.ErrNoSpace):

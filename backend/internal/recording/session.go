@@ -33,6 +33,10 @@ type Meta struct {
 	Pod       string
 	Container string
 	RequestID string
+	// The API key the shell was opened with; such a shell is recorded even
+	// when recording is switched off (nobody watches an agent's session).
+	APIKeyID   int
+	APIKeyName string
 	// Initial terminal size if the client sent one; 0 → wait for the first
 	// resize (or fall back to 80x24 when output arrives first).
 	Cols, Rows uint16

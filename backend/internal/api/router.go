@@ -79,6 +79,8 @@ type Server struct {
 	nodes sync.Map
 	// nodeHistory caches a node's Prometheus history (nodeHistoryKey → historyEntry, one step).
 	nodeHistory sync.Map
+	// keyLimits rate-limits API keys and thins out their last-use writes.
+	keyLimits apiKeyLimits
 }
 
 // sessionValidator is the AuthMiddleware adapter around *store.Store. Returning
@@ -182,14 +184,14 @@ func (s *Server) Router() http.Handler {
 		r.Get("/azure/start", s.handleAzureStart)
 		r.Get("/azure/callback", s.handleAzureCallback)
 		r.Get("/providers", s.handleAuthProviders)
-		r.With(auth.AuthMiddleware(s.jwtKey, s.authValidator())).Get("/me", s.handleMe)
-		r.With(auth.AuthMiddleware(s.jwtKey, s.authValidator())).Post("/change-password", s.handleChangePassword)
+		r.With(auth.AuthMiddleware(s.jwtKey, s.authValidator(), s.keyAuth())).Get("/me", s.handleMe)
+		r.With(auth.AuthMiddleware(s.jwtKey, s.authValidator(), s.keyAuth())).Post("/change-password", s.handleChangePassword)
 	})
 
 	r.Get("/api/customization/logo", s.handleGetLogo)
 
 	r.Group(func(r chi.Router) {
-		r.Use(auth.AuthMiddleware(s.jwtKey, s.authValidator()))
+		r.Use(auth.AuthMiddleware(s.jwtKey, s.authValidator(), s.keyAuth()))
 		r.Use(s.clusterMiddleware)
 		r.Get("/api/cluster/active", s.handleGetActiveCluster)
 		r.Post("/api/cluster/select", s.handleSelectCluster)
@@ -202,6 +204,14 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/admin/nodes/{name}", s.handleNode)
 		r.Get("/api/admin/nodes/{name}/metrics/history", s.handleNodeHistory)
 		// Signed-in users only: the version isn't shown before login.
+		// API keys: web session only (checked in the handlers so a refusal is audited).
+		r.Get("/api/me/api-keys", s.handleListAPIKeys)
+		r.Get("/api/me/api-keys/ceiling", s.handleAPIKeyCeiling)
+		r.Post("/api/me/api-keys", s.handleCreateAPIKey)
+		r.Put("/api/me/api-keys/{id}", s.handleUpdateAPIKey)
+		r.Post("/api/me/api-keys/{id}/regenerate", s.handleRegenerateAPIKey)
+		r.Post("/api/me/api-keys/{id}/revoke", s.handleRevokeAPIKey)
+		r.Delete("/api/me/api-keys/{id}", s.handleDeleteAPIKey)
 		r.Get("/api/version", func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]string{"version": version.Version})
 		})
@@ -275,7 +285,7 @@ func (s *Server) Router() http.Handler {
 	})
 
 	r.Group(func(r chi.Router) {
-		r.Use(auth.AuthMiddleware(s.jwtKey, s.authValidator()))
+		r.Use(auth.AuthMiddleware(s.jwtKey, s.authValidator(), s.keyAuth()))
 		r.Use(s.clusterMiddleware)
 		r.Use(s.requireAdmin)
 		r.Get("/api/admin/users", s.handleListUsers)
@@ -549,17 +559,26 @@ func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) requireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		user, ok := s.userForRequest(r)
-		if !ok || !user.IsAdmin {
-			w.WriteHeader(http.StatusForbidden)
-			return
-		}
-		if user.MustChangePassword {
+		if _, ok := s.isAdminRequest(r); !ok {
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// isAdminRequest is the one admin check: an active admin who has changed the
+// initial password, on a web session or with an API key that has the admin
+// scope. Losing the admin flag takes effect on the next call, key or not.
+func (s *Server) isAdminRequest(r *http.Request) (*models.User, bool) {
+	user, ok := s.userForRequest(r)
+	if !ok || !user.IsAdmin || user.MustChangePassword {
+		return user, false
+	}
+	if k := apiKeyFrom(r.Context()); k != nil && !k.AdminScope {
+		return user, false
+	}
+	return user, true
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -1006,18 +1025,24 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	engine := rbac.New(perms)
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"user":        user,
-		"namespaces":  engine.AllowedNamespaces(clusterIDFrom(r.Context())),
-		"permissions": perms,
-	})
+	out := map[string]interface{}{"user": user}
+	if k := apiKeyFrom(r.Context()); k != nil {
+		// With a key: what the key reaches now, and the key itself (never its secret).
+		perms = rbac.Restrict(perms, &k.APIKeyScope)
+		out["apiKey"] = k
+	}
+	out["namespaces"] = rbac.New(perms).AllowedNamespaces(clusterIDFrom(r.Context()))
+	out["permissions"] = perms
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.userForRequest(r)
 	if !ok {
 		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	if s.denyAPIKey(w, r, models.AuditLog{Verb: audit.VerbChangePassword, ResourceType: audit.KindUser, ResourceName: user.Username}) {
 		return
 	}
 	var request struct {
@@ -1066,18 +1091,8 @@ func (s *Server) handleNamespaces(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
-	user, ok := s.userForRequest(r)
-	if !ok {
+	if _, ok := s.userForRequest(r); !ok {
 		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
-	if user.IsAdmin {
-		var all []string
-		for _, ns := range existing {
-			all = append(all, ns.Name)
-		}
-		s.auditRead(r, audit.VerbList, "namespaces", "", "*")
-		writeJSON(w, http.StatusOK, map[string]interface{}{"namespaces": all})
 		return
 	}
 	engine, ok := s.engineForRequest(r)
@@ -1085,14 +1100,9 @@ func (s *Server) handleNamespaces(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
-	allowed := engine.AllowedNamespaces(clusterIDFrom(r.Context()))
-	allowedSet := make(map[string]struct{})
-	for _, ns := range allowed {
-		allowedSet[ns] = struct{}{}
-	}
 	var result []string
 	for _, ns := range existing {
-		if _, ok := allowedSet[ns.Name]; ok {
+		if engine.SeesNamespace(clusterIDFrom(r.Context()), ns.Name) {
 			result = append(result, ns.Name)
 		}
 	}
@@ -1102,27 +1112,8 @@ func (s *Server) handleNamespaces(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleNamespacePermissions(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
-	user, ok := s.userForRequest(r)
-	if !ok {
+	if _, ok := s.userForRequest(r); !ok {
 		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
-	if user.IsAdmin {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"resources": filterByFeatures(map[string][]string{
-				"pods":         {"list", "get", "logs", "exec", "edit"},
-				"deployments":  {"list", "get", "restart", "scale", "edit"},
-				"daemonsets":   {"list", "get", "edit"},
-				"statefulsets": {"list", "get", "scale", "edit"},
-				"hpas":         {"list", "get", "edit"},
-				"services":     {"list", "get", "edit"},
-				"configmaps":   {"list", "get", "edit"},
-				"secrets":      {"list", "get", "reveal", "edit"},
-				"ingresses":    {"list", "get", "edit"},
-				"cronjobs":     {"list", "get", "edit"},
-				"jobs":         {"list", "get", "edit"},
-			}),
-		})
 		return
 	}
 	engine, ok := s.engineForRequest(r)
@@ -2293,6 +2284,8 @@ func auditFilterFrom(w http.ResponseWriter, r *http.Request) (store.AuditFilter,
 		ResourceName: q.Get("resourceName"),
 		Cluster:      q.Get("cluster"),
 		Namespace:    q.Get("namespace"),
+		Source:       q.Get("source"), // web | api_key
+		APIKey:       q.Get("apiKey"),
 		Start:        parseTimeParam(q.Get("start")),
 		End:          parseTimeParam(q.Get("end")),
 	}
@@ -2457,30 +2450,35 @@ func parseTimeParam(value string) *time.Time {
 	return nil
 }
 
-// engineForRequest fails for a user who must change the password: callers answer 403,
-// never 401, because the UI signs out on 401.
+// engineForRequest fails for a non-admin who must change the password: callers answer 403,
+// never 401, because the UI signs out on 401. (Admins kept reading before
+// changing it; their admin screens check it in isAdminRequest.)
 func (s *Server) engineForRequest(r *http.Request) (*rbac.Engine, bool) {
-	claims, ok := auth.FromContext(r.Context())
-	if !ok {
+	user, ok := s.userForRequest(r)
+	if !ok || (user.MustChangePassword && !user.IsAdmin) {
 		return nil, false
 	}
-	user, err := s.store.GetUserByID(r.Context(), claims.UserID)
-	if err != nil || !user.IsActive {
-		return nil, false
+	engine, err := s.accessFor(r.Context(), user)
+	return engine, err == nil
+}
+
+// accessFor is the single source of what user may do on this request: an
+// admin holds every grant, anyone else their roles' grants; an API key on ctx
+// narrows either to the key's scope.
+func (s *Server) accessFor(ctx context.Context, user *models.User) (*rbac.Engine, error) {
+	engine := rbac.NewAdmin()
+	if !user.IsAdmin {
+		perms, err := s.store.ListPermissionsByUser(ctx, user.ID)
+		if err != nil {
+			return nil, err
+		}
+		engine = rbac.New(perms)
 	}
-	if user.MustChangePassword {
-		return nil, false
-	}
-	perms, err := s.store.ListPermissionsByUser(r.Context(), user.ID)
-	if err != nil {
-		return nil, false
-	}
-	return rbac.New(perms), true
+	return engine.WithKey(apiKeyScopeFrom(ctx)), nil
 }
 
 func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, resource, action string) (string, bool) {
-	user, ok := s.userForRequest(r)
-	if !ok {
+	if _, ok := s.userForRequest(r); !ok {
 		w.WriteHeader(http.StatusUnauthorized)
 		return "", false
 	}
@@ -2489,9 +2487,6 @@ func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, resou
 		s.auditReadDenied(r, resource, action, reasonFeatureDisabled)
 		writeError(w, http.StatusForbidden, "this feature is disabled by the operator")
 		return "", false
-	}
-	if user.IsAdmin {
-		return namespace, true
 	}
 	engine, ok := s.engineForRequest(r)
 	if !ok {
@@ -2514,15 +2509,8 @@ func (s *Server) can(ctx context.Context, userID int, namespace, resource, actio
 	if err != nil {
 		return false
 	}
-	if user.IsAdmin {
-		return true
-	}
-	perms, err := s.store.ListPermissionsByUser(ctx, userID)
-	if err != nil {
-		return false
-	}
-	engine := rbac.New(perms)
-	return engine.Can(clusterIDFrom(ctx), namespace, resource, action)
+	engine, err := s.accessFor(ctx, user)
+	return err == nil && engine.Can(clusterIDFrom(ctx), namespace, resource, action)
 }
 
 func (s *Server) userForRequest(r *http.Request) (*models.User, bool) {

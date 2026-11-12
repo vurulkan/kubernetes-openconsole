@@ -186,6 +186,12 @@ func TestDisabledAndValidation(t *testing.T) {
 	if _, err := m.Start(context.Background(), Meta{}); !errors.Is(err, ErrDisabled) {
 		t.Fatalf("want ErrDisabled, got %v", err)
 	}
+	// A shell opened with an API key is recorded anyway.
+	s, err := m.Start(context.Background(), Meta{User: "bob", APIKeyID: 3, APIKeyName: "agent"})
+	if err != nil {
+		t.Fatalf("API key shell not recorded: %v", err)
+	}
+	s.Close()
 	bad := defaults()
 	bad.DiskPolicy = "yolo"
 	if _, err := m.UpdateSettings(context.Background(), bad); err == nil {

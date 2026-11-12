@@ -39,6 +39,8 @@ const (
 	VerbEvict          = "evict"
 	VerbPurge          = "purge"
 	VerbViewOverview   = "view_overview"
+	VerbRegenerate     = "regenerate"
+	VerbUse            = "use" // an API key presented (denied / rate limited only)
 )
 
 // Verbs lists every verb, for validation and the Admin → Audit filter.
@@ -47,7 +49,7 @@ var Verbs = []string{
 	VerbViewYAML, VerbReveal, VerbView, VerbDownload, VerbCreate, VerbUpdate,
 	VerbDelete, VerbShare, VerbSelect, VerbActivate, VerbDeactivate, VerbRevoke,
 	VerbExport, VerbImport, VerbLogin, VerbChangePassword, VerbResetPassword,
-	VerbEvict, VerbPurge, VerbViewOverview,
+	VerbEvict, VerbPurge, VerbViewOverview, VerbRegenerate, VerbUse,
 }
 
 // Outcomes: how it ended.
@@ -73,6 +75,7 @@ const (
 	KindSession    = "session"
 	KindRecording  = "recording"
 	KindSavedView  = "saved_view"
+	KindAPIKey     = "api_key"
 )
 
 // kubeKinds maps the plural resource names used by RBAC grants and URLs to
@@ -179,6 +182,9 @@ var DetailKeys = map[string]DetailType{
 	"changed": Keyword, // what changed (array of field names), not the values
 	"shared":  Bool,
 	"summary": Text,
+	// API keys (the scope summary and expiry; never the secret or its hash)
+	"admin_scope": Bool,
+	"expires_at":  Date,
 	// failures
 	"error": Text,
 }

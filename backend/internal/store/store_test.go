@@ -385,3 +385,110 @@ func TestLastLoginBackfillAndUnclaimedAzure(t *testing.T) {
 		t.Fatal("still unclaimed after a sign-in")
 	}
 }
+
+// A 2.21 database gains the API key tables and columns; keys round-trip with
+// their scope, names are unique per user, and deleting the user removes them.
+func TestAPIKeysUpgradeAndCRUD(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	legacy, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`CREATE TABLE session_recordings (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL UNIQUE,
+			user TEXT NOT NULL, cluster TEXT NOT NULL DEFAULT '', namespace TEXT NOT NULL, pod TEXT NOT NULL,
+			container TEXT NOT NULL DEFAULT '', started_at DATETIME NOT NULL, ended_at DATETIME NULL,
+			size_bytes INTEGER NOT NULL DEFAULT 0, truncated INTEGER NOT NULL DEFAULT 0, request_id TEXT NOT NULL DEFAULT '', path TEXT NOT NULL)`,
+		`INSERT INTO session_recordings (session_id, user, namespace, pod, started_at, path) VALUES ('s1', 'olduser', 'ns', 'p', '2025-01-01 00:00:00', '/x')`,
+	} {
+		if _, err := legacy.Exec(stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	legacy.Close()
+	conn, st := open(t, path)
+	defer conn.Close()
+	ctx := context.Background()
+	if recs, _, err := st.ListRecordings(ctx, models.RecordingFilter{Source: "web"}); err != nil || len(recs) != 1 || recs[0].APIKeyID != 0 {
+		t.Fatalf("migrated recordings = %+v, %v", recs, err)
+	}
+
+	uid, _ := st.CreateUser(ctx, "bob", "h")
+	exp := time.Now().Add(time.Hour)
+	k := models.APIKey{UserID: uid, Name: "agent", Prefix: "oc_abcdef", Hash: "h1", ExpiresAt: &exp,
+		APIKeyScope: models.APIKeyScope{Clusters: []int{1, 2}, Namespaces: []string{"a", "b"}, Grants: []string{"pods:list", "pods:get"}}}
+	id, err := st.CreateAPIKey(ctx, k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetAPIKeyByHash(ctx, "h1")
+	if err != nil || got.ID != id || len(got.Clusters) != 2 || strings.Join(got.Namespaces, ",") != "a,b" ||
+		strings.Join(got.Grants, ",") != "pods:list,pods:get" || got.ExpiresAt == nil || got.AllNamespaces {
+		t.Fatalf("key = %+v, %v", got, err)
+	}
+	if _, err := st.CreateAPIKey(ctx, models.APIKey{UserID: uid, Name: "agent", Hash: "h2"}); err != store.ErrAPIKeyNameTaken {
+		t.Fatalf("duplicate name: %v", err)
+	}
+	got.Name, got.AllNamespaces, got.Grants = "agent-2", true, []string{"pods:logs"}
+	if err := st.UpdateAPIKey(ctx, *got); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RevokeAPIKey(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = st.GetAPIKey(ctx, id)
+	if got.Name != "agent-2" || !got.AllNamespaces || len(got.Namespaces) != 0 || strings.Join(got.Grants, ",") != "pods:logs" || got.RevokedAt == nil {
+		t.Fatalf("updated key = %+v", got)
+	}
+	if err := st.RegenerateAPIKey(ctx, id, "oc_zzzzzz", "h3", nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = st.GetAPIKeyByHash(ctx, "h3"); got == nil || got.RevokedAt != nil || got.ExpiresAt != nil {
+		t.Fatalf("regenerated key = %+v", got)
+	}
+	if _, err := st.GetAPIKeyByHash(ctx, "h1"); err != sql.ErrNoRows {
+		t.Fatalf("old secret still found: %v", err)
+	}
+	if err := st.DeleteUser(ctx, uid); err != nil {
+		t.Fatal(err)
+	}
+	var left int
+	_ = conn.QueryRow(`SELECT (SELECT COUNT(*) FROM api_keys) + (SELECT COUNT(*) FROM api_key_scopes) + (SELECT COUNT(*) FROM api_key_permissions)`).Scan(&left)
+	if left != 0 {
+		t.Fatalf("%d API key rows left after the user was deleted", left)
+	}
+}
+
+// Successful API key reads go after API_KEY_READ_RETENTION_DAYS; a key's
+// writes and denials, and web reads, stay.
+func TestPurgeAPIKeyReads(t *testing.T) {
+	conn, st := open(t, filepath.Join(t.TempDir(), "app.db"))
+	defer conn.Close()
+	ctx := context.Background()
+	old := time.Now().UTC().Add(-10 * 24 * time.Hour)
+	for _, e := range []models.AuditLog{
+		{Action: "pod.list", Verb: "list", Outcome: "success", APIKeyID: 1, APIKeyName: "k"},
+		{Action: "pod.logs", Verb: "logs", Outcome: "success", APIKeyID: 1, APIKeyName: "k"},
+		{Action: "pod.list", Verb: "list", Outcome: "denied", APIKeyID: 1, APIKeyName: "k"},
+		{Action: "deployment.restart", Verb: "restart", Outcome: "success", APIKeyID: 1, APIKeyName: "k"},
+		{Action: "pod.list", Verb: "list", Outcome: "success"},
+	} {
+		e.Timestamp, e.User = old, "bob"
+		if err := st.AddAuditLog(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.PurgeAPIKeyReads(ctx, time.Now().UTC().Add(-7*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	logs, _ := st.ListAuditLogsFiltered(ctx, 10, 0, store.AuditFilter{})
+	if len(logs) != 3 {
+		t.Fatalf("left %d entries: %+v", len(logs), logs)
+	}
+	if n, _ := st.CountAuditLogsFiltered(ctx, store.AuditFilter{Source: "api_key", APIKey: "k"}); n != 2 {
+		t.Fatalf("key entries = %d", n)
+	}
+	if n, _ := st.CountAuditLogsFiltered(ctx, store.AuditFilter{Source: "web"}); n != 1 {
+		t.Fatalf("web entries = %d", n)
+	}
+}

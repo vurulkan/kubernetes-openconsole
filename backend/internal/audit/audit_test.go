@@ -253,4 +253,26 @@ func TestElasticMappingCoversDetails(t *testing.T) {
 	if oc["cluster_id"].Type != "long" {
 		t.Errorf("openconsole.cluster_id mapped as %q", oc["cluster_id"].Type)
 	}
+	var keyMapping struct {
+		Template struct {
+			Mappings struct {
+				Properties struct {
+					OpenConsole struct {
+						Properties struct {
+							APIKey struct {
+								Properties map[string]struct {
+									Type string `json:"type"`
+								} `json:"properties"`
+							} `json:"api_key"`
+						} `json:"properties"`
+					} `json:"openconsole"`
+				} `json:"properties"`
+			} `json:"mappings"`
+		} `json:"template"`
+	}
+	_ = json.Unmarshal(raw, &keyMapping)
+	key := keyMapping.Template.Mappings.Properties.OpenConsole.Properties.APIKey.Properties
+	if key["id"].Type != "long" || key["name"].Type != "keyword" {
+		t.Errorf("openconsole.api_key mapped as %+v", key)
+	}
 }

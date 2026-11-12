@@ -221,6 +221,38 @@ func migrate(ctx context.Context, conn *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_restart_history_pod ON restart_history (cluster_id, namespace, pod, container, last_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_restart_history_owner ON restart_history (cluster_id, namespace, owner, last_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_restart_history_last ON restart_history (last_at)`,
+		// 2.22.0: API keys. hash = SHA-256 of the secret (never the secret);
+		// the scope is clusters × namespaces (cluster_id 0 = every cluster,
+		// namespace '' with all_namespaces), and the grants a key may use.
+		`CREATE TABLE IF NOT EXISTS api_keys (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+			name TEXT NOT NULL,
+			note TEXT NOT NULL DEFAULT '',
+			prefix TEXT NOT NULL,
+			hash TEXT NOT NULL UNIQUE,
+			admin_scope INTEGER NOT NULL DEFAULT 0,
+			all_namespaces INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL,
+			expires_at DATETIME NULL,
+			last_used_at DATETIME NULL,
+			last_used_ip TEXT NOT NULL DEFAULT '',
+			revoked_at DATETIME NULL,
+			UNIQUE (user_id, name)
+		);`,
+		`CREATE TABLE IF NOT EXISTS api_key_scopes (
+			key_id INTEGER NOT NULL REFERENCES api_keys (id) ON DELETE CASCADE,
+			cluster_id INTEGER NOT NULL DEFAULT 0,
+			namespace TEXT NOT NULL DEFAULT ''
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_api_key_scopes_key ON api_key_scopes (key_id)`,
+		`CREATE TABLE IF NOT EXISTS api_key_permissions (
+			key_id INTEGER NOT NULL REFERENCES api_keys (id) ON DELETE CASCADE,
+			resource TEXT NOT NULL,
+			action TEXT NOT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_api_key_permissions_key ON api_key_permissions (key_id)`,
 	}
 
 	for _, stmt := range stmts {
@@ -268,6 +300,11 @@ func migrate(ctx context.Context, conn *sql.DB) error {
 		`ALTER TABLE audit_logs ADD COLUMN source_ip TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE audit_logs ADD COLUMN user_agent TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE audit_logs ADD COLUMN auth_source TEXT NOT NULL DEFAULT ''`,
+		// 2.22.0: the API key an action was taken with (0 / '' = web session).
+		`ALTER TABLE audit_logs ADD COLUMN api_key_id INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE audit_logs ADD COLUMN api_key_name TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE session_recordings ADD COLUMN api_key_id INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE session_recordings ADD COLUMN api_key_name TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, stmt := range alterStatements {
 		if _, err := conn.ExecContext(ctx, stmt); err != nil {
