@@ -48,7 +48,7 @@ const Segmented: React.FC<{ label: string; value: string; options: Array<[string
   options,
   onChange,
 }) => (
-  <div role="group" aria-label={label} className="inline-flex rounded-lg border border-slate-200 p-0.5 dark:border-slate-700">
+  <div role="group" aria-label={label} className="inline-flex self-start rounded-lg border border-slate-200 p-0.5 dark:border-slate-700">
     {options.map(([v, text]) => (
       <button
         key={v}
