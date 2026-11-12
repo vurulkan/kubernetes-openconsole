@@ -231,4 +231,30 @@ describe('ApiKeyFormPage', () => {
     expect(screen.getByText(/does not allow the Admin API/)).toBeInTheDocument();
     await expectNoA11yViolations(document.body);
   });
+
+  it('keeps a cell the policy blocks when editing a key that has it', async () => {
+    const blocked: ApiKeyCeiling = {
+      ...ceiling,
+      namespaces: [{ clusterId: 1, namespace: 'team-a', grants: ['pods:list'], blocked: ['pods:exec'] }],
+    };
+    const calls = mockFetch([
+      ['GET /api/me/api-keys/ceiling', () => blocked],
+      ['PUT /api/me/api-keys/9', () => ({ key: key({}) })],
+      ['GET /api/me/api-keys', () => ({ items: [key({ id: 9, name: 'shell', grants: ['pods:list', 'pods:exec'] })] })],
+    ]);
+    render(
+      <MemoryRouter initialEntries={['/account/api-keys/9']}>
+        <Routes>
+          <Route path="/account/api-keys/:id" element={<ApiKeyFormPage user={user} />} />
+          <Route path="/account/api-keys" element={<p>list</p>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    const exec = await screen.findByRole('button', { name: "pods exec — The admin's API access policy does not allow it" });
+    expect(exec).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByText(/will be removed when you save/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByText('list');
+    expect((calls.find((c) => c.method === 'PUT')!.body as { grants: string[] }).grants).toEqual(['pods:list', 'pods:exec']);
+  });
 });

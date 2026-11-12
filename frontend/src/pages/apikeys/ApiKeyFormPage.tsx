@@ -100,9 +100,8 @@ const ApiKeyFormPage: React.FC<{ user: User }> = ({ user }) => {
           setAllNamespaces(k.allNamespaces);
           setNamespaces(k.namespaces);
           setMatrix(toMatrix(k.grants));
-          // The policy took the Admin API away: saving drops it (listed with the dropped grants).
-          setAdminScope(k.adminScope && c.adminScopeAllowed);
-          if (k.adminScope && !c.adminScopeAllowed) setDropped(['Admin API']);
+          // Kept even when the policy took the Admin API away: inactive now, back when it opens.
+          setAdminScope(k.adminScope);
           setTemplate(classify(k.grants, c.safeRead, new Set(c.namespaces.flatMap((n) => n.grants))));
         }
       } catch (e) {
@@ -124,11 +123,16 @@ const ApiKeyFormPage: React.FC<{ user: User }> = ({ user }) => {
     return scopePairs(ceiling, clusters, !picked || allNamespaces, namespaces);
   }, [ceiling, clusterId, allNamespaces, namespaces]);
   const available = useMemo(() => new Set(pairs.flatMap((p) => p.grants)), [pairs]);
+  // On edit, cells the admin's policy blocks stay if the key had them (inactive until the policy opens).
+  const kept = useMemo(
+    () => new Set(editing?.grants.filter((g) => !available.has(g) && pairs.some((p) => p.blocked.includes(g))) ?? []),
+    [editing, available, pairs],
+  );
 
   // A grant the selection no longer reaches is dropped (and listed, so the change isn't silent).
   useEffect(() => {
     if (!ceiling) return;
-    const lost = fromMatrix(matrix).filter((g) => !available.has(g));
+    const lost = fromMatrix(matrix).filter((g) => !available.has(g) && !kept.has(g));
     if (lost.length === 0) return;
     setDropped((d) => [...new Set([...d, ...lost])]);
     const m = { ...matrix };
@@ -137,7 +141,7 @@ const ApiKeyFormPage: React.FC<{ user: User }> = ({ user }) => {
       m[r] = { ...m[r], [a]: false };
     });
     setMatrix(m);
-  }, [available, ceiling]);
+  }, [available, kept, ceiling]);
 
   // A new key starts from the safe read template once the ceiling is known.
   useEffect(() => {
@@ -350,6 +354,8 @@ const ApiKeyFormPage: React.FC<{ user: User }> = ({ user }) => {
                   const g = `${resource}:${a.key}`;
                   if (ceiling.disabled.includes(g)) return { disabled: true, title: t('apiKeys.featureOff') };
                   const have = pairs.filter((p) => p.grants.includes(g)).length;
+                  // A kept cell: the key has it, the policy blocks it; inactive, can be removed.
+                  if (have === 0 && kept.has(g)) return { struck: true, title: t('apiKeys.policyBlocked') };
                   if (have === 0)
                     return {
                       disabled: true,
@@ -367,7 +373,7 @@ const ApiKeyFormPage: React.FC<{ user: User }> = ({ user }) => {
                 <Checkbox
                   checked={adminScope}
                   onChange={setAdminScope}
-                  disabled={!ceiling.adminScopeAllowed}
+                  disabled={!ceiling.adminScopeAllowed && !adminScope}
                   label={t('apiKeys.adminApiLabel')}
                 />
                 {!ceiling.adminScopeAllowed && (

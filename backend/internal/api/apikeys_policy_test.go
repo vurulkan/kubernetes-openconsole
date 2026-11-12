@@ -117,7 +117,7 @@ func TestAPIKeyPolicyModes(t *testing.T) {
 func TestAPIKeyPolicyAdmin(t *testing.T) {
 	e := newTestEnv(t)
 	rootID, root := e.user("root", true)
-	key, _ := e.createKey(root, map[string]any{"name": "ops", "clusters": []int{0}, "allNamespaces": true,
+	key, keyID := e.createKey(root, map[string]any{"name": "ops", "clusters": []int{0}, "allNamespaces": true,
 		"grants": []string{"pods:list", "secrets:list"}, "adminScope": true})
 	set := func(o string) {
 		t.Helper()
@@ -137,6 +137,10 @@ func TestAPIKeyPolicyAdmin(t *testing.T) {
 		t.Fatalf("admin ceiling under safe read = %.400s", out)
 	}
 
+	// Editing the Admin API key keeps the scope (inactive now), a new key can't have it.
+	e.expect("PUT", "/api/me/api-keys/"+itoa(int64(keyID)), root, map[string]any{"name": "ops", "clusters": []int{0}, "allNamespaces": true,
+		"grants": []string{"pods:list", "secrets:list"}, "adminScope": true}, http.StatusOK)
+
 	set(rbac.AccessOff)
 	e.expectAll("admin off", key, map[string]int{"/api/admin/users": 403, "/api/namespaces/team-a/pods": 403, "/api/auth/me": 403}, "")
 
@@ -152,7 +156,8 @@ func TestAPIKeyPolicyCeiling(t *testing.T) {
 	e := newTestEnv(t)
 	bobID, bob := e.user("bob", false)
 	role := e.grantMode(bobID, rbac.AccessFull, [4]any{0, "team-a", "pods", "list"}, [4]any{0, "team-a", "pods", "exec"})
-	e.createKey(bob, keyBody("shell", []string{"team-a"}, "pods:list", "pods:exec"))
+	_, shellID := e.createKey(bob, keyBody("shell", []string{"team-a"}, "pods:list", "pods:exec"))
+	_, listID := e.createKey(bob, keyBody("list", []string{"team-a"}, "pods:list"))
 	_ = e.store.SetRoleAPIAccess(context.Background(), role, rbac.AccessSafeRead)
 
 	out := e.expect("GET", "/api/me/api-keys/ceiling", bob, nil, http.StatusOK)
@@ -170,6 +175,15 @@ func TestAPIKeyPolicyCeiling(t *testing.T) {
 	out = e.expect("GET", "/api/me/api-keys", bob, nil, http.StatusOK)
 	if !strings.Contains(out, `"invalidGrants":["pods:exec"]`) {
 		t.Fatalf("list should flag exec: %s", out)
+	}
+
+	// Editing keeps a blocked cell the key had (it works again when the policy
+	// opens), but can't add one; the Admin API likewise.
+	e.expect("PUT", "/api/me/api-keys/"+itoa(int64(shellID)), bob, keyBody("shell-2", []string{"team-a"}, "pods:list", "pods:exec"), http.StatusOK)
+	e.expect("PUT", "/api/me/api-keys/"+itoa(int64(listID)), bob, keyBody("list", []string{"team-a"}, "pods:list", "pods:exec"), http.StatusBadRequest)
+	_ = e.store.SetRoleAPIAccess(context.Background(), role, rbac.AccessFull)
+	if out := e.expect("GET", "/api/me/api-keys", bob, nil, http.StatusOK); strings.Contains(out, `"invalidGrants":["pods:exec"]`) {
+		t.Fatalf("exec should be back: %s", out)
 	}
 }
 

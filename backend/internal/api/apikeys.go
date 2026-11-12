@@ -485,7 +485,11 @@ func (s *Server) handleAPIKeyCeiling(w http.ResponseWriter, r *http.Request) {
 
 // validateAPIKeyRequest checks req against the caller's ceiling (the trust
 // boundary: the UI never offers more, but nothing else stops a crafted request).
-func (s *Server) validateAPIKeyRequest(ctx context.Context, user *models.User, req *apiKeyRequest) error {
+// On edit, before is the key as stored: grants (and the Admin API) the admin's
+// policy blocks may stay if the key had them, so the key works again when the
+// policy opens (M15 decision 5); they can't be added.
+func (s *Server) validateAPIKeyRequest(ctx context.Context, user *models.User, req *apiKeyRequest, before *models.APIKey) error {
+	kept := before != nil && before.AdminScope
 	req.Name, req.Note = strings.TrimSpace(req.Name), strings.TrimSpace(req.Note)
 	switch {
 	case req.Name == "" || len(req.Name) > 100:
@@ -494,7 +498,7 @@ func (s *Server) validateAPIKeyRequest(ctx context.Context, user *models.User, r
 		return errors.New("note is too long (at most 1000 characters)")
 	case req.AdminScope && !user.IsAdmin:
 		return errors.New("only admins can give a key the admin scope")
-	case req.AdminScope && !rbac.AdminScopeAllowed(user.APIAccessOverride):
+	case req.AdminScope && !rbac.AdminScopeAllowed(user.APIAccessOverride) && !kept:
 		return errors.New("the admin's API access policy does not allow the admin scope for your keys")
 	case len(req.Clusters) == 0:
 		return errors.New("pick at least one cluster")
@@ -506,6 +510,15 @@ func (s *Server) validateAPIKeyRequest(ctx context.Context, user *models.User, r
 	ceiling, err := s.ceilingFor(ctx, user)
 	if err != nil {
 		return err
+	}
+	if before != nil {
+		for i, n := range ceiling.Namespaces {
+			for _, g := range n.Blocked {
+				if slices.Contains(before.Grants, g) {
+					ceiling.Namespaces[i].Grants = append(ceiling.Namespaces[i].Grants, g)
+				}
+			}
+		}
 	}
 	if slices.Contains(req.Clusters, 0) {
 		req.Clusters = []int{0}
@@ -608,7 +621,7 @@ func (s *Server) handleCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	if !s.checkExpiry(w, r, req.ExpiresAt) {
 		return
 	}
-	if err := s.validateAPIKeyRequest(r.Context(), user, &req); err != nil {
+	if err := s.validateAPIKeyRequest(r.Context(), user, &req, nil); err != nil {
 		s.auditAPIKey(r, audit.VerbCreate, audit.Denied, "outside_ceiling", req.Name, failDetails(err, nil))
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -649,7 +662,7 @@ func (s *Server) handleUpdateAPIKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if err := s.validateAPIKeyRequest(r.Context(), user, &req); err != nil {
+	if err := s.validateAPIKeyRequest(r.Context(), user, &req, before); err != nil {
 		s.auditAPIKey(r, audit.VerbUpdate, audit.Denied, "outside_ceiling", before.Name, failDetails(err, audit.D{"id": before.ID}))
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
