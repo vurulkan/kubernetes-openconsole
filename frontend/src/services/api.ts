@@ -1023,6 +1023,8 @@ export type SessionRecording = {
   requestId: string;
   apiKeyId?: number;
   apiKeyName?: string;
+  /** shell = interactive shell; command = one command (POST …/pods/{name}/exec). */
+  mode?: 'shell' | 'command';
 };
 
 export type RecordingFilter = {
@@ -1204,6 +1206,46 @@ export type ApiKeyInput = ApiKeyScope & { name: string; note: string; adminScope
 
 export const listApiKeys = () => apiRequest<{ items: ApiKey[] }>('/api/me/api-keys');
 export const getApiKeyCeiling = () => apiRequest<ApiKeyCeiling>('/api/me/api-keys/ceiling');
+
+// ─── API description (M16): /api/openapi.json, read by the Documentation tab ───
+
+export type OpenApiParam = {
+  $ref?: string;
+  name?: string;
+  in?: string;
+  required?: boolean;
+  description?: string;
+  schema?: { type?: string; default?: unknown; minimum?: number; maximum?: number };
+};
+type OpenApiExample = { $ref?: string; description?: string; content?: Record<string, { example?: unknown }> };
+export type OpenApiOperation = {
+  tags?: string[];
+  summary?: string;
+  description?: string;
+  security?: unknown[];
+  parameters?: OpenApiParam[];
+  requestBody?: OpenApiExample;
+  responses?: Record<string, OpenApiExample>;
+  /** All of these, in the path's namespace ("*:edit" = edit on the path's resource). */
+  'x-openconsole-permission'?: string[];
+  'x-openconsole-admin'?: boolean;
+  /** false = web session only. */
+  'x-openconsole-api-key'?: boolean;
+};
+export type OpenApiDoc = {
+  info: { title: string; version: string; description?: string };
+  tags: Array<{ name: string; description?: string }>;
+  paths: Record<string, Record<string, OpenApiOperation | OpenApiParam[]>>;
+  components: { parameters: Record<string, OpenApiParam>; responses: Record<string, OpenApiExample> };
+};
+export const getOpenApi = () => apiRequest<OpenApiDoc>('/api/openapi.json');
+
+/** One command in a container (argv, no shell); what agents call. */
+export const execPodCommand = (namespace: string, pod: string, body: { command: string[]; container?: string; timeoutSeconds?: number }) =>
+  apiRequest<{ stdout: string; stderr: string; exitCode: number; truncated: boolean; durationMs: number }>(
+    `/api/namespaces/${encodeURIComponent(namespace)}/pods/${encodeURIComponent(pod)}/exec`,
+    { method: 'POST', body: JSON.stringify(body) },
+  );
 export const createApiKey = (input: ApiKeyInput) =>
   apiRequest<{ key: ApiKey; secret: string }>('/api/me/api-keys', { method: 'POST', body: JSON.stringify(input) });
 export const updateApiKey = (id: number, input: ApiKeyInput) =>

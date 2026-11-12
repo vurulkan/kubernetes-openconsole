@@ -162,7 +162,7 @@ paths:
       responses:
         "200":
           description: The cluster.
-          content: {application/json: {example: {id: 1, name: nonprod, connected: true}}}
+          content: {application/json: {example: {active: {id: 1, name: nonprod, description: '', isDefault: true}}}}
   /api/cluster/select:
     post:
       tags: [Account]

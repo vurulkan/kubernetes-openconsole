@@ -258,3 +258,71 @@ describe('ApiKeyFormPage', () => {
     expect((calls.find((c) => c.method === 'PUT')!.body as { grants: string[] }).grants).toEqual(['pods:list', 'pods:exec']);
   });
 });
+
+describe('API documentation tab', () => {
+  const op = (summary: string, extra: object = {}) => ({ tags: ['Pods'], summary, ...extra });
+  const doc = {
+    info: { title: 'OpenConsole API', version: '2.22' },
+    tags: [{ name: 'Pods', description: 'Pods.' }, { name: 'Exec', description: 'Commands.' }, { name: 'Admin', description: 'Admin only.' }],
+    components: { parameters: { namespace: { name: 'namespace', in: 'path', required: true } }, responses: {} },
+    paths: {
+      '/api/namespaces/{namespace}/pods': {
+        parameters: [{ $ref: '#/components/parameters/namespace' }],
+        get: op('List pods', { 'x-openconsole-permission': ['pods:list'], responses: { '200': { content: { 'application/json': { example: { items: [] } } } } } }),
+      },
+      '/api/namespaces/{namespace}/pods/{name}/exec': {
+        post: op('Run one command', { tags: ['Exec'], 'x-openconsole-permission': ['pods:exec'], requestBody: { content: { 'application/json': { example: { command: ['cat', '/etc/os-release'] } } } } }),
+      },
+      '/api/namespaces/{namespace}/deployments/{name}/restart': { post: op('Restart', { 'x-openconsole-permission': ['deployments:restart'] }) },
+      '/api/namespaces/{namespace}/secrets/{name}/yaml': { get: op('Secret YAML', { 'x-openconsole-permission': ['secrets:edit'] }) },
+      '/api/namespaces/{namespace}/configmaps': { get: op('List ConfigMaps', { 'x-openconsole-permission': ['configmaps:list'] }) },
+      '/api/me/api-keys': { get: op('Your API keys', { tags: ['Account'], 'x-openconsole-api-key': false }) },
+      '/api/admin/users': { get: op('List users', { tags: ['Admin'], 'x-openconsole-admin': true }) },
+    },
+  };
+
+  it('dims what no key of yours can call, says why, and hides web-only and admin endpoints', async () => {
+    mockFetch([
+      ['GET /api/me/api-keys/ceiling', () => ceiling],
+      ['GET /api/me/api-keys', () => ({ items: [] })],
+      ['GET /api/openapi.json', () => doc],
+      ['GET /api/cluster/active', () => ({ active: { id: 1, name: 'alpha' } })],
+    ]);
+    render(
+      <MemoryRouter initialEntries={['/account/api-keys?tab=docs']}>
+        <ApiKeysPage user={user} />
+      </MemoryRouter>,
+    );
+    const row = async (summary: string) => (await screen.findByText(summary)).closest('summary')!;
+    expect(within(await row('List pods')).queryByText(/You do not have it|Policy|Switched off/)).toBeNull();
+    expect(within(await row('Run one command')).queryByText('You do not have it')).toBeNull(); // team-a has exec
+    expect(within(await row('Restart')).getByText('Policy does not allow')).toBeInTheDocument();
+    expect(within(await row('Secret YAML')).getByText('Switched off')).toBeInTheDocument();
+    expect(within(await row('List ConfigMaps')).getByText('You do not have it')).toBeInTheDocument();
+    expect(screen.queryByText('Your API keys')).toBeNull();
+    expect(screen.queryByText('List users')).toBeNull();
+    // The curl example fills in a namespace where it works, with the cluster header.
+    fireEvent.click(await row('Run one command'));
+    expect(screen.getByText(/-X POST .*X-OpenConsole-Cluster: alpha.*\/api\/namespaces\/team-a\/pods\/\{name\}\/exec/)).toBeInTheDocument();
+    expect(screen.getByText(/OPENCONSOLE_API_KEY environment variable/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'New API key' })).toBeNull();
+    await expectNoA11yViolations(document.body);
+  });
+
+  it('shows admin endpoints to an admin, as policy-blocked when keys may not hold the Admin API', async () => {
+    mockFetch([
+      ['GET /api/me/api-keys/ceiling', () => ({ ...ceiling, isAdmin: true })],
+      ['GET /api/me/api-keys', () => ({ items: [] })],
+      ['GET /api/openapi.json', () => doc],
+      ['GET /api/cluster/active', () => ({ active: null })],
+    ]);
+    render(
+      <MemoryRouter initialEntries={['/account/api-keys?tab=docs']}>
+        <ApiKeysPage user={{ ...user, isAdmin: true }} />
+      </MemoryRouter>,
+    );
+    const users = (await screen.findByText('List users')).closest('summary')!;
+    expect(within(users).getByText('Policy does not allow')).toBeInTheDocument();
+    expect(within(users).getByText('Admin API')).toBeInTheDocument();
+  });
+});
