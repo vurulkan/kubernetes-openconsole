@@ -339,6 +339,15 @@
             "expires_at": {
               "type": "date"
             },
+            "api_access": {
+              "type": "keyword"
+            },
+            "by_admin": {
+              "type": "boolean"
+            },
+            "comment": {
+              "type": "match_only_text"
+            },
             "api_key": {
               "properties": {
                 "id": {

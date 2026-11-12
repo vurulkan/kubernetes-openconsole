@@ -185,6 +185,9 @@ var DetailKeys = map[string]DetailType{
 	// API keys (the scope summary and expiry; never the secret or its hash)
 	"admin_scope": Bool,
 	"expires_at":  Date,
+	"api_access":  Keyword, // a role's mode or a user's override (off | safe_read | full | roles)
+	"by_admin":    Bool,    // an admin revoked another user's key
+	"comment":     Text,    // the admin's optional reason for a revoke
 	// failures
 	"error": Text,
 }

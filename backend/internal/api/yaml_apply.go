@@ -71,8 +71,9 @@ func (s *Server) handleYAMLApply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !s.can(r.Context(), user.ID, namespace, resource, "edit") {
-		s.recordApplyAudit(r, namespace, name, resource, audit.Denied, reasonForbidden, nil)
-		writeError(w, http.StatusForbidden, "forbidden")
+		reason := s.denyReason(r.Context(), namespace, resource, "edit")
+		s.recordApplyAudit(r, namespace, name, resource, audit.Denied, reason, nil)
+		writeError(w, http.StatusForbidden, reason)
 		return
 	}
 

@@ -92,7 +92,14 @@ const (
 	reasonFeatureDisabled = "feature_disabled"
 	reasonAdminOnly       = "admin_only"
 	reasonRateLimited     = "rate_limited"
+	// reasonAPIAccessPolicy: the key lists the grant and its owner holds it,
+	// but the admin's API access policy keeps it from keys.
+	reasonAPIAccessPolicy = "api_access_policy"
+	// reasonAPIAccessOff: the policy leaves the owner's keys nothing.
+	reasonAPIAccessOff = "api_access_off"
 )
+
+const errAPIAccess = "apiAccess must be off, safe_read or full"
 
 var errNotConnected = errors.New("no cluster connected")
 

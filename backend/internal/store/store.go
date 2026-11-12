@@ -70,12 +70,12 @@ func (s *Store) EnsureDefaultAdmin(ctx context.Context, passwordHash string) err
 }
 
 func (s *Store) GetUserByUsername(ctx context.Context, username string) (*models.User, error) {
-	row := s.conn.QueryRowContext(ctx, `SELECT id, username, password_hash, must_change_password, is_active, is_admin, created_at, auth_source, COALESCE(active_cluster_id, 0) FROM users WHERE username = ?`, username)
+	row := s.conn.QueryRowContext(ctx, `SELECT id, username, password_hash, must_change_password, is_active, is_admin, created_at, auth_source, COALESCE(active_cluster_id, 0), COALESCE(api_access_override, '') FROM users WHERE username = ?`, username)
 	var user models.User
 	var mustChange int
 	var isActive int
 	var isAdmin int
-	if err := row.Scan(&user.ID, &user.Username, &user.PasswordHash, &mustChange, &isActive, &isAdmin, &user.CreatedAt, &user.AuthSource, &user.ActiveClusterID); err != nil {
+	if err := row.Scan(&user.ID, &user.Username, &user.PasswordHash, &mustChange, &isActive, &isAdmin, &user.CreatedAt, &user.AuthSource, &user.ActiveClusterID, &user.APIAccessOverride); err != nil {
 		return nil, err
 	}
 	user.MustChangePassword = mustChange == 1
@@ -85,12 +85,12 @@ func (s *Store) GetUserByUsername(ctx context.Context, username string) (*models
 }
 
 func (s *Store) GetUserByID(ctx context.Context, id int) (*models.User, error) {
-	row := s.conn.QueryRowContext(ctx, `SELECT id, username, password_hash, must_change_password, is_active, is_admin, created_at, auth_source, COALESCE(active_cluster_id, 0) FROM users WHERE id = ?`, id)
+	row := s.conn.QueryRowContext(ctx, `SELECT id, username, password_hash, must_change_password, is_active, is_admin, created_at, auth_source, COALESCE(active_cluster_id, 0), COALESCE(api_access_override, '') FROM users WHERE id = ?`, id)
 	var user models.User
 	var mustChange int
 	var isActive int
 	var isAdmin int
-	if err := row.Scan(&user.ID, &user.Username, &user.PasswordHash, &mustChange, &isActive, &isAdmin, &user.CreatedAt, &user.AuthSource, &user.ActiveClusterID); err != nil {
+	if err := row.Scan(&user.ID, &user.Username, &user.PasswordHash, &mustChange, &isActive, &isAdmin, &user.CreatedAt, &user.AuthSource, &user.ActiveClusterID, &user.APIAccessOverride); err != nil {
 		return nil, err
 	}
 	user.MustChangePassword = mustChange == 1
@@ -100,7 +100,7 @@ func (s *Store) GetUserByID(ctx context.Context, id int) (*models.User, error) {
 }
 
 func (s *Store) ListUsers(ctx context.Context) ([]models.User, error) {
-	rows, err := s.conn.QueryContext(ctx, `SELECT id, username, must_change_password, is_active, is_admin, created_at, auth_source, COALESCE(active_cluster_id, 0) FROM users ORDER BY username`)
+	rows, err := s.conn.QueryContext(ctx, `SELECT id, username, must_change_password, is_active, is_admin, created_at, auth_source, COALESCE(active_cluster_id, 0), COALESCE(api_access_override, '') FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +111,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]models.User, error) {
 		var mustChange int
 		var isActive int
 		var isAdmin int
-		if err := rows.Scan(&user.ID, &user.Username, &mustChange, &isActive, &isAdmin, &user.CreatedAt, &user.AuthSource, &user.ActiveClusterID); err != nil {
+		if err := rows.Scan(&user.ID, &user.Username, &mustChange, &isActive, &isAdmin, &user.CreatedAt, &user.AuthSource, &user.ActiveClusterID, &user.APIAccessOverride); err != nil {
 			return nil, err
 		}
 		user.MustChangePassword = mustChange == 1
@@ -145,6 +145,16 @@ func (s *Store) UpdateUser(ctx context.Context, user models.User) error {
 		isAdmin = 1
 	}
 	_, err := s.conn.ExecContext(ctx, `UPDATE users SET username = ?, must_change_password = ?, is_active = ?, is_admin = ? WHERE id = ?`, user.Username, mustChange, isActive, isAdmin, user.ID)
+	return err
+}
+
+// SetUserAPIAccess sets the user's API access override ("" = by roles).
+func (s *Store) SetUserAPIAccess(ctx context.Context, userID int, override string) error {
+	var v any
+	if override != "" {
+		v = override
+	}
+	_, err := s.conn.ExecContext(ctx, `UPDATE users SET api_access_override = ? WHERE id = ?`, v, userID)
 	return err
 }
 
@@ -219,7 +229,7 @@ func (s *Store) DeleteGroup(ctx context.Context, id int) error {
 }
 
 func (s *Store) ListRoles(ctx context.Context) ([]models.Role, error) {
-	rows, err := s.conn.QueryContext(ctx, `SELECT id, name, description FROM roles ORDER BY name`)
+	rows, err := s.conn.QueryContext(ctx, `SELECT id, name, description, api_access FROM roles ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -227,7 +237,7 @@ func (s *Store) ListRoles(ctx context.Context) ([]models.Role, error) {
 	var roles []models.Role
 	for rows.Next() {
 		var role models.Role
-		if err := rows.Scan(&role.ID, &role.Name, &role.Description); err != nil {
+		if err := rows.Scan(&role.ID, &role.Name, &role.Description, &role.APIAccess); err != nil {
 			return nil, err
 		}
 		roles = append(roles, role)
@@ -246,6 +256,12 @@ func (s *Store) CreateRole(ctx context.Context, name, description string) (int, 
 
 func (s *Store) UpdateRole(ctx context.Context, role models.Role) error {
 	_, err := s.conn.ExecContext(ctx, `UPDATE roles SET name = ?, description = ? WHERE id = ?`, role.Name, role.Description, role.ID)
+	return err
+}
+
+// SetRoleAPIAccess sets what the role's grants give API keys (rbac.Access*).
+func (s *Store) SetRoleAPIAccess(ctx context.Context, roleID int, mode string) error {
+	_, err := s.conn.ExecContext(ctx, `UPDATE roles SET api_access = ? WHERE id = ?`, mode, roleID)
 	return err
 }
 
@@ -580,16 +596,19 @@ func (s *Store) UpdateAzureADConfig(ctx context.Context, cfg models.AzureADConfi
 }
 
 func (s *Store) GetSessionSettings(ctx context.Context) (models.SessionSettings, error) {
-	row := s.conn.QueryRowContext(ctx, `SELECT session_minutes FROM session_settings WHERE id = 1`)
+	row := s.conn.QueryRowContext(ctx, `SELECT session_minutes, api_key_max_days, api_key_allow_no_expiry FROM session_settings WHERE id = 1`)
 	var settings models.SessionSettings
-	if err := row.Scan(&settings.SessionMinutes); err != nil {
+	var allowNoExpiry int
+	if err := row.Scan(&settings.SessionMinutes, &settings.APIKeyMaxDays, &allowNoExpiry); err != nil {
 		return settings, err
 	}
+	settings.APIKeyAllowNoExpiry = allowNoExpiry == 1
 	return settings, nil
 }
 
 func (s *Store) UpdateSessionSettings(ctx context.Context, settings models.SessionSettings) error {
-	_, err := s.conn.ExecContext(ctx, `UPDATE session_settings SET session_minutes = ? WHERE id = 1`, settings.SessionMinutes)
+	_, err := s.conn.ExecContext(ctx, `UPDATE session_settings SET session_minutes = ?, api_key_max_days = ?, api_key_allow_no_expiry = ? WHERE id = 1`,
+		settings.SessionMinutes, settings.APIKeyMaxDays, boolToInt(settings.APIKeyAllowNoExpiry))
 	return err
 }
 
@@ -921,8 +940,9 @@ func (s *Store) PurgeAPIKeyReads(ctx context.Context, olderThan time.Time) error
 func (s *Store) ListPermissionsByUser(ctx context.Context, userID int) ([]models.NamespacePermission, error) {
 	rows, err := s.conn.QueryContext(ctx, `
 		SELECT np.id, np.role_id, COALESCE(np.cluster_id, 0),
-		       np.namespace, np.resource, np.action
+		       np.namespace, np.resource, np.action, r.api_access
 		FROM namespace_permissions np
+		JOIN roles r ON r.id = np.role_id
 		JOIN group_roles gr ON np.role_id = gr.role_id
 		JOIN user_groups ug ON gr.group_id = ug.group_id
 		WHERE ug.user_id = ?`, userID)
@@ -934,12 +954,36 @@ func (s *Store) ListPermissionsByUser(ctx context.Context, userID int) ([]models
 	for rows.Next() {
 		var perm models.NamespacePermission
 		if err := rows.Scan(&perm.ID, &perm.RoleID, &perm.ClusterID,
-			&perm.Namespace, &perm.Resource, &perm.Action); err != nil {
+			&perm.Namespace, &perm.Resource, &perm.Action, &perm.RoleAPIAccess); err != nil {
 			return nil, err
 		}
 		permissions = append(permissions, perm)
 	}
 	return permissions, nil
+}
+
+// ListRoleAccessByUser returns the API access mode of each of the user's
+// roles, those without permission rows included.
+func (s *Store) ListRoleAccessByUser(ctx context.Context, userID int) ([]string, error) {
+	rows, err := s.conn.QueryContext(ctx, `
+		SELECT DISTINCT r.id, r.api_access FROM roles r
+		JOIN group_roles gr ON gr.role_id = r.id
+		JOIN user_groups ug ON ug.group_id = gr.group_id
+		WHERE ug.user_id = ?`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var modes []string
+	for rows.Next() {
+		var id int
+		var mode string
+		if err := rows.Scan(&id, &mode); err != nil {
+			return nil, err
+		}
+		modes = append(modes, mode)
+	}
+	return modes, rows.Err()
 }
 
 // SetUserActiveCluster stores the cluster a user picked; 0 clears it (use the

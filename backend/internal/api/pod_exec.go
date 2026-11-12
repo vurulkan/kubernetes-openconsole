@@ -111,8 +111,9 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 	requestID := logging.RequestIDFrom(r.Context())
 
 	if !s.can(r.Context(), claims.UserID, namespace, "pods", "exec") {
-		s.recordExecAudit(r, namespace, pod, audit.Denied, reasonForbidden, nil)
-		w.WriteHeader(http.StatusForbidden)
+		reason := s.denyReason(r.Context(), namespace, "pods", "exec")
+		s.recordExecAudit(r, namespace, pod, audit.Denied, reason, nil)
+		writeError(w, http.StatusForbidden, reason)
 		return
 	}
 

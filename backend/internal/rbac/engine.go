@@ -37,7 +37,9 @@ var Catalog = []struct {
 type Engine struct {
 	permissions []models.NamespacePermission
 	admin       bool
-	key         *models.APIKeyScope
+	// adminMode limits an admin engine to an API access mode ("" = no limit).
+	adminMode string
+	key       *models.APIKeyScope
 }
 
 func New(permissions []models.NamespacePermission) *Engine {
@@ -47,12 +49,31 @@ func New(permissions []models.NamespacePermission) *Engine {
 // NewAdmin returns the engine of an admin: every grant everywhere.
 func NewAdmin() *Engine { return &Engine{admin: true} }
 
+// NewAdminKeys returns what an admin's API keys may reach: every grant
+// everywhere, limited by the admin's override (role modes do not apply).
+func NewAdminKeys(override string) *Engine {
+	return &Engine{admin: true, adminMode: AdminKeyMode(override)}
+}
+
+// AdminKeyMode is the mode of an admin's keys: the override, else full.
+func AdminKeyMode(override string) string {
+	if override == "" {
+		return AccessFull
+	}
+	return override
+}
+
 // WithKey narrows e to an API key's scope (nil = no key, e unchanged).
 func (e *Engine) WithKey(k *models.APIKeyScope) *Engine {
 	if k == nil {
 		return e
 	}
-	return &Engine{permissions: Restrict(e.permissions, k), admin: e.admin, key: k}
+	return &Engine{permissions: Restrict(e.permissions, k), admin: e.admin, adminMode: e.adminMode, key: k}
+}
+
+// adminAllows: what an admin engine's mode lets through.
+func (e *Engine) adminAllows(resource, action string) bool {
+	return e.adminMode == "" || Allows(e.adminMode, resource, action)
 }
 
 // Restrict returns the grants of perms the key k also lists. A grant for
@@ -121,7 +142,7 @@ func (e *Engine) AllowedNamespaces(clusterID int) []string {
 // SeesNamespace reports whether the caller has any grant in namespace.
 func (e *Engine) SeesNamespace(clusterID int, namespace string) bool {
 	if e.admin {
-		return e.key == nil || (keyHasCluster(e.key, clusterID) && keyHasNamespace(e.key, namespace))
+		return e.adminMode != AccessOff && (e.key == nil || (keyHasCluster(e.key, clusterID) && keyHasNamespace(e.key, namespace)))
 	}
 	return slices.Contains(e.AllowedNamespaces(clusterID), namespace)
 }
@@ -129,7 +150,8 @@ func (e *Engine) SeesNamespace(clusterID int, namespace string) bool {
 // Can returns true when at least one permission row matches the full tuple.
 func (e *Engine) Can(clusterID int, namespace, resource, action string) bool {
 	if e.admin {
-		return e.key == nil || (keyHasCluster(e.key, clusterID) && keyHasNamespace(e.key, namespace) && keyHasGrant(e.key, resource, action))
+		return e.adminAllows(resource, action) &&
+			(e.key == nil || (keyHasCluster(e.key, clusterID) && keyHasNamespace(e.key, namespace) && keyHasGrant(e.key, resource, action)))
 	}
 	for _, perm := range e.permissions {
 		if !matchesCluster(perm, clusterID) {
@@ -173,7 +195,7 @@ func (e *Engine) AllowedResources(clusterID int, namespace string) map[string][]
 // that cluster, or one for all clusters).
 func (e *Engine) CoversCluster(clusterID int) bool {
 	if e.admin {
-		return e.key == nil || keyHasCluster(e.key, clusterID)
+		return e.adminMode != AccessOff && (e.key == nil || keyHasCluster(e.key, clusterID))
 	}
 	for _, perm := range e.permissions {
 		if perm.ClusterID == 0 || perm.ClusterID == clusterID {

@@ -160,8 +160,9 @@ func (e *testEnv) token(userID int, name string) string {
 }
 
 // grant gives the user a role with the given "cluster:ns:resource:action"
-// tuples (cluster 0 = all clusters).
-func (e *testEnv) grant(userID int, perms ...[4]any) {
+// tuples (cluster 0 = all clusters) and returns the role's id. The role has
+// the default API access mode (safe_read).
+func (e *testEnv) grant(userID int, perms ...[4]any) int {
 	e.t.Helper()
 	ctx := context.Background()
 	suffix := time.Now().Format("150405.000000000")
@@ -185,6 +186,7 @@ func (e *testEnv) grant(userID int, perms ...[4]any) {
 	if err := e.store.SetUserGroups(ctx, userID, append(groups, groupID)); err != nil {
 		e.t.Fatal(err)
 	}
+	return roleID
 }
 
 func (e *testEnv) do(method, path, token string, body any) (int, string) {
@@ -315,7 +317,7 @@ func TestAdminEndpointsRequireAdmin(t *testing.T) {
 		"/api/admin/users", "/api/admin/groups", "/api/admin/roles", "/api/admin/ldap",
 		"/api/admin/azure-ad", "/api/admin/clusters", "/api/admin/audit-logs",
 		"/api/admin/sessions", "/api/admin/recordings", "/api/admin/recordings/settings", "/api/admin/overview",
-		"/api/admin/nodes",
+		"/api/admin/nodes", "/api/admin/api-keys", "/api/admin/api-keys/export",
 	}
 	for _, p := range adminGets {
 		e.expect("GET", p, bob, nil, http.StatusForbidden)
