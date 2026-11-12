@@ -299,8 +299,8 @@ Details are a fixed set of keys, each with a type in the Elastic mapping:
 | `secret.reveal` | `key` (the key name, never the value) |
 | `recording.*` | `pod`, `container`, `owner`, `started_at`, `size_bytes`, `truncate_reason`, `count`, `retention_days` |
 | `user.login` | `login_method`, `linked_by`, `signed_in_as`, `account_source` |
-| `api_key.*` | `id`, `summary` (clusters / namespaces count and grants), `expires_at`, `admin_scope`, `changed`; never the secret or its hash |
-| `user.*`, `group.*`, `role.*`, `permission.*` | `changed` (field names, not values), `is_admin`, `is_active`, `account_source`, `groups`, `count`, `role`, `grant` (`deployments:restart`), `auto_provisioned` |
+| `api_key.*` | `id`, `summary` (clusters / namespaces count and grants), `expires_at`, `admin_scope`, `changed`; never the secret or its hash. An admin's revoke: `by_admin` (true), `owner`, `comment` (the optional reason); revoking all of a user's keys: `all`, `count`, `owner`, `by_admin` |
+| `user.*`, `group.*`, `role.*`, `permission.*` | `changed` (field names, not values), `is_admin`, `is_active`, `account_source`, `groups`, `count`, `role`, `grant` (`deployments:restart`), `auto_provisioned`; `api_access` when a role's API access (`off` / `safe_read` / `full`) or a user's override (the same, or `roles`) changes |
 | any failure | `error` (→ `error.message` in ECS) |
 
 Reads are audited too (`deployment.list`, `pod.get`, `pod.logs`, …), including a refused one (`denied`, reason `forbidden`). Lists the UI fetches on its own are not: the dashboard's reload every 10 seconds, and the namespace list behind the command palette and the role editor (they send `X-OpenConsole-Refresh: auto`). The lists you open are audited, and the HTTP request log still has every request. With an API key the header is ignored: every read is audited.
@@ -318,8 +318,9 @@ openconsole.outcome : "denied" and user.name : "dev1"
 
 #### Upgrading to 2.22
 
-- **Elastic**: re-run `deploy/elk/install.sh` once: it adds the mapping of `openconsole.api_key.id` / `.name`, `openconsole.admin_scope` and `openconsole.expires_at` (the pipeline is unchanged). If you don't, nothing is lost: the fields are mapped dynamically, and get the right type from the next rollover after you run it.
+- **Elastic**: re-run `deploy/elk/install.sh` once: it adds the mapping of `openconsole.api_key.id` / `.name`, `openconsole.admin_scope`, `openconsole.expires_at`, `openconsole.api_access`, `openconsole.by_admin` and `openconsole.comment` (the pipeline is unchanged). If you don't, nothing is lost: the fields are mapped dynamically, and get the right type from the next rollover after you run it.
 - **Database**: new tables and columns are added on the first start; nothing to do.
+- **API key policy**: every existing role starts at **Safe read-only** API access, so keys made before the upgrade lose exec, edit, scale, restart, ConfigMaps and Secrets until an admin opens a role (Admin → Roles → *API access*). The keys themselves are not changed: they work as before once the policy allows it.
 
 #### Upgrading from 2.16
 
@@ -551,16 +552,16 @@ Templates in the Add Permissions modal: Viewer (read only, including secret *met
 
 An API key lets your AI agent (Claude Code, Cursor, …) or a script call the OpenConsole API in your name. Every call is audited with your user **and the key's name**. Open it from the account menu (your name, top right) → **API keys**, or `⌘K` → *Go to API keys*.
 
-**Creating one.** Name and note; expiry (7 / 30 / 60 / 90 days, a date, or none — a key without an expiry stays valid until you revoke it); scope: all clusters or one, all your namespaces (including ones you get later) or a selection; then a template and the permission matrix:
+**Creating one.** Name and note; expiry (7 / 30 / 60 / 90 days, a date, or none — a key without an expiry stays valid until you revoke it; the admin can limit both, see *Expiry policy* below); scope: all clusters or one, all your namespaces (including ones you get later) or a selection; then a template and the permission matrix:
 
 | Template | Gives |
 |---|---|
-| Read-only (safe) | `list` / `get` / `logs`, no ConfigMaps or Secrets; no exec, edit, scale, restart |
+| Read-only (safe) | `list` / `get` / `logs`, no ConfigMaps or Secrets; no exec, edit, scale, restart (the same list as the *Safe read-only* API access below) |
 | Read-only (all) | `list` / `get` / `logs` everywhere, ConfigMap data and `secrets:reveal` included; no exec |
 | All my permissions | everything you hold in the chosen scope |
 | Custom | what you pick |
 
-The matrix offers only what you hold yourself: other cells are closed (*"You do not have this permission"*); a cell you hold in only some of the chosen namespaces is marked (*"Only in 3 of 5 namespaces"*). The server checks this too (400). The key (`oc_` + 40 characters) is shown **once**, with a ready `curl` line; the list shows its first characters only. The database keeps a SHA-256 of it.
+The matrix offers only what you hold yourself and the [admin policy](#api-keys) lets keys have: other cells are closed (*"You do not have this permission"*, or *"The admin's API access policy does not allow it"*); a cell you hold in only some of the chosen namespaces is marked (*"Only in 3 of 5 namespaces"*). The server checks this too (400). The key (`oc_` + 40 characters) is shown **once**, with a ready `curl` line; the list shows its first characters only. The database keeps a SHA-256 of it.
 
 **What a key can do.** At most what it lists **and** what you hold at the time of the call: if a namespace is taken from your role, the key loses it at once (the list shows *"2 permissions not valid now"*); if you get more, the key does not grow by itself (except *all my namespaces*). Edit changes name, note, scope and permissions; the secret and expiry stay. **Regenerate** gives a new secret and a new expiry; the old secret stops working at once (it also revives a revoked or expired key). **Revoke** stops it for good; **Delete** removes it from the list. Admin endpoints (`/api/admin/*`) need an admin's key created with the **Admin API** box, and stop working when the owner is no longer an admin. A key can never manage keys, change the password, change your selected cluster, or save views (403, reason `api_key_not_allowed`).
 
@@ -573,10 +574,25 @@ curl -H "Authorization: Bearer $OPENCONSOLE_API_KEY" -H "X-OpenConsole-Cluster: 
 
 - `X-OpenConsole-Cluster: <name or id>` picks the cluster per request (without it: your selected cluster). An unknown cluster is 400, one the key can't use 403.
 - WebSockets (logs, exec, events): `POST /api/ws-ticket` with the key, then open the socket with `?ticket=`. Keys are never accepted in a URL.
-- 401 = the key is not valid (unknown, expired, revoked, owner disabled); 403 = not allowed (permission, feature flag, owner must change the password); 429 = more than 10 requests / s (burst 30) for the key.
+- 401 = the key is not valid (unknown, expired, revoked, owner disabled); 403 = not allowed (permission, admin policy, feature flag, owner must change the password; the body names the reason); 429 = more than 10 requests / s (burst 30) for the key.
 - A pod shell opened with a key is always recorded, and shows the key name in Admin → Recordings.
 
-**Audit.** Every call carries `api_key_id` / `api_key_name` (Admin → Audit Logs: *Source* = Web / API key, key name). Key events: `api_key.create` / `update` / `regenerate` / `revoke` / `delete`, and `api_key.use` with outcome `denied` (`expired`, `revoked`, `owner_inactive`, `must_change_password`) or `rate_limited`; these are written at most once a minute per key and reason, so an agent retrying with a dead key can't flood the log (every request still gets its 401 / 403 / 429). An unknown key has no user, so it is only a warning line in the console log, with the source IP. Successful reads with a key are kept `API_KEY_READ_RETENTION_DAYS` (7).
+**Admin policy.** An admin decides how much of a user's permissions their keys may get:
+
+| Where | Choices |
+|---|---|
+| **Role** (Admin → Roles → *API access*; a column in the list, a line above Role Permissions) | **Off**: nothing from this role · **Safe read-only** (default, also for roles made before 2.22): `list` / `get` / `logs`, no ConfigMaps or Secrets, no exec, edit, scale, restart · **All of the role's permissions** |
+| **User** (Admin → Users → edit → *API access*; a column and a filter in the list) | **By roles** (default) · **Off** · **Safe read-only** · **All of their permissions** (ignores the role modes, never more than the user has on the web) |
+
+With several roles each role's grants go through its own mode, then add up: role A (`ns1`, all permissions) + role B (`ns2`, safe read-only) lets a key exec in `ns1` and only read in `ns2`. An admin's roles don't apply to them (admins hold everything), so an admin's keys follow only the override; with *Off* or *Safe read-only* the **Admin API** box can't be ticked and an existing Admin API key loses admin access. The user dialog previews what the user's keys may reach under the chosen setting (`ns1: all permissions · ns2: read-only`), shows the number of active keys, and has **Revoke all their keys**.
+
+The policy never changes a key: a cell it takes away stops working (the key list shows *"N permissions not valid now"*, the form says *"The admin's API access policy does not allow it"*), and works again when the policy allows it. A call refused by the policy gets 403 with reason `api_access_policy` (in the body and the audit log). When the policy leaves a user's keys nothing (override *Off*, or every role *Off*) every call with the key is refused, `/api/auth/me` included: 403, reason `api_access_off`, audited as `api_key.use` denied.
+
+**Expiry policy** (Admin → Session → *API key expiry*): **Longest lifetime** in days (empty = no limit) and **Allow keys that never expire**. The form hides the presets beyond the limit, caps the date and hides *No expiry* when it isn't allowed; the server checks create and Regenerate too (400). Lowering the limit doesn't touch existing keys, so agents aren't cut off without notice; find them under Admin → API keys → *Outside the expiry policy*.
+
+**Admin → API keys** lists every user's keys: owner, name, prefix (never the secret), permissions, last use and IP, expiry and status; filter by owner, status, *Includes exec*, *Admin API*, *Outside the expiry policy*; **Revoke** with an optional reason (audited as `api_key.revoke` with `by_admin`, `owner`, `comment`); **Export CSV**. An admin can't edit another user's key. These screens, and `GET /api/admin/api-keys`, `…/export`, `POST /api/admin/api-keys/{id}/revoke`, `POST /api/admin/users/{id}/revoke-api-keys`, work with a web session only, never with a key (also not an Admin API key). `GET /api/admin/users/{id}/api-access?override=` is the preview.
+
+**Audit.** Every call carries `api_key_id` / `api_key_name` (Admin → Audit Logs: *Source* = Web / API key, key name). Key events: `api_key.create` / `update` / `regenerate` / `revoke` / `delete`, and `api_key.use` with outcome `denied` (`expired`, `revoked`, `owner_inactive`, `must_change_password`, `api_access_off`) or `rate_limited`; these are written at most once a minute per key and reason, so an agent retrying with a dead key can't flood the log (every request still gets its 401 / 403 / 429). An unknown key has no user, so it is only a warning line in the console log, with the source IP. Successful reads with a key are kept `API_KEY_READ_RETENTION_DAYS` (7).
 
 ---
 
@@ -939,11 +955,12 @@ Every user works on **their own** cluster:
   - **Source**: Web or API key, and the key's name; rows done with a key carry a key badge ([API keys](#api-keys)).
 - **Users / Groups → Export CSV**: who has access and through which group and role.
 - **Sessions**: every issued token; revoke one or all of a user's ([Sessions](#sessions-admin--sessions)).
+- **API keys**: every user's API keys; revoke, export CSV ([API keys](#api-keys)).
 - **Recordings**: replay, download (with a warning) or delete pod shell sessions, and set retention / disk limits ([Session Recording](#session-recording)).
 
 ### Session timeout
 
-**Admin → Session**: how long a login token stays valid (minutes, default 60). This applies to new logins.
+**Admin → Session**: how long a login token stays valid (minutes, default 60). This applies to new logins. The same tab holds the [API key expiry policy](#api-keys).
 
 ### Customization
 
