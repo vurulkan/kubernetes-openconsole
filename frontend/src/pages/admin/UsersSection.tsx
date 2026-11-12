@@ -3,9 +3,10 @@ import { createPortal } from 'react-dom';
 import { ChevronDown, Cloud, Download, FolderTree, KeyRound, Pencil, Plus, Search as SearchIcon, Trash2, UserRound } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { confirm } from '../../components/ConfirmDialog';
-import { Alert, Badge, Button, Checkbox, Input, Modal } from '../../components/ui';
+import { Alert, Badge, Button, Checkbox, Input, Modal, NativeSelect } from '../../components/ui';
 import { Column, DataTable, IconButton } from '../../components/DataTable';
 import { exportUsersCsv, resetUserPassword, User } from '../../services/api';
+import { ApiAccessBadge } from './ApiAccessParts';
 
 const MIN_PASSWORD_LENGTH = 8;
 
@@ -40,9 +41,13 @@ export const UsersSection: React.FC<Props> = ({
 }) => {
   const { t } = useTranslation();
   const [resetTarget, setResetTarget] = useState<User | null>(null);
+  // API access override filter: "*" = any, "" = by roles, else the mode.
+  const [apiAccess, setApiAccess] = useState('*');
   const q = filter.trim().toLowerCase();
   const isNew = (u: User) => newUsernames.includes(u.username);
-  const filtered = q ? users.filter((u) => u.username.toLowerCase().includes(q)) : users;
+  const filtered = users.filter(
+    (u) => (!q || u.username.toLowerCase().includes(q)) && (apiAccess === '*' || (u.apiAccessOverride ?? '') === apiAccess),
+  );
   const rows = newUsernames.length > 0 ? [...filtered.filter(isNew), ...filtered.filter((u) => !isNew(u))] : filtered;
 
   const columns: Column<User>[] = [
@@ -68,6 +73,12 @@ export const UsersSection: React.FC<Props> = ({
           </Badge>
         );
       },
+    },
+    {
+      key: 'apiAccess',
+      header: t('apiAccess.label'),
+      align: 'center',
+      cell: (u) => <ApiAccessBadge value={u.apiAccessOverride ?? ''} />,
     },
     {
       key: 'admin',
@@ -143,7 +154,7 @@ export const UsersSection: React.FC<Props> = ({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <div className="relative w-72">
           <SearchIcon
             size={14}
@@ -156,7 +167,14 @@ export const UsersSection: React.FC<Props> = ({
             className="h-9 pl-8"
           />
         </div>
-        <div className="flex items-center gap-2">
+        <NativeSelect aria-label={t('apiAccess.label')} value={apiAccess} onChange={(e) => setApiAccess(e.target.value)} className="h-9 w-48">
+          <option value="*">{t('apiAccess.filterAny')}</option>
+          <option value="">{t('apiAccess.roles')}</option>
+          <option value="off">{t('apiAccess.off')}</option>
+          <option value="safe_read">{t('apiAccess.safe_read')}</option>
+          <option value="full">{t('apiAccess.fullUser')}</option>
+        </NativeSelect>
+        <div className="ml-auto flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => void exportUsersCsv().catch((err) => alertExport(err))}>
             <Download size={14} />
             {t('admin.exportCsv')}
@@ -174,7 +192,7 @@ export const UsersSection: React.FC<Props> = ({
         rows={rows}
         columns={columns}
         rowKey={(u) => u.id}
-        emptyMessage={q ? t('admin.users.emptyFilter') : t('admin.users.emptyAll')}
+        emptyMessage={q || apiAccess !== '*' ? t('admin.users.emptyFilter') : t('admin.users.emptyAll')}
       />
       <ResetPasswordModal user={resetTarget} onClose={() => setResetTarget(null)} />
     </div>

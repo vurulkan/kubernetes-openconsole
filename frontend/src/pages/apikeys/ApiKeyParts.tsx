@@ -15,24 +15,23 @@ export const TEMPLATES: KeyTemplate[] = ['safeRead', 'readAll', 'all', 'custom']
 export const CATALOG_GRANTS = RESOURCE_CATALOG.flatMap((r) => r.actions.map((a) => `${r.resource}:${a.key}`));
 
 /**
- * safeRead: list / get / logs, no ConfigMaps or Secrets. readAll: list / get / logs everywhere plus
- * Secret reveal. all: everything the owner has.
+ * safeRead: the server's list (ceiling.safeRead, the same definition as the "Safe read-only" API access
+ * mode). readAll: list / get / logs everywhere plus Secret reveal. all: everything the owner has.
  */
-export const inTemplate = (tpl: KeyTemplate, grant: string): boolean => {
-  const [resource, action] = grant.split(':');
-  if (tpl === 'safeRead') return READ_ACTIONS.includes(action) && resource !== 'configmaps' && resource !== 'secrets';
-  if (tpl === 'readAll') return READ_ACTIONS.includes(action) || grant === 'secrets:reveal';
+export const inTemplate = (tpl: KeyTemplate, grant: string, safeRead: string[]): boolean => {
+  if (tpl === 'safeRead') return safeRead.includes(grant);
+  if (tpl === 'readAll') return READ_ACTIONS.includes(grant.split(':')[1]) || grant === 'secrets:reveal';
   return tpl === 'all';
 };
 
 /** The grants a template gives, limited to what the owner can give. */
-export const templateGrants = (tpl: KeyTemplate, available: Set<string>) =>
-  CATALOG_GRANTS.filter((g) => available.has(g) && inTemplate(tpl, g));
+export const templateGrants = (tpl: KeyTemplate, available: Set<string>, safeRead: string[]) =>
+  CATALOG_GRANTS.filter((g) => available.has(g) && inTemplate(tpl, g, safeRead));
 
 /** Names a key's grants: a read template when it stays inside one, "all" when it holds everything available. */
-export const classify = (grants: string[], available?: Set<string>): KeyTemplate => {
-  if (grants.length > 0 && grants.every((g) => inTemplate('safeRead', g))) return 'safeRead';
-  if (grants.length > 0 && grants.every((g) => inTemplate('readAll', g))) return 'readAll';
+export const classify = (grants: string[], safeRead: string[], available?: Set<string>): KeyTemplate => {
+  if (grants.length > 0 && grants.every((g) => inTemplate('safeRead', g, safeRead))) return 'safeRead';
+  if (grants.length > 0 && grants.every((g) => inTemplate('readAll', g, safeRead))) return 'readAll';
   if (available && available.size > 0 && [...available].every((g) => grants.includes(g))) return 'all';
   return 'custom';
 };
@@ -85,35 +84,63 @@ export const ExpiryBadge: React.FC<{ apiKey: ApiKey }> = ({ apiKey }) => {
 export type ExpiryChoice = '7' | '30' | '60' | '90' | 'custom' | 'never';
 const CHOICES: ExpiryChoice[] = ['7', '30', '60', '90', 'custom', 'never'];
 
+/** The admin's expiry policy for new and regenerated keys (maxDays 0 = no limit). */
+export type ExpiryPolicy = { maxDays: number; allowNoExpiry: boolean };
+
+/** The choices the policy allows: no preset beyond the limit, no "never" unless allowed. */
+export const allowedChoices = (p: ExpiryPolicy) =>
+  CHOICES.filter((c) => (c === 'never' ? p.allowNoExpiry : c === 'custom' || p.maxDays === 0 || Number(c) <= p.maxDays));
+
+/** 30 days, or the longest preset the policy allows, else a date. */
+export const defaultChoice = (p: ExpiryPolicy): ExpiryChoice =>
+  allowedChoices(p).includes('30') ? '30' : allowedChoices(p).filter((c) => c !== 'custom' && c !== 'never').pop() ?? 'custom';
+
 const localDate = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-/** The expiry to send: N days from now, the end of the picked day (local time), null = never, undefined = not valid yet. */
-export const expiryFromChoice = (choice: ExpiryChoice, date: string, now = new Date()): string | null | undefined => {
+/** The last day whose end (23:59:59 local) is within maxDays of now. */
+const lastDay = (maxDays: number, now: Date) => {
+  const limit = new Date(now.getTime() + maxDays * DAY_MS);
+  const end = new Date(limit.getFullYear(), limit.getMonth(), limit.getDate(), 23, 59, 59);
+  if (end > limit) end.setDate(end.getDate() - 1);
+  return end;
+};
+
+/**
+ * The expiry to send: N days from now, the end of the picked day (local time), null = never,
+ * undefined = not valid (yet), e.g. a date beyond the policy's limit.
+ */
+export const expiryFromChoice = (choice: ExpiryChoice, date: string, maxDays = 0, now = new Date()): string | null | undefined => {
   if (choice === 'never') return null;
   if (choice !== 'custom') return new Date(now.getTime() + Number(choice) * DAY_MS).toISOString();
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
   if (!m) return undefined;
   const end = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 23, 59, 59);
+  if (maxDays > 0 && end > lastDay(maxDays, now)) return undefined;
   return end.getTime() > now.getTime() ? end.toISOString() : undefined;
 };
 
-/** 7 / 30 / 60 / 90 days, a date, or never (with a warning). Shared by the form and Regenerate. */
+/**
+ * 7 / 30 / 60 / 90 days, a date, or never (with a warning), as far as the admin's policy allows.
+ * Shared by the form and Regenerate.
+ */
 export const ExpiryPicker: React.FC<{
   choice: ExpiryChoice;
   date: string;
   onChange: (choice: ExpiryChoice, date: string) => void;
+  policy: ExpiryPolicy;
   /** The surrounding section already says "Expiry". */
   hideLegend?: boolean;
-}> = ({ choice, date, onChange, hideLegend }) => {
+}> = ({ choice, date, onChange, policy, hideLegend }) => {
   const { t } = useTranslation();
+  const max = policy.maxDays > 0 ? localDate(lastDay(policy.maxDays, new Date())) : undefined;
   return (
     <fieldset className="space-y-2">
       <legend className={hideLegend ? 'sr-only' : 'mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400'}>
         {t('apiKeys.expiry')}
       </legend>
       <div className="flex flex-wrap items-center gap-1.5">
-        {CHOICES.map((c) => (
+        {allowedChoices(policy).map((c) => (
           <button
             key={c}
             type="button"
@@ -134,11 +161,15 @@ export const ExpiryPicker: React.FC<{
             aria-label={t('apiKeys.expiryDate')}
             value={date}
             min={localDate(new Date(Date.now() + DAY_MS))}
+            max={max}
             onChange={(e) => onChange('custom', e.target.value)}
             className="h-8 w-44"
           />
         )}
       </div>
+      {policy.maxDays > 0 && (
+        <p className="text-xs text-slate-500 dark:text-slate-400">{t('apiKeys.expiryLimit', { count: policy.maxDays })}</p>
+      )}
       {choice === 'never' && (
         <Alert severity="warning">
           <span className="inline-flex items-start gap-2">

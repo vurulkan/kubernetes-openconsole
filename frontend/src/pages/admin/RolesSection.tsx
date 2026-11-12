@@ -3,8 +3,8 @@ import { Pencil, Plus, Search as SearchIcon, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Badge, Button, Input } from '../../components/ui';
 import { Column, DataTable, IconButton } from '../../components/DataTable';
-
-type Role = { id: number; name: string; description: string };
+import type { Role } from '../../services/api';
+import { ApiAccessBadge } from './ApiAccessParts';
 
 type Props = {
   roles: Role[];
@@ -61,6 +61,12 @@ export const RolesSection: React.FC<Props> = ({
         ) : (
           <span className="text-xs text-slate-500 dark:text-slate-400">—</span>
         ),
+    },
+    {
+      key: 'apiAccess',
+      header: t('apiAccess.label'),
+      align: 'center',
+      cell: (r) => <ApiAccessBadge value={r.apiAccess} />,
     },
     {
       key: 'groups',

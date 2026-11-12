@@ -678,3 +678,37 @@ export const Modal: React.FC<ModalProps> = ({
     document.body,
   );
 };
+
+/** A choice of a few options as a segmented row of toggle buttons (aria-pressed). */
+export const Segmented: React.FC<{
+  label: string;
+  value: string;
+  options: Array<[string, string]>;
+  onChange: (v: string) => void;
+  disabled?: boolean;
+}> = ({
+  label,
+  value,
+  options,
+  onChange,
+  disabled,
+}) => (
+  <div role="group" aria-label={label} className="inline-flex self-start rounded-lg border border-slate-200 p-0.5 dark:border-slate-700">
+    {options.map(([v, text]) => (
+      <button
+        key={v}
+        type="button"
+        aria-pressed={value === v}
+        disabled={disabled}
+        onClick={() => onChange(v)}
+        className={`cursor-pointer rounded-md px-3 py-1 disabled:cursor-not-allowed disabled:opacity-50 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 ${
+          value === v
+            ? 'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-200'
+            : 'text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800'
+        }`}
+      >
+        {text}
+      </button>
+    ))}
+  </div>
+);

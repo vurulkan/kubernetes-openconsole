@@ -5,7 +5,7 @@ import { ArrowLeft, KeyRound, ShieldAlert } from 'lucide-react';
 import Layout from '../../components/Layout';
 import Combobox from '../../components/Combobox';
 import { PermissionMatrix, emptyMatrix, type Matrix } from '../../components/PermissionMatrix';
-import { Alert, Button, Checkbox, Input, MultiSelect, Spinner } from '../../components/ui';
+import { Alert, Button, Checkbox, Input, MultiSelect, Segmented, Spinner } from '../../components/ui';
 import {
   createApiKey,
   getApiKeyCeiling,
@@ -22,6 +22,7 @@ import {
   TEMPLATES,
   classify,
   dangerous,
+  defaultChoice,
   expiryFromChoice,
   scopePairs,
   templateGrants,
@@ -40,32 +41,6 @@ const toMatrix = (grants: string[]): Matrix => {
   return m;
 };
 const fromMatrix = (m: Matrix) => CATALOG_GRANTS.filter((g) => m[g.split(':')[0]]?.[g.split(':')[1]]);
-
-/** Two-way choice ("All" / "Selected") as a segmented pair of toggle buttons. */
-const Segmented: React.FC<{ label: string; value: string; options: Array<[string, string]>; onChange: (v: string) => void }> = ({
-  label,
-  value,
-  options,
-  onChange,
-}) => (
-  <div role="group" aria-label={label} className="inline-flex self-start rounded-lg border border-slate-200 p-0.5 dark:border-slate-700">
-    {options.map(([v, text]) => (
-      <button
-        key={v}
-        type="button"
-        aria-pressed={value === v}
-        onClick={() => onChange(v)}
-        className={`cursor-pointer rounded-md px-3 py-1 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 ${
-          value === v
-            ? 'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-200'
-            : 'text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800'
-        }`}
-      >
-        {text}
-      </button>
-    ))}
-  </div>
-);
 
 const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
   <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/60">
@@ -110,6 +85,7 @@ const ApiKeyFormPage: React.FC<{ user: User }> = ({ user }) => {
       try {
         const [c, list] = await Promise.all([getApiKeyCeiling(), editId ? listApiKeys() : Promise.resolve(null)]);
         setCeiling(c);
+        setChoice(defaultChoice(c));
         const k = list?.items.find((x) => x.id === editId) ?? null;
         if (editId && !k) {
           setError(t('apiKeys.notFound'));
@@ -124,8 +100,10 @@ const ApiKeyFormPage: React.FC<{ user: User }> = ({ user }) => {
           setAllNamespaces(k.allNamespaces);
           setNamespaces(k.namespaces);
           setMatrix(toMatrix(k.grants));
-          setAdminScope(k.adminScope);
-          setTemplate(classify(k.grants, new Set(c.namespaces.flatMap((n) => n.grants))));
+          // The policy took the Admin API away: saving drops it (listed with the dropped grants).
+          setAdminScope(k.adminScope && c.adminScopeAllowed);
+          if (k.adminScope && !c.adminScopeAllowed) setDropped(['Admin API']);
+          setTemplate(classify(k.grants, c.safeRead, new Set(c.namespaces.flatMap((n) => n.grants))));
         }
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -163,16 +141,17 @@ const ApiKeyFormPage: React.FC<{ user: User }> = ({ user }) => {
 
   // A new key starts from the safe read template once the ceiling is known.
   useEffect(() => {
-    if (ceiling && !editId) setMatrix(toMatrix(templateGrants('safeRead', new Set(ceiling.namespaces.flatMap((n) => n.grants)))));
+    if (ceiling && !editId)
+      setMatrix(toMatrix(templateGrants('safeRead', new Set(ceiling.namespaces.flatMap((n) => n.grants)), ceiling.safeRead)));
   }, [ceiling, editId]);
 
   const applyTemplate = (tpl: KeyTemplate) => {
     setTemplate(tpl);
-    if (tpl !== 'custom') setMatrix(toMatrix(templateGrants(tpl, available)));
+    if (tpl !== 'custom' && ceiling) setMatrix(toMatrix(templateGrants(tpl, available, ceiling.safeRead)));
   };
 
   const grants = fromMatrix(matrix);
-  const expiresAt = expiryFromChoice(choice, date);
+  const expiresAt = expiryFromChoice(choice, date, ceiling?.maxDays);
   const nsCount = allNamespaces ? t('apiKeys.allNamespacesShort') : t('apiKeys.nsCount', { count: namespaces.length });
   const risky = dangerous(grants, adminScope);
   const valid =
@@ -274,6 +253,7 @@ const ApiKeyFormPage: React.FC<{ user: User }> = ({ user }) => {
               ) : (
                 <ExpiryPicker
                   hideLegend
+                  policy={ceiling}
                   choice={choice}
                   date={date}
                   onChange={(c, d) => {
@@ -370,7 +350,11 @@ const ApiKeyFormPage: React.FC<{ user: User }> = ({ user }) => {
                   const g = `${resource}:${a.key}`;
                   if (ceiling.disabled.includes(g)) return { disabled: true, title: t('apiKeys.featureOff') };
                   const have = pairs.filter((p) => p.grants.includes(g)).length;
-                  if (have === 0) return { disabled: true, title: t('apiKeys.notYours') };
+                  if (have === 0)
+                    return {
+                      disabled: true,
+                      title: pairs.some((p) => p.blocked.includes(g)) ? t('apiKeys.policyBlocked') : t('apiKeys.notYours'),
+                    };
                   if (have < pairs.length)
                     return { partial: `${have}/${pairs.length}`, title: t('apiKeys.partial', { count: have, total: pairs.length }) };
                   return {};
@@ -380,7 +364,15 @@ const ApiKeyFormPage: React.FC<{ user: User }> = ({ user }) => {
 
             {ceiling.isAdmin && (
               <Section title={t('apiKeys.adminApi')}>
-                <Checkbox checked={adminScope} onChange={setAdminScope} label={t('apiKeys.adminApiLabel')} />
+                <Checkbox
+                  checked={adminScope}
+                  onChange={setAdminScope}
+                  disabled={!ceiling.adminScopeAllowed}
+                  label={t('apiKeys.adminApiLabel')}
+                />
+                {!ceiling.adminScopeAllowed && (
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{t('apiKeys.adminApiPolicy')}</p>
+                )}
                 <p className="flex items-start gap-2 text-xs text-rose-700 dark:text-rose-300">
                   <ShieldAlert size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
                   {t('apiKeys.adminApiWarning')}

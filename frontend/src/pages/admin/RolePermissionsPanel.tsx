@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { ApiAccess } from '../../services/api';
+import { RoleApiAccessLine } from './ApiAccessParts';
 import {
   Copy,
   MoreHorizontal,
@@ -61,7 +63,7 @@ function buildTemplateMatrix(template: Template): Record<string, Record<string, 
 
 // ─── Props ──────────────────────────────────────────────────────────────────
 
-type RoleRow = { id: number; name: string; description: string };
+type RoleRow = { id: number; name: string; description: string; apiAccess?: ApiAccess };
 
 type Props = {
   roles: RoleRow[];
@@ -454,6 +456,11 @@ export const RolePermissionsPanel: React.FC<Props> = ({
                   <div className="text-[11px] text-slate-500 dark:text-slate-400">
                     {selectedRole.description || t('rolePermissions.noDescription')}
                   </div>
+                  {selectedRole.apiAccess && (
+                    <div className="mt-1.5">
+                      <RoleApiAccessLine value={selectedRole.apiAccess} />
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <Button variant="outline" size="sm" onClick={() => setCopyOpen(true)}>
