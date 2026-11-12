@@ -160,6 +160,7 @@ To upgrade, run `kubectl -n kubernetes-openconsole rollout restart deploy/kubern
 - `STATIC_DIR` (default `/app/public` in the image) — Served React build output.
 - `TIMEZONE` (default `UTC`) — Used for audit log timestamps.
 - `LOG_RETENTION_DAYS` (default `30`) — Audit log retention (purged automatically).
+- `API_KEY_READ_RETENTION_DAYS` (default `7`) — How long **successful reads made with an API key** (`list`, `get`, `logs`, `view_yaml`, `view_overview`) are kept; they are most of an agent's audit volume. Writes, denials, failures, `pod.exec` and `api_key.*` events stay for `LOG_RETENTION_DAYS`. The console / Elastic lines are not affected. See [API keys](#api-keys).
 - `RESTART_HISTORY_RETENTION_DAYS` (default `30`) — How long container exits (restart history) are kept.
 - `MAX_REPLICAS` (default `100`) — Hard upper bound the Scale endpoint accepts for Deployment / StatefulSet scaling.
 
@@ -190,6 +191,7 @@ Switch a capability off **for everyone, admins included**, regardless of role pe
 | `FEATURE_SECRETS` | the whole Secrets tab (every `secrets:*`) |
 | `FEATURE_SECRET_REVEAL` | revealing secret values (`secrets:reveal`) |
 | `FEATURE_SECRET_EDIT` | editing secrets (`secrets:edit`) |
+| `FEATURE_API_KEYS` | API keys: the page, the `/api/me/api-keys` endpoints and signing in with a key (a key then gets 401) |
 
 A disabled feature disappears from the UI and every endpoint for it answers 403 *"this feature is disabled by the operator"* and writes the usual `denied` audit entry. `GET /api/features` shows the current state; the startup log lists what is off.
 
@@ -275,11 +277,12 @@ Every audited action is one event, stored in the database (Admin → Audit Logs,
 | Field (`json` / DB) | `ecs` | Meaning |
 |---|---|---|
 | `event` / `action` | `event.action` | `<resource type>.<verb>`: `deployment.list`, `deployment.restart`, `pod.exec`, `secret.reveal`, `node.get`, `user.login`, `permission.create` |
-| `verb` | `openconsole.verb` | `list` `get` `logs` `exec` `restart` `scale` `apply` `view_yaml` `reveal` `view` `download` `create` `update` `delete` `share` `select` `activate` `deactivate` `revoke` `export` `import` `login` `change_password` `reset_password` `evict` `purge` `view_overview` |
+| `verb` | `openconsole.verb` | `list` `get` `logs` `exec` `restart` `scale` `apply` `view_yaml` `reveal` `view` `download` `create` `update` `delete` `share` `select` `activate` `deactivate` `revoke` `export` `import` `login` `change_password` `reset_password` `evict` `purge` `view_overview` `regenerate` `use` |
 | `outcome` | `openconsole.outcome`, `event.outcome` | `success` `denied` `failed` `rate_limited` `locked` (`event.outcome` is `success` / `failure`) |
 | `reason` | `event.reason` | why it was denied or failed: `forbidden`, `feature_disabled`, `admin_only`, `k8s_forbidden`, `not_found`, `conflict`, `bad_password`, … |
 | `user`, `auth_source` | `user.name`, `openconsole.auth_source` | who, and where the account signs in (`local` / `ldap` / `azure`) |
 | `remote_ip`, `user_agent`, `request_id` | `source.ip`, `user_agent.original`, `http.request.id` | from where; the request id matches the `http.request` line |
+| `api_key_id`, `api_key_name` | `openconsole.api_key.id`, `openconsole.api_key.name` | the [API key](#api-keys) the action was taken with; empty for a web session |
 | `cluster`, `cluster_id` | `openconsole.cluster`, `openconsole.cluster_id` | the cluster the action **targeted**. Empty for actions that don't run on a cluster (sign-ins, users, groups, roles, settings, sessions, saved views). A permission grant records the grant's cluster (empty for "all clusters"), not the cluster the admin had selected. |
 | `namespace`, `resource_type`, `resource_name` | `openconsole.*` | the target; `resource_type` is singular (`deployment`), `resource_name` is the bare name, `*` for a list |
 | details | `openconsole.<key>` | typed, see below |
@@ -296,10 +299,11 @@ Details are a fixed set of keys, each with a type in the Elastic mapping:
 | `secret.reveal` | `key` (the key name, never the value) |
 | `recording.*` | `pod`, `container`, `owner`, `started_at`, `size_bytes`, `truncate_reason`, `count`, `retention_days` |
 | `user.login` | `login_method`, `linked_by`, `signed_in_as`, `account_source` |
+| `api_key.*` | `id`, `summary` (clusters / namespaces count and grants), `expires_at`, `admin_scope`, `changed`; never the secret or its hash |
 | `user.*`, `group.*`, `role.*`, `permission.*` | `changed` (field names, not values), `is_admin`, `is_active`, `account_source`, `groups`, `count`, `role`, `grant` (`deployments:restart`), `auto_provisioned` |
 | any failure | `error` (→ `error.message` in ECS) |
 
-Reads are audited too (`deployment.list`, `pod.get`, `pod.logs`, …), including a refused one (`denied`, reason `forbidden`). Lists the UI fetches on its own are not: the dashboard's reload every 10 seconds, and the namespace list behind the command palette and the role editor (they send `X-OpenConsole-Refresh: auto`). The lists you open are audited, and the HTTP request log still has every request.
+Reads are audited too (`deployment.list`, `pod.get`, `pod.logs`, …), including a refused one (`denied`, reason `forbidden`). Lists the UI fetches on its own are not: the dashboard's reload every 10 seconds, and the namespace list behind the command palette and the role editor (they send `X-OpenConsole-Refresh: auto`). The lists you open are audited, and the HTTP request log still has every request. With an API key the header is ignored: every read is audited.
 
 Kibana examples:
 
@@ -311,6 +315,11 @@ openconsole.replicas_to >= 10
 event.action : "pod.exec" and openconsole.phase : "end" and not openconsole.exit_code : 0
 openconsole.outcome : "denied" and user.name : "dev1"
 ```
+
+#### Upgrading to 2.22
+
+- **Elastic**: re-run `deploy/elk/install.sh` once: it adds the mapping of `openconsole.api_key.id` / `.name`, `openconsole.admin_scope` and `openconsole.expires_at` (the pipeline is unchanged). If you don't, nothing is lost: the fields are mapped dynamically, and get the right type from the next rollover after you run it.
+- **Database**: new tables and columns are added on the first start; nothing to do.
 
 #### Upgrading from 2.16
 
@@ -538,6 +547,39 @@ Templates in the Add Permissions modal: Viewer (read only, including secret *met
 
 ---
 
+# API keys
+
+An API key lets your AI agent (Claude Code, Cursor, …) or a script call the OpenConsole API in your name. Every call is audited with your user **and the key's name**. Open it from the account menu (your name, top right) → **API keys**, or `⌘K` → *Go to API keys*.
+
+**Creating one.** Name and note; expiry (7 / 30 / 60 / 90 days, a date, or none — a key without an expiry stays valid until you revoke it); scope: all clusters or one, all your namespaces (including ones you get later) or a selection; then a template and the permission matrix:
+
+| Template | Gives |
+|---|---|
+| Read-only (safe) | `list` / `get` / `logs`, no ConfigMaps or Secrets; no exec, edit, scale, restart |
+| Read-only (all) | `list` / `get` / `logs` everywhere, ConfigMap data and `secrets:reveal` included; no exec |
+| All my permissions | everything you hold in the chosen scope |
+| Custom | what you pick |
+
+The matrix offers only what you hold yourself: other cells are closed (*"You do not have this permission"*); a cell you hold in only some of the chosen namespaces is marked (*"Only in 3 of 5 namespaces"*). The server checks this too (400). The key (`oc_` + 40 characters) is shown **once**, with a ready `curl` line; the list shows its first characters only. The database keeps a SHA-256 of it.
+
+**What a key can do.** At most what it lists **and** what you hold at the time of the call: if a namespace is taken from your role, the key loses it at once (the list shows *"2 permissions not valid now"*); if you get more, the key does not grow by itself (except *all my namespaces*). Edit changes name, note, scope and permissions; the secret and expiry stay. **Regenerate** gives a new secret and a new expiry; the old secret stops working at once (it also revives a revoked or expired key). **Revoke** stops it for good; **Delete** removes it from the list. Admin endpoints (`/api/admin/*`) need an admin's key created with the **Admin API** box, and stop working when the owner is no longer an admin. A key can never manage keys, change the password, change your selected cluster, or save views (403, reason `api_key_not_allowed`).
+
+**Using a key.**
+
+```bash
+export OPENCONSOLE_API_KEY=oc_…
+curl -H "Authorization: Bearer $OPENCONSOLE_API_KEY" -H "X-OpenConsole-Cluster: prod" https://openconsole.example/api/namespaces/shop/pods
+```
+
+- `X-OpenConsole-Cluster: <name or id>` picks the cluster per request (without it: your selected cluster). An unknown cluster is 400, one the key can't use 403.
+- WebSockets (logs, exec, events): `POST /api/ws-ticket` with the key, then open the socket with `?ticket=`. Keys are never accepted in a URL.
+- 401 = the key is not valid (unknown, expired, revoked, owner disabled); 403 = not allowed (permission, feature flag, owner must change the password); 429 = more than 10 requests / s (burst 30) for the key.
+- A pod shell opened with a key is always recorded, and shows the key name in Admin → Recordings.
+
+**Audit.** Every call carries `api_key_id` / `api_key_name` (Admin → Audit Logs: *Source* = Web / API key, key name). Key events: `api_key.create` / `update` / `regenerate` / `revoke` / `delete`, and `api_key.use` with outcome `denied` (`expired`, `revoked`, `owner_inactive`, `must_change_password`) or `rate_limited`; these are written at most once a minute per key and reason, so an agent retrying with a dead key can't flood the log (every request still gets its 401 / 403 / 429). An unknown key has no user, so it is only a warning line in the console log, with the source IP. Successful reads with a key are kept `API_KEY_READ_RETENTION_DAYS` (7).
+
+---
+
 # Pod health, usage and restart history
 
 **Status.** Pods show the STATUS `kubectl get pods` would print, computed the same way (waiting / terminated reasons, init containers, Terminating, Unschedulable): red for a pod that is crashing or can't start, amber for one that waits or isn't ready, green for ready, gray for completed. Hovering an unhealthy status shows its latest Warning events.
@@ -622,7 +664,7 @@ Every pod shell session is recorded as an [asciicast v2](https://docs.asciinema.
 **Privacy.** If someone prints a secret (`cat` of a mounted secret, `env`, `kubectl get secret -o yaml`), that secret is now in the recording. The shell shows a red *"This session is being recorded"* banner that says so. The banner only appears when the server confirms that the session is actually being recorded. Recordings are admin-only, and every view or download is audited. Treat the recordings volume like the audit database.
 
 **Playback (Admin → Recordings)**
-- Filter by user, namespace, pod and date range. The table shows duration, size, and *in progress* / *truncated* badges.
+- Filter by user, namespace, pod, source (web / API key, key name) and date range. The table shows duration, size, *in progress* / *truncated* badges, and the key name for a shell opened with an API key.
 - ▶ opens an in-browser player: play / pause, timeline seek, 1x / 2x / 4x, and "skip idle time" (squeezes pauses longer than 2 s).
 - ⬇ downloads the `.cast` file, after a confirmation that warns the file may contain secrets and must not be shared in tickets / chat / email. It plays in the `asciinema` CLI too: `asciinema play file.cast`.
 - 🗑 deletes the file and its row. A recording whose session is still running can't be deleted.
@@ -641,7 +683,7 @@ When a limit would be crossed, the **disk policy** decides what happens:
 - `evict_oldest` (default) — the oldest finished recordings are deleted, even before their retention ends, until the next session fits. Each eviction is audited as `recording.evict` (user `system`, reason `quota` / `low_disk`).
 - `stop` — existing recordings are kept. New shells still open but are **not** recorded (`recording.create` failed, reason `disk_quota`), and running recordings stop with a truncation marker. The admin screen shows a warning until space is freed.
 
-The shell itself is never blocked by recording: a disabled, full or broken recorder only means the session isn't recorded. For full isolation, give recordings their own PVC; `deploy/pvc.yaml` and `deploy/deployment.yaml` contain a commented example. Then set `SESSION_RECORDING_DIR=/recordings`.
+The shell itself is never blocked by recording: a disabled, full or broken recorder only means the session isn't recorded. The exception is a shell opened with an [API key](#api-keys): it is recorded even when recording is switched off, and refused (503, `pod.exec` failed, reason `recording_unavailable`) when it can't be. For full isolation, give recordings their own PVC; `deploy/pvc.yaml` and `deploy/deployment.yaml` contain a commented example. Then set `SESSION_RECORDING_DIR=/recordings`.
 
 **Retention.** A background job runs one minute after start and then daily. It deletes recordings older than the retention period (row and file, audited as `recording.purge` with `count`) and removes stray `.cast` files that have no database row. If the process crashes mid-session, the next start closes the open row using the file's size and modification time.
 
@@ -894,6 +936,7 @@ Every user works on **their own** cluster:
   - **User**, **Action** and **Namespace** suggest the values that actually occur in the log as you type. Typed text matches anywhere.
   - Picking an action matches it exactly. Its family row, e.g. `pod.*`, selects everything done to pods.
   - **Outcome** (success / denied / failed / rate_limited / locked), **Verb** (list, restart, exec, …), **Resource type** and **Cluster** narrow any of them, e.g. "everything denied", or `secret.*` + denied.
+  - **Source**: Web or API key, and the key's name; rows done with a key carry a key badge ([API keys](#api-keys)).
 - **Users / Groups → Export CSV**: who has access and through which group and role.
 - **Sessions**: every issued token; revoke one or all of a user's ([Sessions](#sessions-admin--sessions)).
 - **Recordings**: replay, download (with a warning) or delete pod shell sessions, and set retention / disk limits ([Session Recording](#session-recording)).

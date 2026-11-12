@@ -25,13 +25,14 @@ func (s *Server) handleEventsWS(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-	var engine *rbac.Engine
-	if !user.IsAdmin {
-		// shortcut: grants are read when the socket opens; a revoked one applies on reconnect.
-		if engine, ok = s.engineForRequest(r); !ok {
-			w.WriteHeader(http.StatusForbidden)
-			return
-		}
+	// shortcut: grants are read when the socket opens; a revoked one applies on reconnect.
+	engine, ok := s.engineForRequest(r)
+	if !ok {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+	if user.IsAdmin && apiKeyFrom(r.Context()) == nil {
+		engine = nil // an admin's web session sees everything, cluster-scoped events included
 	}
 	clusterID := clusterIDFrom(r.Context())
 

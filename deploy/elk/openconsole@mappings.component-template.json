@@ -332,6 +332,22 @@
             },
             "summary": {
               "type": "match_only_text"
+            },
+            "admin_scope": {
+              "type": "boolean"
+            },
+            "expires_at": {
+              "type": "date"
+            },
+            "api_key": {
+              "properties": {
+                "id": {
+                  "type": "long"
+                },
+                "name": {
+                  "type": "keyword"
+                }
+              }
             }
           }
         },

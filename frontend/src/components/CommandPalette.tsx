@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Boxes, Gauge, Home, Search, Server, Settings, ShieldCheck } from 'lucide-react';
+import { Boxes, Gauge, Home, KeyRound, Search, Server, Settings, ShieldCheck } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { User } from '../services/api';
+import { getFeatures, User } from '../services/api';
 import { useTheme } from './ThemeProvider';
 import { PALETTE_EVENT_NAME } from '../hooks/useGlobalShortcuts';
 
@@ -35,6 +36,11 @@ export const CommandPalette: React.FC<Props> = ({ user, namespaces, onPickNamesp
   const [cursor, setCursor] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const navigate = useNavigate();
+  const { t } = useTranslation();
+  const [apiKeysOn, setApiKeysOn] = useState(true);
+  useEffect(() => {
+    void getFeatures().then((f) => setApiKeysOn(f.api_keys !== false));
+  }, []);
   const location = useLocation();
   const { setMode } = useTheme();
 
@@ -113,6 +119,13 @@ export const CommandPalette: React.FC<Props> = ({ user, namespaces, onPickNamesp
         onRun: () => navigate('/admin'),
       });
     }
+    if (apiKeysOn) navs.push({
+      id: 'nav:api-keys',
+      label: t('nav.goToApiKeys'),
+      kind: 'nav',
+      icon: KeyRound,
+      onRun: () => navigate('/account/api-keys'),
+    });
     const themes: Command[] = [
       {
         id: 'theme:light',
@@ -152,7 +165,7 @@ export const CommandPalette: React.FC<Props> = ({ user, namespaces, onPickNamesp
       },
     }));
     return [...navs, ...themes, ...nss];
-  }, [user, namespaces, navigate, location.pathname, onPickNamespace, setMode]);
+  }, [user, namespaces, navigate, location.pathname, onPickNamespace, setMode, t, apiKeysOn]);
 
   const q = query.trim().toLowerCase();
   const filtered = useMemo(() => {

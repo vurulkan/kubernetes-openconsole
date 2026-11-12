@@ -10,9 +10,9 @@ manual (long, read only the section you need); this file is for working on the c
 `backend/` (Go, chi, client-go, slog, modernc sqlite) — entry point `cmd/server`.
 | Path | What |
 |---|---|
-| `internal/api` | HTTP + WebSocket handlers. `router.go` holds the routes, `requirePermission`, most handlers; features split out (`workloads.go`, `deployment_actions.go`, `secrets.go`, `pod_exec.go`, `logs.go` (pod / deployment / job log sockets, JSON frames), `ws_ticket.go`, `overview.go` (admin overview, 15 s cache), `nodes.go` (admin node list / detail / history), `yaml_apply.go`, `clusters.go`, `views.go`, `exports.go`, …). `authz_test.go` = authorization suite |
+| `internal/api` | HTTP + WebSocket handlers. `router.go` holds the routes, `requirePermission`, `accessFor` / `engineForRequest` (every permission check, API key included) and `isAdminRequest` (the one admin check), most handlers; features split out (`apikeys.go` (API key sign-in, ceiling, `/api/me/api-keys`), `workloads.go`, `deployment_actions.go`, `secrets.go`, `pod_exec.go`, `logs.go` (pod / deployment / job log sockets, JSON frames), `ws_ticket.go`, `overview.go` (admin overview, 15 s cache), `nodes.go` (admin node list / detail / history), `yaml_apply.go`, `clusters.go`, `views.go`, `exports.go`, …). `authz_test.go` = authorization suite |
 | `internal/audit` | audit events: `Verb*` constants, `DetailKeys` registry (`event.go`), DB + console mirror (`logger.go`), 2.16 legacy upgrade (`legacy.go`). Handlers call `s.auditEvent` / `s.auditRead` / `s.auditReadDenied` (`api/audit_events.go`) |
-| `internal/rbac` | permission engine (role → namespace / resource / action, cluster-scoped grants) |
+| `internal/rbac` | permission engine (role → namespace / resource / action, cluster-scoped grants); `Catalog` (every resource:action), `NewAdmin`, `WithKey` (API key scope ∩ the owner's grants) |
 | `internal/auth` | local passwords + policy, JWT sessions, LDAP, Azure AD |
 | `internal/kube` | per-cluster client + informer cache (`Manager`, `Registry`; nodes only with list + watch, pods indexed by `spec.nodeName`), event bus, resource reads, apply, YAML prettify; `metrics.go` 30 s metrics-server sampler (24 h in memory, per pod / workload / node / cluster), `terminations.go` container exits from the pod informer (restart history) |
 | `internal/prom` | Prometheus-compatible query client (API server proxy or URL; basic / bearer / Azure AD / mTLS), history queries, test-button diagnosis |
@@ -30,7 +30,8 @@ manual (long, read only the section you need); this file is for working on the c
 | `src/pages/OverviewPage.tsx` | admin overview (`/overview`, admins land here); charts in `pages/overview/Charts.tsx`, line chart = `components/Usage` `LineChart`. A page without a Layout `panel` gets the full width |
 | `src/pages/NodesPage.tsx` | admin node list (`/nodes`, `?node=<name>` opens the drawer); `pages/nodes/NodeDrawer.tsx` detail, `NodeParts.tsx` status badges, meter, search |
 | `src/pages/AdminPage.tsx` | admin shell + audit, clusters, LDAP, Azure; `pages/admin/*` users, groups, roles, sessions, recordings, `PrometheusSettings` |
-| `src/components` | `ui.tsx` (Button, Badge, …), `DataTable` (sort + `sortStorageKey`, column picker `columnsStorageKey`, `keyboardNav`), `Drawer`, `ConfirmDialog`, `Combobox`, modals, `CommandPalette`, `LiveEventsPanel`, `LogViewer` (+ `utils/logStream.ts`: reconnect / resume), `ContainerPicker` (shell: which container), `PodStatusBadge` (+ `PodRestarts`, `ContainerSquares`), `Usage` (meter + SVG line charts) |
+| `src/pages/ApiKeysPage.tsx` | the user's API keys (`/account/api-keys`, from the header account menu); `pages/apikeys/ApiKeyFormPage.tsx` create / edit, `ApiKeyParts.tsx` templates, expiry, secret box |
+| `src/components` | `ui.tsx` (Button, Badge, …), `PermissionMatrix` (resource × action toggles + catalog, Role Permissions and API keys), `MenuPopover` (keyboard menu: DataTable columns, account menu, row ⋯), `DataTable` (sort + `sortStorageKey`, column picker `columnsStorageKey`, `keyboardNav`), `Drawer`, `ConfirmDialog`, `Combobox`, modals, `CommandPalette`, `LiveEventsPanel`, `LogViewer` (+ `utils/logStream.ts`: reconnect / resume), `ContainerPicker` (shell: which container), `PodStatusBadge` (+ `PodRestarts`, `ContainerSquares`), `Usage` (meter + SVG line charts) |
 | `src/hooks` | global / scoped keyboard shortcuts, modal scopes |
 | `src/services/api.ts` | every API call; `wsUrl()` = WebSocket URL with a single-use ticket (never the JWT) |
 | `src/i18n.ts` | EN + TR dictionaries (one file) |
@@ -73,7 +74,11 @@ Screenshots: Playwright's `chromium.launch` dies on this Mac; start Chrome yours
 ## When you add …
 
 - **an endpoint** → route in `router.go`, `requirePermission`, audit for success + denied + failed
-  (reads: `auditRead` / `auditReadDenied`), a case in `authz_test.go`, `services/api.ts`.
+  (reads: `auditRead` / `auditReadDenied`), a case in `authz_test.go`, `services/api.ts`. Check permissions
+  only through `requirePermission` / `s.can` / `engineForRequest` and admin through `isAdminRequest` (they
+  know the API key; never `user.IsAdmin` for access), and add an API key case (allowed / refused) in
+  `apikeys_test.go`; `/api/admin/*` routes are scanned there automatically. Something a key must never do:
+  `denyAPIKey`.
 - **an audit detail key** → `audit.DetailKeys` + `deploy/elk/openconsole@mappings.component-template.json`.
   Never write secret values, YAML bodies, passwords or tokens into audit or logs.
 - **UI text** → key in both EN and TR in `i18n.ts` (the parity test fails otherwise).

@@ -109,6 +109,7 @@ const emptyAuditFacets: AuditFacets = {
   verbs: [],
   resourceTypes: [],
   clusters: [],
+  apiKeys: [],
 };
 
 const ADMIN_TABS: Array<{
@@ -302,6 +303,8 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
   const [auditVerb, setAuditVerb] = useState('');
   const [auditResourceType, setAuditResourceType] = useState('');
   const [auditCluster, setAuditCluster] = useState('');
+  const [auditSource, setAuditSource] = useState<AuditQuery['source']>('');
+  const [auditApiKey, setAuditApiKey] = useState('');
   const [auditFacets, setAuditFacets] = useState<AuditFacets>(emptyAuditFacets);
   const [auditNamespaceFilter, setAuditNamespaceFilter] = useState('');
   const [auditStartDate, setAuditStartDate] = useState('');
@@ -496,6 +499,8 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     outcome: auditOutcome,
     resourceType: auditResourceType,
     cluster: auditCluster,
+    source: auditSource,
+    apiKey: auditApiKey,
     namespace: auditNamespaceFilter,
     start: auditStartDate,
     end: auditEndDate,
@@ -649,6 +654,8 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     auditVerb,
     auditResourceType,
     auditCluster,
+    auditSource,
+    auditApiKey,
     auditNamespaceFilter,
     auditStartDate,
     auditEndDate,
@@ -2167,6 +2174,31 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                     </option>
                   ))}
                 </NativeSelect>
+                <NativeSelect
+                  label={tr('admin.audit.filterSource')}
+                  value={auditSource}
+                  onChange={(e) => {
+                    setAuditOffset(0);
+                    setAuditSource(e.target.value as AuditQuery['source']);
+                    if (e.target.value !== 'api_key') setAuditApiKey('');
+                  }}
+                >
+                  <option value="">{tr('admin.audit.outcomeAny')}</option>
+                  <option value="web">{tr('admin.audit.sourceWeb')}</option>
+                  <option value="api_key">{tr('admin.audit.sourceApiKey')}</option>
+                </NativeSelect>
+                {auditSource === 'api_key' && (
+                  <Combobox
+                    label={tr('admin.audit.filterApiKey')}
+                    value={auditApiKey}
+                    options={auditFacets.apiKeys ?? []}
+                    onChange={(v) => {
+                      setAuditOffset(0);
+                      setAuditApiKey(v);
+                    }}
+                    className="w-44"
+                  />
+                )}
                 <Combobox
                   label={tr('admin.audit.filterNamespace')}
                   value={auditNamespaceFilter}

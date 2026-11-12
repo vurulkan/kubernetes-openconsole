@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, Download, Play, RefreshCw, Save, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Alert, Badge, Button, Input, NativeSelect, Toggle } from '../../components/ui';
+import { ApiKeyBadge } from '../../components/AuditEntryRow';
 import { Column, DataTable, IconButton } from '../../components/DataTable';
 import { confirm } from '../../components/ConfirmDialog';
 import CastPlayerModal, { downloadRecordingWithWarning } from '../../components/CastPlayerModal';
@@ -175,7 +176,7 @@ export const RecordingSettingsPanel: React.FC = () => {
 
 // ─── List ────────────────────────────────────────────────────────────────────
 
-const emptyFilter: RecordingFilter = { user: '', namespace: '', pod: '', from: '', to: '' };
+const emptyFilter: RecordingFilter = { user: '', namespace: '', pod: '', source: '', apiKey: '', from: '', to: '' };
 
 export const RecordingsSection: React.FC = () => {
   const { t } = useTranslation();
@@ -253,7 +254,10 @@ export const RecordingsSection: React.FC = () => {
       key: 'user',
       header: t('recordings.user'),
       cell: (row) => (
-        <span className="font-mono text-[13px] font-medium text-slate-900 dark:text-slate-100">{row.user}</span>
+        <span className="flex flex-wrap items-center gap-1.5">
+          <span className="font-mono text-[13px] font-medium text-slate-900 dark:text-slate-100">{row.user}</span>
+          {row.apiKeyName && <ApiKeyBadge name={row.apiKeyName} />}
+        </span>
       ),
     },
     {
@@ -330,10 +334,25 @@ export const RecordingsSection: React.FC = () => {
 
   return (
     <div className="flex flex-col gap-3">
-      <form onSubmit={applyFilter} className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-6">
+      <form onSubmit={applyFilter} className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
         <Input placeholder={t('recordings.user')} value={draft.user} onChange={setField('user')} />
         <Input placeholder={t('recordings.namespace')} value={draft.namespace} onChange={setField('namespace')} />
         <Input placeholder={t('recordings.pod')} value={draft.pod} onChange={setField('pod')} />
+        <NativeSelect
+          aria-label={t('admin.audit.filterSource')}
+          value={draft.source}
+          onChange={(e) => setDraft({ ...draft, source: e.target.value as RecordingFilter['source'] })}
+        >
+          <option value="">{t('recordings.sourceAny')}</option>
+          <option value="web">{t('admin.audit.sourceWeb')}</option>
+          <option value="api_key">{t('admin.audit.sourceApiKey')}</option>
+        </NativeSelect>
+        <Input
+          placeholder={t('admin.audit.filterApiKey')}
+          aria-label={t('admin.audit.filterApiKey')}
+          value={draft.apiKey}
+          onChange={setField('apiKey')}
+        />
         <Input type="date" aria-label={t('recordings.from')} title={t('recordings.from')} value={draft.from} onChange={setField('from')} />
         <Input type="date" aria-label={t('recordings.to')} title={t('recordings.to')} value={draft.to} onChange={setField('to')} />
         <div className="flex gap-2">

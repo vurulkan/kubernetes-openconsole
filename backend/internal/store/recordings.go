@@ -11,7 +11,7 @@ import (
 )
 
 const recordingColumns = `id, session_id, user, cluster, namespace, pod, container,
-	started_at, ended_at, size_bytes, truncated, request_id, path`
+	started_at, ended_at, size_bytes, truncated, request_id, path, api_key_id, api_key_name`
 
 // EnsureRecordingSettings seeds the singleton settings row on first boot.
 // An existing row is left untouched so admin edits survive restarts.
@@ -57,10 +57,10 @@ func (s *Store) UpdateRecordingSettings(ctx context.Context, in models.Recording
 func (s *Store) CreateRecording(ctx context.Context, rec models.SessionRecording) (int, error) {
 	res, err := s.conn.ExecContext(ctx,
 		`INSERT INTO session_recordings
-		 (session_id, user, cluster, namespace, pod, container, started_at, request_id, path)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 (session_id, user, cluster, namespace, pod, container, started_at, request_id, path, api_key_id, api_key_name)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		rec.SessionID, rec.User, rec.Cluster, rec.Namespace, rec.Pod, rec.Container,
-		rec.StartedAt.UTC(), rec.RequestID, rec.Path,
+		rec.StartedAt.UTC(), rec.RequestID, rec.Path, rec.APIKeyID, rec.APIKeyName,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("create recording: %w", err)
@@ -100,6 +100,13 @@ func (s *Store) ListRecordings(ctx context.Context, f models.RecordingFilter) ([
 	like("cluster", f.Cluster)
 	like("namespace", f.Namespace)
 	like("pod", f.Pod)
+	like("api_key_name", f.APIKey)
+	switch f.Source {
+	case "web":
+		conditions = append(conditions, "api_key_id = 0")
+	case "api_key":
+		conditions = append(conditions, "api_key_id > 0")
+	}
 	if f.From != nil {
 		conditions = append(conditions, "started_at >= ?")
 		args = append(args, f.From.UTC())
@@ -220,7 +227,8 @@ func scanRecording(row rowScanner) (models.SessionRecording, error) {
 		truncated int
 	)
 	err := row.Scan(&rec.ID, &rec.SessionID, &rec.User, &rec.Cluster, &rec.Namespace, &rec.Pod,
-		&rec.Container, &rec.StartedAt, &endedAt, &rec.SizeBytes, &truncated, &rec.RequestID, &rec.Path)
+		&rec.Container, &rec.StartedAt, &endedAt, &rec.SizeBytes, &truncated, &rec.RequestID, &rec.Path,
+		&rec.APIKeyID, &rec.APIKeyName)
 	if err != nil {
 		return rec, err
 	}

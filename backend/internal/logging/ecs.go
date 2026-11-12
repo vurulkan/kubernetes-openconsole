@@ -40,6 +40,8 @@ var ecsFieldNames = map[string]string{
 	"trace_id":       "trace.id",
 	"duration_ns":    "event.duration",
 	"response_bytes": "http.response.body.bytes",
+	"api_key_id":     "openconsole.api_key.id",
+	"api_key_name":   "openconsole.api_key.name",
 }
 
 // ecsHandler writes one JSON object per record with nested ECS objects, in a
@@ -206,7 +208,8 @@ var auditEventTypes = map[string]string{
 	"change_password": "change", "reset_password": "change",
 	"create": "creation", "import": "creation",
 	"delete": "deletion", "evict": "deletion", "purge": "deletion", "revoke": "deletion",
-	"login": "start",
+	"login":      "start",
+	"regenerate": "change", "use": "access",
 }
 
 // AuditEventType returns the ECS event.type for an audit verb; a shell
@@ -224,13 +227,13 @@ func AuditEventType(verb, phase string) string {
 // auditCategory returns the ECS event.category of an audit event.
 func auditCategory(action, kind, verb string) string {
 	switch {
-	case action == "user.login":
+	case action == "user.login" || action == "api_key.use":
 		return "authentication"
 	case kind == "session":
 		return "session"
 	case action == "pod.exec":
 		return "process"
-	case kind == "user" || kind == "group" || kind == "role" || kind == "permission":
+	case kind == "user" || kind == "group" || kind == "role" || kind == "permission" || kind == "api_key":
 		return "iam"
 	}
 	switch auditEventTypes[verb] {

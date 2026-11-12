@@ -8,11 +8,14 @@ import (
 )
 
 type Config struct {
-	Port               string
-	DataPath           string
-	LogRetentionDays   int
-	AuditPurgeInterval time.Duration
-	TimeZone           string
+	Port             string
+	DataPath         string
+	LogRetentionDays int
+	// APIKeyReadRetentionDays keeps successful API key reads (list / get /
+	// logs) this long; everything else stays LogRetentionDays.
+	APIKeyReadRetentionDays int
+	AuditPurgeInterval      time.Duration
+	TimeZone                string
 
 	// Structured logging (slog) — see internal/logging.
 	LogLevel        string // debug|info|warn|error
@@ -72,11 +75,12 @@ func Load() Config {
 	}
 
 	return Config{
-		Port:               port,
-		DataPath:           dataPath,
-		LogRetentionDays:   retention,
-		AuditPurgeInterval: 12 * time.Hour,
-		TimeZone:           timeZone,
+		Port:                    port,
+		DataPath:                dataPath,
+		LogRetentionDays:        retention,
+		APIKeyReadRetentionDays: envIntMin("API_KEY_READ_RETENTION_DAYS", 7, 1),
+		AuditPurgeInterval:      12 * time.Hour,
+		TimeZone:                timeZone,
 
 		LogLevel:        envOr("LOG_LEVEL", "info"),
 		LogFormat:       envOr("LOG_FORMAT", "text"),
