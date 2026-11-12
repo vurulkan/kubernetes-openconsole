@@ -352,6 +352,19 @@ func TestAdminMustChangePasswordIsBlocked(t *testing.T) {
 	e.expect("GET", "/api/admin/users", tok, nil, http.StatusForbidden)
 }
 
+// 401 means "session ended" to the UI (it signs out), so a user who still has
+// to change the password gets 403 everywhere else.
+func TestMustChangePasswordIsForbiddenNotUnauthorized(t *testing.T) {
+	e := newTestEnv(t)
+	id, tok := e.user("fresh", false)
+	e.grant(id, [4]any{0, "team-a", "pods", "list"})
+	_ = e.store.UpdateUser(context.Background(), models.User{ID: id, Username: "fresh", IsActive: true, MustChangePassword: true})
+	e.expect("GET", "/api/namespaces", tok, nil, http.StatusForbidden)
+	e.expect("GET", "/api/namespaces/team-a/permissions", tok, nil, http.StatusForbidden)
+	e.expect("GET", "/api/namespaces/team-a/pods", tok, nil, http.StatusForbidden)
+	e.expect("GET", "/api/auth/me", tok, nil, http.StatusOK)
+}
+
 func TestRecordingWritesAuditDenials(t *testing.T) {
 	e := newTestEnv(t)
 	_, bob := e.user("bob", false)

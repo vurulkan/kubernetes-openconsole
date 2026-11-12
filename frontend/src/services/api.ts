@@ -67,6 +67,28 @@ const BASE_URL = '';
 
 const getToken = () => localStorage.getItem('authToken') ?? '';
 
+// The session ended (expired, revoked, account disabled): drop the token and
+// reload on the sign-in page, which says why. The reload clears all app state.
+export const endSession = () => {
+  localStorage.removeItem('authToken');
+  if (window.location.pathname !== '/login') window.location.assign('/login?expired=1');
+};
+
+// Every 401 the server sends to a signed-in user means the session is gone.
+const checkSession = (status: number) => {
+  if (status === 401 && getToken()) endSession();
+};
+
+// When the JWT runs out (ms since epoch), or null if it can't be read.
+export const tokenExpiresAt = (): number | null => {
+  try {
+    const payload = JSON.parse(atob(getToken().split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))) as { exp?: number };
+    return payload.exp ? payload.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+};
+
 const apiRequest = async <T>(path: string, options: RequestInit = {}): Promise<T> => {
   let response: Response;
   try {
@@ -85,6 +107,7 @@ const apiRequest = async <T>(path: string, options: RequestInit = {}): Promise<T
     throw new Error(`Network error while contacting the server: ${target}`);
   }
 
+  checkSession(response.status);
   if (!response.ok) {
     const contentType = response.headers.get('content-type') || '';
     const messageText = await response.text();
@@ -131,6 +154,7 @@ const formRequest = async <T>(path: string, formData: FormData): Promise<T> => {
     throw new Error(`Network error while contacting the server: ${target}`);
   }
 
+  checkSession(response.status);
   if (!response.ok) {
     const contentType = response.headers.get('content-type') || '';
     const messageText = await response.text();
@@ -173,6 +197,7 @@ const xhrRequest = async <T>(path: string, payload: unknown): Promise<T> => {
       if (request.readyState !== XMLHttpRequest.DONE) {
         return;
       }
+      checkSession(request.status);
       if (request.status >= 200 && request.status < 300) {
         try {
           resolve(JSON.parse(request.responseText) as T);
@@ -892,6 +917,7 @@ export const downloadWithAuth = async (path: string, fallbackName: string) => {
     cache: 'no-store',
     headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {},
   });
+  checkSession(response.status);
   if (!response.ok) {
     const text = await response.text();
     let message = text || response.statusText;
@@ -1039,6 +1065,7 @@ const fetchRecordingCast = async (id: number, download: boolean): Promise<Respon
     cache: 'no-store',
     headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {},
   });
+  checkSession(response.status);
   if (!response.ok) {
     const text = await response.text();
     let message = text || response.statusText;

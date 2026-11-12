@@ -104,8 +104,9 @@ complete change, reuse what the repo already has, no unrequested options or abst
 
 ## Release
 
-Feature branch `X.Y.Z-name`: every push publishes `:dev-<run>` + `:dev-latest` (test the pinned `:dev-<run>`
-before merging) → squash merge to `main` → `git tag -a vX.Y.Z` + push the tag → CI builds once
+Feature branch `X.Y.Z-name` **from `dev`**: every push publishes `:dev-<run>` + `:dev-latest` → squash merge
+into `dev` → the user tests `dev`'s pinned `:dev-<run>` on a real cluster → when the release's milestones are all
+in `dev`, squash merge `dev` to `main` → `git tag -a vX.Y.Z` + push the tag → CI builds once
 and publishes `ghcr.io/vurulkan/kubernetes-openconsole:X.Y.Z` and `:latest` (same digest, amd64 + arm64,
 GitHub attestations) → check digests, `gh attestation verify`, smoke test → `gh release create`.
 Pushes to `main` build and test but publish nothing. **Never `docker push` by hand**, never add `:<sha>` or
