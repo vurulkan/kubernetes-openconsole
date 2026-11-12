@@ -38,14 +38,14 @@ servers:
 security:
   - apiKey: []
 tags:
-  - {name: Account, description: Who you are, clusters, namespaces, your permissions, WebSocket tickets.}
-  - {name: Workloads, description: Deployments, StatefulSets, DaemonSets, HPAs, Jobs, CronJobs.}
-  - {name: Pods, description: Pods, their events, restart history and resource usage.}
-  - {name: Logs, description: Pod logs as text, or followed live over a WebSocket.}
-  - {name: Exec, description: Run one command in a container, or open an interactive shell. Always recorded.}
-  - {name: Config, description: Services, ingresses, ConfigMaps and Secrets.}
-  - {name: Events, description: Live Kubernetes events over a WebSocket.}
-  - {name: Admin, description: Users, roles, clusters, audit log, recordings. Admin only.}
+  - {name: Account, description: "Who you are, clusters, namespaces, your permissions, WebSocket tickets."}
+  - {name: Workloads, description: "Deployments, StatefulSets, DaemonSets, HPAs, Jobs, CronJobs."}
+  - {name: Pods, description: "Pods, their events, restart history and resource usage."}
+  - {name: Logs, description: "Pod logs as text, or followed live over a WebSocket."}
+  - {name: Exec, description: "Run one command in a container, or open an interactive shell. Always recorded."}
+  - {name: Config, description: "Services, ingresses, ConfigMaps and Secrets."}
+  - {name: Events, description: "Live Kubernetes events over a WebSocket."}
+  - {name: Admin, description: "Users, roles, clusters, audit log, recordings. Admin only."}
 
 components:
   securitySchemes:
@@ -418,7 +418,7 @@ paths:
       tags: [Exec]
       summary: Run one command in a container
       description: |
-        `command` is an argv array and is **not** run in a shell (for pipes, pass `["sh", "-c", "…"]`).
+        `command` is an argv array and is not run in a shell (for pipes, pass `["sh", "-c", "…"]`).
         No stdin. Output is kept up to 1 MiB per stream; the rest is dropped and `truncated` is true,
         but the command runs to its end. `timeoutSeconds` 1–120 (default 30): past it the output so far
         comes back with `exitCode: -1` and `truncated: true` (Kubernetes does not stop the process; it
@@ -805,7 +805,7 @@ paths:
 
   # ─── Admin ──────────────────────────────────────────────────────────────────
   /api/admin/overview:
-    get: {tags: [Admin], x-openconsole-admin: true, summary: Cluster overview (nodes, pods, usage), responses: {"200": {$ref: '#/components/responses/ok'}}}
+    get: {tags: [Admin], x-openconsole-admin: true, summary: 'Cluster overview (nodes, pods, usage)', responses: {"200": {$ref: '#/components/responses/ok'}}}
   /api/admin/overview/history:
     get: {tags: [Admin], x-openconsole-admin: true, summary: Cluster usage history, responses: {"200": {$ref: '#/components/responses/ok'}}}
   /api/admin/nodes:
@@ -823,7 +823,7 @@ paths:
     get: {tags: [Admin], x-openconsole-admin: true, summary: Users as CSV, responses: {"200": {description: CSV.}}}
   /api/admin/users/{id}:
     parameters: [{$ref: '#/components/parameters/id'}]
-    put: {tags: [Admin], x-openconsole-admin: true, summary: Update a user (admin, active, API access override), responses: {"200": {$ref: '#/components/responses/ok'}}}
+    put: {tags: [Admin], x-openconsole-admin: true, summary: 'Update a user (admin, active, API access override)', responses: {"200": {$ref: '#/components/responses/ok'}}}
     delete: {tags: [Admin], x-openconsole-admin: true, summary: Delete a user, responses: {"200": {$ref: '#/components/responses/ok'}}}
   /api/admin/users/{id}/groups:
     parameters: [{$ref: '#/components/parameters/id'}]
@@ -866,7 +866,7 @@ paths:
     post: {tags: [Admin], x-openconsole-admin: true, summary: Create a role, responses: {"200": {$ref: '#/components/responses/ok'}}}
   /api/admin/roles/{id}:
     parameters: [{$ref: '#/components/parameters/id'}]
-    put: {tags: [Admin], x-openconsole-admin: true, summary: Update a role (name, API access mode), responses: {"200": {$ref: '#/components/responses/ok'}}}
+    put: {tags: [Admin], x-openconsole-admin: true, summary: 'Update a role (name, API access mode)', responses: {"200": {$ref: '#/components/responses/ok'}}}
     delete: {tags: [Admin], x-openconsole-admin: true, summary: Delete a role, responses: {"200": {$ref: '#/components/responses/ok'}}}
   /api/admin/roles/{id}/permissions:
     parameters: [{$ref: '#/components/parameters/id'}]

@@ -13,6 +13,11 @@ import (
 	"k8s-dashboard/backend/internal/rbac"
 )
 
+// Every key an operation may have; another one is a YAML slip (an unquoted comma in a
+// flow mapping splits the value into keys).
+var openapiOpKeys = []string{"tags", "summary", "description", "security", "parameters", "requestBody", "responses",
+	"x-openconsole-permission", "x-openconsole-admin", "x-openconsole-api-key"}
+
 type openapiOp struct {
 	Tags       []string `json:"tags"`
 	Summary    string   `json:"summary"`
@@ -27,6 +32,7 @@ var openapiTags = []string{"Account", "Workloads", "Pods", "Logs", "Exec", "Conf
 func TestOpenAPIMatchesRouter(t *testing.T) {
 	var spec struct {
 		OpenAPI string                                `json:"openapi"`
+		Tags    []map[string]any                      `json:"tags"`
 		Paths   map[string]map[string]json.RawMessage `json:"paths"`
 	}
 	if err := json.Unmarshal(openapiJSON, &spec); err != nil {
@@ -35,6 +41,11 @@ func TestOpenAPIMatchesRouter(t *testing.T) {
 	if !strings.HasPrefix(spec.OpenAPI, "3.1") {
 		t.Fatalf("openapi = %q, want 3.1.x", spec.OpenAPI)
 	}
+	for _, tag := range spec.Tags {
+		if len(tag) != 2 || tag["name"] == nil || tag["description"] == nil {
+			t.Errorf("tag %v: wants name and description only (quote values with commas)", tag)
+		}
+	}
 	inSpec := map[string]openapiOp{}
 	for path, item := range spec.Paths {
 		for method, raw := range item {
@@ -42,8 +53,15 @@ func TestOpenAPIMatchesRouter(t *testing.T) {
 				continue
 			}
 			var op openapiOp
+			var keys map[string]json.RawMessage
 			if err := json.Unmarshal(raw, &op); err != nil {
 				t.Fatalf("%s %s: %v", method, path, err)
+			}
+			_ = json.Unmarshal(raw, &keys)
+			for k := range keys {
+				if !slices.Contains(openapiOpKeys, k) {
+					t.Errorf("%s %s: unexpected key %q (quote values with commas)", method, path, k)
+				}
 			}
 			inSpec[strings.ToUpper(method)+" "+path] = op
 		}
