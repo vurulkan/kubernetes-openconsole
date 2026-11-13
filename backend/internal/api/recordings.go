@@ -99,7 +99,7 @@ func (s *Server) handleDeleteRecording(w http.ResponseWriter, r *http.Request) {
 	stub := &models.SessionRecording{ID: id}
 	if _, ok := s.isAdminRequest(r); !ok {
 		s.recordRecordingAudit(r, audit.VerbDelete, audit.Denied, reasonAdminOnly, stub, nil)
-		writeError(w, http.StatusForbidden, "admin only")
+		writeError(w, http.StatusForbidden, reasonAdminOnly)
 		return
 	}
 	rec, err := s.recorder.Delete(r.Context(), id)
@@ -142,7 +142,7 @@ func (s *Server) handleUpdateRecordingSettings(w http.ResponseWriter, r *http.Re
 	}
 	if _, ok := s.isAdminRequest(r); !ok {
 		s.recordSettingsAudit(r, audit.Denied, reasonAdminOnly, nil)
-		writeError(w, http.StatusForbidden, "admin only")
+		writeError(w, http.StatusForbidden, reasonAdminOnly)
 		return
 	}
 	var in models.RecordingSettings

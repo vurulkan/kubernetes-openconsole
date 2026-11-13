@@ -173,7 +173,10 @@ func TestAPIKeyForbiddenEndpoints(t *testing.T) {
 		{"PUT", "/api/views/1"},
 		{"DELETE", "/api/views/1"},
 	} {
-		e.expect(c.method, c.path, key, map[string]any{}, http.StatusForbidden)
+		// The body names the reason, as the API description says.
+		if out := e.expect(c.method, c.path, key, map[string]any{}, http.StatusForbidden); !strings.Contains(out, `"api_key_not_allowed"`) {
+			t.Errorf("%s %s body = %s", c.method, c.path, out)
+		}
 	}
 	e.waitAudit("api_key.revoke.denied", "api_key_not_allowed")
 	e.waitAudit("user.change_password.denied", "api_key_not_allowed")
@@ -203,7 +206,7 @@ func TestAPIKeyAdminScope(t *testing.T) {
 		e.server.keyLimits.mu.Lock()
 		e.server.keyLimits.limiters = nil // this test calls more often than a key may
 		e.server.keyLimits.mu.Unlock()
-		if code, out := e.do(strings.ToUpper(m[1]), path, plain, map[string]any{}); code != http.StatusForbidden {
+		if code, out := e.do(strings.ToUpper(m[1]), path, plain, map[string]any{}); code != http.StatusForbidden || !strings.Contains(out, `"error"`) {
 			t.Errorf("%s %s with a key without the admin scope = %d (%.100s)", m[1], path, code, out)
 		}
 	}

@@ -341,7 +341,9 @@ func TestAdminEndpointsRequireAdmin(t *testing.T) {
 		"/api/admin/nodes", "/api/admin/api-keys", "/api/admin/api-keys/export",
 	}
 	for _, p := range adminGets {
-		e.expect("GET", p, bob, nil, http.StatusForbidden)
+		if out := e.expect("GET", p, bob, nil, http.StatusForbidden); !strings.Contains(out, `"admin_only"`) {
+			t.Errorf("GET %s body = %s", p, out)
+		}
 		e.expect("GET", p, admin, nil, http.StatusOK)
 	}
 	e.expect("POST", "/api/admin/users", bob, map[string]string{"username": "eve", "password": "Passw0rd!x"}, http.StatusForbidden)

@@ -32,7 +32,7 @@ func (s *Server) handleResetUserPassword(w http.ResponseWriter, r *http.Request)
 	}
 	if _, ok := s.isAdminRequest(r); !ok {
 		s.recordPasswordResetAudit(r, "id:"+strconv.Itoa(id), audit.Denied, reasonAdminOnly, nil)
-		writeError(w, http.StatusForbidden, "admin only")
+		writeError(w, http.StatusForbidden, reasonAdminOnly)
 		return
 	}
 	target, err := s.store.GetUserByID(r.Context(), id)

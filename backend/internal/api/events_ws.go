@@ -28,7 +28,7 @@ func (s *Server) handleEventsWS(w http.ResponseWriter, r *http.Request) {
 	// shortcut: grants are read when the socket opens; a revoked one applies on reconnect.
 	engine, ok := s.engineForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusForbidden)
+		writeError(w, http.StatusForbidden, reasonForbidden)
 		return
 	}
 	if user.IsAdmin && apiKeyFrom(r.Context()) == nil {
