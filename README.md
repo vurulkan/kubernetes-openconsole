@@ -41,7 +41,7 @@ Every read and write is an audit event with its own fields: `action` (`deploymen
 - **Login brute-force protection** (5 fails per IP+user → 5-minute lock, audited). Every sign-in is audited as `user.login` with the outcome (`success` / `failed` / `locked`), the method (`login_method`: `local` / `ldap` / `azure`) and, for a failure, the reason.
 
 ### API & AI agents
-- **API keys** (account menu → API keys) for Claude Code, Cursor or your own scripts: `oc_…` keys limited to chosen clusters, namespaces and a permission matrix, never more than their owner holds at the time of the call; expiry, regenerate, revoke. The key is shown once and stored as a SHA-256 hash. Every call is audited with the user **and the key's name**; shells and commands run with a key are always recorded.
+- **API keys** (account menu → API keys) for Claude Code, Cursor or your own scripts: `oc_…` keys limited to chosen clusters, namespaces and a permission matrix, never more than their owner holds at the time of the call; expiry, regenerate, revoke. The key is shown once and stored as a SHA-256 hash. Every action and resource read is audited with the user **and the key's name**; shells and commands run with a key are always recorded.
 - **Admin policy** — per role, how much of it a key may get (Off / Safe read-only / All of the role's permissions), a per-user override, an expiry policy (longest lifetime, no-expiry allowed or not), and Admin → API keys: every user's keys, revoke with a reason, CSV.
 - **OpenAPI 3.1** at `/api/openapi.json` (no sign-in) and an in-app **Documentation** tab: quick start, a text to hand your agent, every endpoint with its permission and a `curl` example, greyed out where your keys can't reach it.
 - **No WebSocket needed** — a pod's log as text (`GET …/pods/{name}/logs`) and one command with its output and exit code (`POST …/pods/{name}/exec`; the audit log keeps the program name, never the command line).
@@ -558,7 +558,7 @@ Templates in the Add Permissions modal: Viewer (read only, including secret *met
 
 # API and agents
 
-An API key lets your AI agent (Claude Code, Cursor, …) or a script call the OpenConsole API in your name. Every call is audited with your user **and the key's name**. Open it from the account menu (your name, top right) → **API keys**, or `⌘K` → *Go to API keys*.
+An API key lets your AI agent (Claude Code, Cursor, …) or a script call the OpenConsole API in your name. Every action and every resource read is audited with your user **and the key's name**. Open it from the account menu (your name, top right) → **API keys**, or `⌘K` → *Go to API keys*.
 
 **Creating one.** Name and note; expiry (7 / 30 / 60 / 90 days, a date, or none — a key without an expiry stays valid until you revoke it; the admin can limit both, see *Expiry policy* below); scope: all clusters or one, all your namespaces (including ones you get later) or a selection; then a template and the permission matrix:
 
@@ -631,7 +631,7 @@ The policy never changes a key: a cell it takes away stops working (the key list
 
 **Admin → API keys** lists every user's keys: owner, name, prefix (never the secret), permissions, last use and IP, expiry and status; filter by owner, status, *Includes exec*, *Admin API*, *Outside the expiry policy*; **Revoke** with an optional reason (audited as `api_key.revoke` with `by_admin`, `owner`, `comment`); **Export CSV**. An admin can't edit another user's key. These screens, and `GET /api/admin/api-keys`, `…/export`, `POST /api/admin/api-keys/{id}/revoke`, `POST /api/admin/users/{id}/revoke-api-keys`, work with a web session only, never with a key (also not an Admin API key). `GET /api/admin/users/{id}/api-access?override=` is the preview.
 
-**Audit.** Every call carries `api_key_id` / `api_key_name` (Admin → Audit Logs: *Source* = Web / API key, key name). Key events: `api_key.create` / `update` / `regenerate` / `revoke` / `delete`, and `api_key.use` with outcome `denied` (`expired`, `revoked`, `owner_inactive`, `must_change_password`, `api_access_off`) or `rate_limited`; these are written at most once a minute per key and reason, so an agent retrying with a dead key can't flood the log (every request still gets its 401 / 403 / 429). An unknown key has no user, so it is only a warning line in the console log, with the source IP. Successful reads with a key are kept `API_KEY_READ_RETENTION_DAYS` (7).
+**Audit.** Every audit event made with a key carries `api_key_id` / `api_key_name` (Admin → Audit Logs: *Source* = Web / API key, key name; the CSV has `api_key_name`). Calls that read no cluster resource, `/api/auth/me`, `/api/ws-ticket`, `/api/features`, `/api/version`, `/api/openapi.json`, are not audited; the request log still has them. Key events: `api_key.create` / `update` / `regenerate` / `revoke` / `delete`, and `api_key.use` with outcome `denied` (`expired`, `revoked`, `owner_inactive`, `must_change_password`, `api_access_off`) or `rate_limited`; these are written at most once a minute per key and reason, so an agent retrying with a dead key can't flood the log (every request still gets its 401 / 403 / 429). An unknown key has no user, so it is only a warning line in the console log, with the source IP. Successful reads with a key are kept `API_KEY_READ_RETENTION_DAYS` (7).
 
 ---
 

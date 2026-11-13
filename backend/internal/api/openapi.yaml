@@ -12,7 +12,7 @@ info:
   title: OpenConsole API
   version: "2.22"
   description: |
-    Kubernetes workloads across several clusters, limited to what your roles allow; every call is audited.
+    Kubernetes workloads across several clusters, limited to what your roles allow; every action is audited.
 
     **Sign in with an API key:** `Authorization: Bearer oc_…` (create one under your account → API keys).
     A key can do at most what its owner can, as far as the admin's API access policy lets keys go, and only
@@ -32,7 +32,8 @@ info:
       `feature_disabled` (switched off by the operator), `admin_only`.
     - `429`: too many requests (10 per second per key, bursts of 30) or too many open shells / log streams.
 
-    Every call made with a key is written to the audit log with the key's name, reads included.
+    Every action and every resource read made with a key is written to the audit log with the key's name;
+    helper calls such as `/api/auth/me` and `/api/ws-ticket` are not.
 servers:
   - url: /
 security:
