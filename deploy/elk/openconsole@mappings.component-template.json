@@ -249,6 +249,15 @@
             "phase": {
               "type": "keyword"
             },
+            "mode": {
+              "type": "keyword"
+            },
+            "program": {
+              "type": "keyword"
+            },
+            "recording_id": {
+              "type": "keyword"
+            },
             "duration_ms": {
               "type": "long"
             },
@@ -332,6 +341,31 @@
             },
             "summary": {
               "type": "match_only_text"
+            },
+            "admin_scope": {
+              "type": "boolean"
+            },
+            "expires_at": {
+              "type": "date"
+            },
+            "api_access": {
+              "type": "keyword"
+            },
+            "by_admin": {
+              "type": "boolean"
+            },
+            "comment": {
+              "type": "match_only_text"
+            },
+            "api_key": {
+              "properties": {
+                "id": {
+                  "type": "long"
+                },
+                "name": {
+                  "type": "keyword"
+                }
+              }
             }
           }
         },

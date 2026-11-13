@@ -81,6 +81,10 @@ func consoleAttrs(e models.AuditLog) []slog.Attr {
 	add("request_id", e.RequestID)
 	add("remote_ip", e.SourceIP)
 	add("user_agent", e.UserAgent)
+	if e.APIKeyID > 0 {
+		attrs = append(attrs, slog.Int("api_key_id", e.APIKeyID))
+	}
+	add("api_key_name", e.APIKeyName)
 	attrs = append(attrs, detailAttrs(e.Details)...)
 	return attrs
 }
@@ -92,7 +96,10 @@ var auditMetricHook func()
 // SetMetricHook installs the counter callback.
 func SetMetricHook(h func()) { auditMetricHook = h }
 
-func (l *Logger) StartRetention(ctx context.Context, retentionDays int, interval time.Duration) {
+// StartRetention purges audit entries older than retentionDays, and
+// successful API key reads older than keyReadDays (they are by far the
+// largest share: an agent reads a lot).
+func (l *Logger) StartRetention(ctx context.Context, retentionDays, keyReadDays int, interval time.Duration) {
 	if retentionDays <= 0 {
 		return
 	}
@@ -106,6 +113,9 @@ func (l *Logger) StartRetention(ctx context.Context, retentionDays int, interval
 			case <-ticker.C:
 				cutoff := time.Now().UTC().Add(-time.Duration(retentionDays) * 24 * time.Hour)
 				_ = l.store.PurgeAuditLogs(context.Background(), cutoff)
+				if keyReadDays > 0 {
+					_ = l.store.PurgeAPIKeyReads(context.Background(), time.Now().UTC().Add(-time.Duration(keyReadDays)*24*time.Hour))
+				}
 			}
 		}
 	}()

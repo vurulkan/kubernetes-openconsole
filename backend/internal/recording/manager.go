@@ -180,7 +180,7 @@ func validate(s *models.RecordingSettings) error {
 // error means the file or DB row could not be created.
 func (m *Manager) Start(ctx context.Context, meta Meta) (*Session, error) {
 	settings := m.Settings()
-	if !settings.Enabled {
+	if !settings.Enabled && meta.APIKeyID == 0 {
 		return nil, ErrDisabled
 	}
 	if m.dirErr != nil {
@@ -199,15 +199,18 @@ func (m *Manager) Start(ctx context.Context, meta Meta) (*Session, error) {
 	}
 	start := time.Now()
 	rowID, err := m.store.CreateRecording(ctx, models.SessionRecording{
-		SessionID: sessionID,
-		User:      meta.User,
-		Cluster:   meta.Cluster,
-		Namespace: meta.Namespace,
-		Pod:       meta.Pod,
-		Container: meta.Container,
-		StartedAt: start,
-		RequestID: meta.RequestID,
-		Path:      path,
+		SessionID:  sessionID,
+		User:       meta.User,
+		Cluster:    meta.Cluster,
+		Namespace:  meta.Namespace,
+		Pod:        meta.Pod,
+		Container:  meta.Container,
+		StartedAt:  start,
+		RequestID:  meta.RequestID,
+		Path:       path,
+		APIKeyID:   meta.APIKeyID,
+		APIKeyName: meta.APIKeyName,
+		Mode:       meta.Mode,
 	})
 	if err != nil {
 		_ = f.Close()

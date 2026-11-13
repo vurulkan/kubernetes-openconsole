@@ -21,6 +21,8 @@ import { RecordingSettingsPanel, RecordingsSection } from './admin/RecordingsSec
 import { RolePermissionsPanel } from './admin/RolePermissionsPanel';
 import { useTranslation } from 'react-i18next';
 import { RolesSection } from './admin/RolesSection';
+import { ApiKeysSection } from './admin/ApiKeysSection';
+import { RoleApiAccessField, UserApiAccessField } from './admin/ApiAccessParts';
 import { PrometheusSettingsModal } from './admin/PrometheusSettings';
 import { useScopedShortcuts } from '../hooks/useScopedShortcuts';
 import { confirm } from '../components/ConfirmDialog';
@@ -67,6 +69,10 @@ import {
   testAzureAdConnection,
   getSession,
   updateSession,
+  getFeatures,
+  type ApiAccess,
+  type ApiAccessOverride,
+  type Role,
   getCluster,
   updateCluster,
   validateCluster,
@@ -109,6 +115,7 @@ const emptyAuditFacets: AuditFacets = {
   verbs: [],
   resourceTypes: [],
   clusters: [],
+  apiKeys: [],
 };
 
 const ADMIN_TABS: Array<{
@@ -126,6 +133,7 @@ const ADMIN_TABS: Array<{
   { label: 'Customization', value: 'customization', icon: ImageIcon },
   { label: 'Audit Logs', value: 'audit', icon: FileText },
   { label: 'Sessions', value: 'sessions', icon: KeyRound },
+  { label: 'API keys', value: 'api-keys', icon: KeyRound },
   { label: 'Recordings', value: 'recordings', icon: Video },
 ];
 
@@ -135,7 +143,7 @@ const TAB_I18N_KEY: Record<string, string> = {
   users: 'users', groups: 'groups', roles: 'roles',
   ldap: 'ldap', 'azure-ad': 'azure', session: 'session',
   clusters: 'clusters', customization: 'customization',
-  audit: 'audit', sessions: 'sessions', recordings: 'recordings',
+  audit: 'audit', sessions: 'sessions', recordings: 'recordings', 'api-keys': 'apiKeys',
 };
 
 // Classic role-permission form defaults; also what the form resets to after
@@ -230,7 +238,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
   const [error, setError] = useState<string | null>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [groups, setGroups] = useState<Array<{ id: number; name: string }>>([]);
-  const [roles, setRoles] = useState<Array<{ id: number; name: string; description: string }>>([]);
+  const [roles, setRoles] = useState<Role[]>([]);
   const [userGroups, setUserGroupsState] = useState<
     Record<number, Array<{ id: number; name: string }>>
   >({});
@@ -285,6 +293,12 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
   } | null>(null);
   const [ldapUpdatePassword, setLdapUpdatePassword] = useState(false);
   const [sessionMinutes, setSessionMinutes] = useState(60);
+  const [apiKeyMaxDays, setApiKeyMaxDays] = useState(0);
+  const [apiKeyAllowNoExpiry, setApiKeyAllowNoExpiry] = useState(true);
+  const [apiKeysOn, setApiKeysOn] = useState(true);
+  useEffect(() => {
+    void getFeatures().then((f) => setApiKeysOn(f.api_keys !== false));
+  }, []);
   const [cluster, setCluster] = useState({
     method: '',
     server: '',
@@ -302,6 +316,8 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
   const [auditVerb, setAuditVerb] = useState('');
   const [auditResourceType, setAuditResourceType] = useState('');
   const [auditCluster, setAuditCluster] = useState('');
+  const [auditSource, setAuditSource] = useState<AuditQuery['source']>('');
+  const [auditApiKey, setAuditApiKey] = useState('');
   const [auditFacets, setAuditFacets] = useState<AuditFacets>(emptyAuditFacets);
   const [auditNamespaceFilter, setAuditNamespaceFilter] = useState('');
   const [auditStartDate, setAuditStartDate] = useState('');
@@ -386,6 +402,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     isActive: boolean;
     isAdmin: boolean;
     groupIds: number[];
+    apiAccessOverride: ApiAccessOverride;
   }>(null);
   const [editingGroup, setEditingGroup] = useState<null | {
     id: number;
@@ -396,6 +413,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     id: number;
     name: string;
     description: string;
+    apiAccess: ApiAccess;
   }>(null);
   const [usersFilter, setUsersFilter] = useState('');
   const [groupsFilter, setGroupsFilter] = useState('');
@@ -426,7 +444,11 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     caCertBase64: string;
   } | null>(null);
   const [newGroup, setNewGroup] = useState('');
-  const [newRole, setNewRole] = useState({ name: '', description: '' });
+  const [newRole, setNewRole] = useState<{ name: string; description: string; apiAccess: ApiAccess }>({
+    name: '',
+    description: '',
+    apiAccess: 'safe_read',
+  });
   const [clusterConfig, setClusterConfig] = useState({
     method: 'kubeconfig',
     kubeconfigBase64: '',
@@ -496,6 +518,8 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     outcome: auditOutcome,
     resourceType: auditResourceType,
     cluster: auditCluster,
+    source: auditSource,
+    apiKey: auditApiKey,
     namespace: auditNamespaceFilter,
     start: auditStartDate,
     end: auditEndDate,
@@ -572,7 +596,11 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
       });
       setAzureAdUpdateSecret(false);
     }
-    if (sessionResult.status === 'fulfilled') setSessionMinutes(sessionResult.value.sessionMinutes);
+    if (sessionResult.status === 'fulfilled') {
+      setSessionMinutes(sessionResult.value.sessionMinutes);
+      setApiKeyMaxDays(sessionResult.value.apiKeyMaxDays);
+      setApiKeyAllowNoExpiry(sessionResult.value.apiKeyAllowNoExpiry);
+    }
     if (clusterResult.status === 'fulfilled') {
       const c = clusterResult.value;
       setCluster({
@@ -649,6 +677,8 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     auditVerb,
     auditResourceType,
     auditCluster,
+    auditSource,
+    auditApiKey,
     auditNamespaceFilter,
     auditStartDate,
     auditEndDate,
@@ -679,7 +709,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
   const handleCreateRole = async () => {
     if (!newRole.name) return;
     await createRole(newRole);
-    setNewRole({ name: '', description: '' });
+    setNewRole({ name: '', description: '', apiAccess: 'safe_read' });
     await refresh();
   };
 
@@ -865,7 +895,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
   };
 
   const handleSaveSession = async () => {
-    await updateSession({ sessionMinutes });
+    await updateSession({ sessionMinutes, apiKeyMaxDays, apiKeyAllowNoExpiry });
     await refresh();
   };
 
@@ -997,7 +1027,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
       panelTitle="Admin"
       panel={
         <nav aria-label={tr('nav.admin')} className="flex flex-col gap-0.5 p-2">
-          {ADMIN_TABS.map((entry) => {
+          {ADMIN_TABS.filter((entry) => apiKeysOn || entry.value !== 'api-keys').map((entry) => {
             const Icon = entry.icon;
             const active = tab === entry.value;
             const label = tr(`admin.tabs.${TAB_I18N_KEY[entry.value] ?? entry.value}`, { defaultValue: entry.label });
@@ -1072,6 +1102,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   isActive: u.isActive,
                   isAdmin: u.isAdmin,
                   groupIds: (userGroups[u.id] ?? []).map((g) => g.id),
+                  apiAccessOverride: u.apiAccessOverride ?? '',
                 })
               }
               onDelete={async (u) => {
@@ -1144,11 +1175,11 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                 filter={rolesFilter}
                 onFilter={setRolesFilter}
                 onNew={() => {
-                  setNewRole({ name: '', description: '' });
+                  setNewRole({ name: '', description: '', apiAccess: 'safe_read' });
                   setShowCreateRole(true);
                 }}
                 onEdit={(r) =>
-                  setEditingRole({ id: r.id, name: r.name, description: r.description })
+                  setEditingRole({ id: r.id, name: r.name, description: r.description, apiAccess: r.apiAccess })
                 }
                 onDelete={async (r) => {
                   const ok = await confirm({
@@ -1603,6 +1634,27 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
               />
               <Button variant="primary" size="sm" className="mt-4" onClick={handleSaveSession}>
                 Save Session
+              </Button>
+            </SectionCard>
+          )}
+          {tab === 'session' && apiKeysOn && (
+            <SectionCard title={tr('admin.sections.apiKeyExpiry')} description={tr('admin.cards.apiKeyExpiryDesc')}>
+              <div className="flex flex-col gap-3">
+                <Input
+                  label={tr('admin.apiKeyMaxDays')}
+                  type="number"
+                  min={0}
+                  max={3650}
+                  value={apiKeyMaxDays || ''}
+                  placeholder={tr('admin.apiKeyNoLimit')}
+                  onChange={(e) => setApiKeyMaxDays(Math.max(0, Number(e.target.value) || 0))}
+                  className="w-60"
+                />
+                <Checkbox checked={apiKeyAllowNoExpiry} onChange={setApiKeyAllowNoExpiry} label={tr('admin.apiKeyAllowNoExpiry')} />
+                <p className="text-xs text-slate-500 dark:text-slate-400">{tr('admin.apiKeyExpiryExisting')}</p>
+              </div>
+              <Button variant="primary" size="sm" className="mt-4" onClick={handleSaveSession}>
+                {tr('actions.save')}
               </Button>
             </SectionCard>
           )}
@@ -2167,6 +2219,31 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                     </option>
                   ))}
                 </NativeSelect>
+                <NativeSelect
+                  label={tr('admin.audit.filterSource')}
+                  value={auditSource}
+                  onChange={(e) => {
+                    setAuditOffset(0);
+                    setAuditSource(e.target.value as AuditQuery['source']);
+                    if (e.target.value !== 'api_key') setAuditApiKey('');
+                  }}
+                >
+                  <option value="">{tr('admin.audit.outcomeAny')}</option>
+                  <option value="web">{tr('admin.audit.sourceWeb')}</option>
+                  <option value="api_key">{tr('admin.audit.sourceApiKey')}</option>
+                </NativeSelect>
+                {auditSource === 'api_key' && (
+                  <Combobox
+                    label={tr('admin.audit.filterApiKey')}
+                    value={auditApiKey}
+                    options={auditFacets.apiKeys ?? []}
+                    onChange={(v) => {
+                      setAuditOffset(0);
+                      setAuditApiKey(v);
+                    }}
+                    className="w-44"
+                  />
+                )}
                 <Combobox
                   label={tr('admin.audit.filterNamespace')}
                   value={auditNamespaceFilter}
@@ -2229,6 +2306,12 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   {tr('admin.audit.next')}
                 </Button>
               </div>
+            </SectionCard>
+          )}
+
+          {tab === 'api-keys' && (
+            <SectionCard title={tr('admin.sections.apiKeys')} description={tr('admin.cards.apiKeysDesc')}>
+              <ApiKeysSection users={users} />
             </SectionCard>
           )}
 
@@ -2375,6 +2458,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
               username: editingUser.username,
               isActive: editingUser.isActive,
               isAdmin: editingUser.isAdmin,
+              apiAccessOverride: editingUser.apiAccessOverride,
             });
             await setUserGroups(editingUser.id, editingUser.groupIds);
             await refresh();
@@ -2443,6 +2527,13 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                 placeholder={tr("common.assignGroups")}
                 noOptionsText="No groups found"
               />
+              {apiKeysOn && (
+                <UserApiAccessField
+                  userId={editingUser.id}
+                  value={editingUser.apiAccessOverride}
+                  onChange={(v) => setEditingUser({ ...editingUser, apiAccessOverride: v })}
+                />
+              )}
               <button type="submit" className="hidden" aria-hidden="true" />
             </form>
           </Modal>
@@ -2628,6 +2719,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                 value={newRole.description}
                 onChange={(e) => setNewRole({ ...newRole, description: e.target.value })}
               />
+              <RoleApiAccessField value={newRole.apiAccess} onChange={(v) => setNewRole({ ...newRole, apiAccess: v })} />
               <button type="submit" className="hidden" aria-hidden="true" />
             </form>
           </Modal>
@@ -2644,6 +2736,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
             await updateRole(editingRole.id, {
               name: editingRole.name,
               description: editingRole.description,
+              apiAccess: editingRole.apiAccess,
             });
             await refresh();
             setEditingRole(null);
@@ -2688,6 +2781,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                 value={editingRole.description}
                 onChange={(e) => setEditingRole({ ...editingRole, description: e.target.value })}
               />
+              <RoleApiAccessField value={editingRole.apiAccess} onChange={(v) => setEditingRole({ ...editingRole, apiAccess: v })} />
               <button type="submit" className="hidden" aria-hidden="true" />
             </form>
           </Modal>

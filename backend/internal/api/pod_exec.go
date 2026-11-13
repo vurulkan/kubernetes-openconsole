@@ -111,8 +111,9 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 	requestID := logging.RequestIDFrom(r.Context())
 
 	if !s.can(r.Context(), claims.UserID, namespace, "pods", "exec") {
-		s.recordExecAudit(r, namespace, pod, audit.Denied, reasonForbidden, nil)
-		w.WriteHeader(http.StatusForbidden)
+		reason := s.denyReason(r.Context(), namespace, "pods", "exec")
+		s.recordExecAudit(r, namespace, pod, audit.Denied, reason, nil)
+		writeError(w, http.StatusForbidden, reason)
 		return
 	}
 
@@ -157,15 +158,12 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		slog.Warn("exec ws upgrade failed", slog.Any("error", err), slog.String("request_id", requestID))
+	if !websocket.IsWebSocketUpgrade(r) {
+		// Checked before a recording is opened for a session that never starts.
+		writeError(w, http.StatusBadRequest, "a WebSocket upgrade is required")
 		return
 	}
-	defer conn.Close()
-	writeExecSessionInfo(conn)
-
+	// Built before a recording is opened, so a failure leaves none behind.
 	req := client.CoreV1().RESTClient().Post().
 		Resource("pods").
 		Name(pod).
@@ -182,16 +180,36 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 
 	executor, err := remotecommand.NewSPDYExecutor(cfg, "POST", req.URL())
 	if err != nil {
-		writeExecError(conn, "spdy init failed: "+err.Error())
 		s.recordExecAudit(r, namespace, pod, audit.Failed, "spdy_init", failDetails(err, audit.D{"container": container, "command": command}))
+		writeError(w, http.StatusBadGateway, "spdy init failed: "+err.Error())
 		return
 	}
 
-	// Recording is fail-open: if it can't start, the shell still opens and
-	// the reason lands in the audit log. The client only shows the
-	// "being recorded" banner when it receives the recording frame.
-	rec := s.startExecRecording(r, conn, claims.Username, namespace, pod, container, requestID)
+	// Recording is fail-open for a web session: if it can't start, the shell
+	// still opens and the reason lands in the audit log. The client only
+	// shows the "being recorded" banner when it receives the recording frame.
+	rec := s.startExecRecording(r, claims.Username, namespace, pod, container, requestID, models.RecordingModeShell)
 	defer rec.Close()
+	if rec == nil && claims.APIKey != nil {
+		// A shell opened with an API key runs with nobody watching: no recording, no shell.
+		s.recordExecAudit(r, namespace, pod, audit.Failed, "recording_unavailable", audit.D{"container": container, "command": command})
+		writeError(w, http.StatusServiceUnavailable, "the session cannot be recorded, and a shell opened with an API key always is; try again later")
+		return
+	}
+
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		slog.Warn("exec ws upgrade failed", slog.Any("error", err), slog.String("request_id", requestID))
+		return
+	}
+	defer conn.Close()
+	writeExecSessionInfo(conn)
+	if rec != nil {
+		// Sent before the bridge starts, so no concurrent writer yet.
+		_ = conn.WriteMessage(websocket.TextMessage,
+			[]byte(`{"type":"recording","enabled":true,"sessionId":`+jsonString(rec.ID())+`}`))
+	}
 
 	start := time.Now()
 	MetricsExecIncr()
@@ -257,31 +275,34 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// startExecRecording opens a recording for the session and tells the client
-// about it. Returns nil (which the bridge treats as "not recording") when
-// recording is off, refused by the disk guard, or failed to start.
-func (s *Server) startExecRecording(r *http.Request, conn *websocket.Conn, user, namespace, pod, container, requestID string) *recording.Session {
+// startExecRecording opens a recording for the session. Returns nil (which
+// the bridge treats as "not recording") when recording is off, refused by
+// the disk guard, or failed to start.
+func (s *Server) startExecRecording(r *http.Request, user, namespace, pod, container, requestID, mode string) *recording.Session {
 	if s.recorder == nil {
 		return nil
 	}
 	cluster := clusterFrom(r.Context()).Name
 	cols, _ := strconv.ParseUint(r.URL.Query().Get("cols"), 10, 16)
 	rows, _ := strconv.ParseUint(r.URL.Query().Get("rows"), 10, 16)
-	rec, err := s.recorder.Start(r.Context(), recording.Meta{
+	key := apiKeyFrom(r.Context())
+	meta := recording.Meta{
 		User:      user,
 		Cluster:   cluster,
 		Namespace: namespace,
 		Pod:       pod,
 		Container: container,
 		RequestID: requestID,
+		Mode:      mode,
 		Cols:      uint16(cols),
 		Rows:      uint16(rows),
-	})
+	}
+	if key != nil {
+		meta.APIKeyID, meta.APIKeyName = key.ID, key.Name
+	}
+	rec, err := s.recorder.Start(r.Context(), meta)
 	switch {
 	case err == nil:
-		// Sent before the bridge starts, so no concurrent writer yet.
-		_ = conn.WriteMessage(websocket.TextMessage,
-			[]byte(`{"type":"recording","enabled":true,"sessionId":`+jsonString(rec.ID())+`}`))
 		return rec
 	case errors.Is(err, recording.ErrDisabled):
 	case errors.Is(err, recording.ErrNoSpace):

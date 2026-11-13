@@ -160,8 +160,9 @@ func (e *testEnv) token(userID int, name string) string {
 }
 
 // grant gives the user a role with the given "cluster:ns:resource:action"
-// tuples (cluster 0 = all clusters).
-func (e *testEnv) grant(userID int, perms ...[4]any) {
+// tuples (cluster 0 = all clusters) and returns the role's id. The role has
+// the default API access mode (safe_read).
+func (e *testEnv) grant(userID int, perms ...[4]any) int {
 	e.t.Helper()
 	ctx := context.Background()
 	suffix := time.Now().Format("150405.000000000")
@@ -185,6 +186,7 @@ func (e *testEnv) grant(userID int, perms ...[4]any) {
 	if err := e.store.SetUserGroups(ctx, userID, append(groups, groupID)); err != nil {
 		e.t.Fatal(err)
 	}
+	return roleID
 }
 
 func (e *testEnv) do(method, path, token string, body any) (int, string) {
@@ -302,6 +304,27 @@ func TestLoginLockout(t *testing.T) {
 	e.waitAudit("user.login.locked", "")
 }
 
+// The API description needs no sign-in; the one-command exec and the REST log
+// are pods:exec / pods:logs in the path's namespace.
+func TestOpenAPIAndAgentEndpoints(t *testing.T) {
+	e := newTestEnv(t)
+	fakeCommands(t)
+	e.runningPod()
+	if out := e.expect("GET", "/api/openapi.json", "", nil, http.StatusOK); !strings.Contains(out, `"openapi":"3.1.0"`) {
+		t.Fatalf("openapi.json = %.100s", out)
+	}
+	bobID, bob := e.user("bob", false)
+	e.grant(bobID, [4]any{0, "team-a", "pods", "logs"})
+	cmd := map[string]any{"command": []string{"cat", "/etc/os-release"}}
+	e.expect("GET", "/api/namespaces/team-a/pods/app-1/logs", bob, nil, http.StatusOK)
+	e.expect("POST", "/api/namespaces/team-a/pods/app-1/exec", bob, cmd, http.StatusForbidden)
+	e.grant(bobID, [4]any{0, "team-a", "pods", "exec"})
+	e.expect("POST", "/api/namespaces/team-a/pods/app-1/exec", bob, cmd, http.StatusOK)
+	e.expect("GET", "/api/namespaces/team-b/pods/api-1/logs", bob, nil, http.StatusForbidden)
+	e.expect("POST", "/api/namespaces/team-b/pods/api-1/exec", bob, cmd, http.StatusForbidden)
+	e.expect("POST", "/api/namespaces/team-a/pods/app-1/exec", "", cmd, http.StatusUnauthorized)
+}
+
 // ─── Admin-only surface ─────────────────────────────────────────────────────
 
 func TestAdminEndpointsRequireAdmin(t *testing.T) {
@@ -315,10 +338,12 @@ func TestAdminEndpointsRequireAdmin(t *testing.T) {
 		"/api/admin/users", "/api/admin/groups", "/api/admin/roles", "/api/admin/ldap",
 		"/api/admin/azure-ad", "/api/admin/clusters", "/api/admin/audit-logs",
 		"/api/admin/sessions", "/api/admin/recordings", "/api/admin/recordings/settings", "/api/admin/overview",
-		"/api/admin/nodes",
+		"/api/admin/nodes", "/api/admin/api-keys", "/api/admin/api-keys/export",
 	}
 	for _, p := range adminGets {
-		e.expect("GET", p, bob, nil, http.StatusForbidden)
+		if out := e.expect("GET", p, bob, nil, http.StatusForbidden); !strings.Contains(out, `"admin_only"`) {
+			t.Errorf("GET %s body = %s", p, out)
+		}
 		e.expect("GET", p, admin, nil, http.StatusOK)
 	}
 	e.expect("POST", "/api/admin/users", bob, map[string]string{"username": "eve", "password": "Passw0rd!x"}, http.StatusForbidden)
@@ -350,6 +375,19 @@ func TestAdminMustChangePasswordIsBlocked(t *testing.T) {
 	id, tok := e.user("fresh-admin", true)
 	_ = e.store.UpdateUser(context.Background(), models.User{ID: id, Username: "fresh-admin", IsActive: true, IsAdmin: true, MustChangePassword: true})
 	e.expect("GET", "/api/admin/users", tok, nil, http.StatusForbidden)
+}
+
+// 401 means "session ended" to the UI (it signs out), so a user who still has
+// to change the password gets 403 everywhere else.
+func TestMustChangePasswordIsForbiddenNotUnauthorized(t *testing.T) {
+	e := newTestEnv(t)
+	id, tok := e.user("fresh", false)
+	e.grant(id, [4]any{0, "team-a", "pods", "list"})
+	_ = e.store.UpdateUser(context.Background(), models.User{ID: id, Username: "fresh", IsActive: true, MustChangePassword: true})
+	e.expect("GET", "/api/namespaces", tok, nil, http.StatusForbidden)
+	e.expect("GET", "/api/namespaces/team-a/permissions", tok, nil, http.StatusForbidden)
+	e.expect("GET", "/api/namespaces/team-a/pods", tok, nil, http.StatusForbidden)
+	e.expect("GET", "/api/auth/me", tok, nil, http.StatusOK)
 }
 
 func TestRecordingWritesAuditDenials(t *testing.T) {

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Gauge, Github, Home, KeyRound, Keyboard, LogOut, Menu, Radio, Server, Settings, ShieldCheck, X } from 'lucide-react';
+import { ChevronDown, Gauge, Github, Home, KeyRound, Keyboard, LockKeyhole, LogOut, Menu, Radio, Server, Settings, ShieldCheck, X } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button } from './ui';
@@ -7,7 +7,8 @@ import { ThemeToggle } from './ThemeProvider';
 import ClusterSwitcher from './ClusterSwitcher';
 import LocaleSwitcher from './LocaleSwitcher';
 import { dispatchOpenShortcuts, dispatchToggleEvents } from '../hooks/useGlobalShortcuts';
-import { getVersion, PROJECT_URL, User } from '../services/api';
+import { getFeatures, getVersion, PROJECT_URL, User } from '../services/api';
+import { MenuPopover, menuItemClass } from './MenuPopover';
 
 type Props = {
   user: User;
@@ -72,9 +73,19 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, liveEvents, children
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { t } = useTranslation();
   const [version, setVersion] = useState('');
+  const [apiKeysOn, setApiKeysOn] = useState(true);
+  const [userMenu, setUserMenu] = useState<HTMLElement | null>(null);
   useEffect(() => {
     void getVersion().then(setVersion);
+    void getFeatures().then((f) => setApiKeysOn(f.api_keys !== false));
   }, []);
+  // The account menu: API keys, and the password for local accounts (LDAP / Azure AD users change it in the directory).
+  const accountItems = [
+    ...(apiKeysOn ? [{ key: 'apiKeys', label: t('nav.apiKeys'), icon: KeyRound, path: '/account/api-keys' }] : []),
+    ...((user.authSource ?? 'local') === 'local'
+      ? [{ key: 'password', label: t('nav.changePassword'), icon: LockKeyhole, path: '/change-password' }]
+      : []),
+  ];
   const RAIL_LABELS: Record<string, string> = {
     overview: t('nav.overview'),
     nodes: t('nav.nodes'),
@@ -157,33 +168,47 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, liveEvents, children
           </span>
           <LocaleSwitcher className="hidden sm:inline-flex" />
           <ThemeToggle className="hidden sm:inline-flex" />
-          <div className="hidden items-center gap-2 pr-2 sm:flex">
-            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-50 dark:bg-brand-500/15 text-xs font-semibold text-brand-700 dark:text-brand-200 ring-1 ring-inset ring-brand-200 dark:ring-brand-500/30">
+          <button
+            type="button"
+            aria-haspopup="menu"
+            aria-expanded={userMenu !== null}
+            aria-label={t('nav.accountMenu', { name: user.username })}
+            disabled={accountItems.length === 0}
+            onClick={(e) => setUserMenu(userMenu ? null : e.currentTarget)}
+            className="hidden cursor-pointer items-center gap-2 rounded-lg py-1 pl-1 pr-2 transition-colors hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 disabled:cursor-default disabled:hover:bg-transparent dark:hover:bg-slate-800 sm:flex"
+          >
+            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-50 dark:bg-brand-500/15 text-xs font-semibold text-brand-700 dark:text-brand-200 ring-1 ring-inset ring-brand-200 dark:ring-brand-500/30">
               {(user.username ?? '?').slice(0, 1).toUpperCase()}
-            </div>
-            <div className="flex flex-col leading-tight">
-              <span className="text-xs font-medium text-slate-900 dark:text-slate-100">
-                {user.username}
-              </span>
+            </span>
+            <span className="flex flex-col text-left leading-tight">
+              <span className="text-xs font-medium text-slate-900 dark:text-slate-100">{user.username}</span>
               {user.isAdmin && (
                 <span className="text-[10px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
                   {t('nav.administrator')}
                 </span>
               )}
-            </div>
-            {/* LDAP / Azure AD users change their password in the directory. */}
-            {(user.authSource ?? 'local') === 'local' && (
-              <button
-                type="button"
-                onClick={() => navigate('/change-password')}
-                title={t('nav.changePassword')}
-                aria-label={t('nav.changePassword')}
-                className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-100"
-              >
-                <KeyRound size={14} />
-              </button>
-            )}
-          </div>
+            </span>
+            {accountItems.length > 0 && <ChevronDown size={14} className="text-slate-500 dark:text-slate-400" aria-hidden="true" />}
+          </button>
+          {userMenu && (
+            <MenuPopover anchor={userMenu} label={t('nav.accountMenu', { name: user.username })} onClose={() => setUserMenu(null)}>
+              {accountItems.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  role="menuitem"
+                  className={menuItemClass}
+                  onClick={() => {
+                    setUserMenu(null);
+                    navigate(item.path);
+                  }}
+                >
+                  <item.icon size={14} aria-hidden="true" />
+                  {item.label}
+                </button>
+              ))}
+            </MenuPopover>
+          )}
           <Button variant="primary" size="sm" onClick={handleLogout}>
             <LogOut size={14} className="shrink-0" />
             {t('nav.logout')}
@@ -239,6 +264,22 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, liveEvents, children
         </nav>
 
         <div className="mt-auto flex flex-col items-center gap-2 pb-1">
+          {/* Below sm the header has no account menu: its items live in the drawer. */}
+          {accountItems.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => {
+                navigate(item.path);
+                closeDrawer();
+              }}
+              aria-label={item.label}
+              title={item.label}
+              className="flex h-10 w-10 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-800/80 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/60 sm:hidden"
+            >
+              <item.icon size={18} />
+            </button>
+          ))}
           <div className="flex h-10 w-10 items-center justify-center rounded-lg text-emerald-400" title="Permissioned cluster access">
             <ShieldCheck size={18} />
           </div>

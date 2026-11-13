@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ShieldCheck } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Alert, Button, Input } from '../components/ui';
@@ -16,6 +16,8 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [searchParams] = useSearchParams();
+  const sessionEnded = searchParams.get('expired') === '1';
   const [loading, setLoading] = useState(false);
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [azureEnabled, setAzureEnabled] = useState(false);
@@ -144,6 +146,11 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
           {error && (
             <Alert severity="error" className="mt-5">
               {error}
+            </Alert>
+          )}
+          {!error && sessionEnded && (
+            <Alert severity="info" className="mt-5">
+              {t('login.sessionEnded')}
             </Alert>
           )}
 

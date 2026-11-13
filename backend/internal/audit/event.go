@@ -39,6 +39,8 @@ const (
 	VerbEvict          = "evict"
 	VerbPurge          = "purge"
 	VerbViewOverview   = "view_overview"
+	VerbRegenerate     = "regenerate"
+	VerbUse            = "use" // an API key presented (denied / rate limited only)
 )
 
 // Verbs lists every verb, for validation and the Admin → Audit filter.
@@ -47,7 +49,7 @@ var Verbs = []string{
 	VerbViewYAML, VerbReveal, VerbView, VerbDownload, VerbCreate, VerbUpdate,
 	VerbDelete, VerbShare, VerbSelect, VerbActivate, VerbDeactivate, VerbRevoke,
 	VerbExport, VerbImport, VerbLogin, VerbChangePassword, VerbResetPassword,
-	VerbEvict, VerbPurge, VerbViewOverview,
+	VerbEvict, VerbPurge, VerbViewOverview, VerbRegenerate, VerbUse,
 }
 
 // Outcomes: how it ended.
@@ -73,6 +75,7 @@ const (
 	KindSession    = "session"
 	KindRecording  = "recording"
 	KindSavedView  = "saved_view"
+	KindAPIKey     = "api_key"
 )
 
 // kubeKinds maps the plural resource names used by RBAC grants and URLs to
@@ -142,6 +145,9 @@ var DetailKeys = map[string]DetailType{
 	"previous":     Bool, // logs of the previous (crashed) container
 	"command":      Keyword,
 	"phase":        Keyword, // exec: start | end
+	"mode":         Keyword, // exec: command (one command over REST; a shell has phase instead)
+	"program":      Keyword, // exec command: argv[0] only, never the full command
+	"recording_id": Keyword, // exec command: the recording's session id
 	"exit_code":    Long,
 	"bytes_in":     Long,
 	"bytes_out":    Long,
@@ -179,6 +185,12 @@ var DetailKeys = map[string]DetailType{
 	"changed": Keyword, // what changed (array of field names), not the values
 	"shared":  Bool,
 	"summary": Text,
+	// API keys (the scope summary and expiry; never the secret or its hash)
+	"admin_scope": Bool,
+	"expires_at":  Date,
+	"api_access":  Keyword, // a role's mode or a user's override (off | safe_read | full | roles)
+	"by_admin":    Bool,    // an admin revoked another user's key
+	"comment":     Text,    // the admin's optional reason for a revoke
 	// failures
 	"error": Text,
 }

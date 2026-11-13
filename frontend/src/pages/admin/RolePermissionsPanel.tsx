@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { ApiAccess } from '../../services/api';
+import { RoleApiAccessLine } from './ApiAccessParts';
 import {
   Copy,
   MoreHorizontal,
@@ -10,8 +12,9 @@ import {
   X,
 } from 'lucide-react';
 import { createPortal } from 'react-dom';
-import { Alert, Badge, Button, Checkbox, Input, Modal, NativeSelect } from '../../components/ui';
+import { Alert, Badge, Button, Input, Modal, NativeSelect } from '../../components/ui';
 import { confirm } from '../../components/ConfirmDialog';
+import { FAMILY_CLASS, PermissionMatrix, RESOURCE_CATALOG, emptyMatrix } from '../../components/PermissionMatrix';
 import {
   ClusterListItem,
   NamespacePermission,
@@ -19,94 +22,6 @@ import {
   deletePermission,
   listRolePermissions,
 } from '../../services/api';
-
-// ─── Catalog ────────────────────────────────────────────────────────────────
-//
-// The set of resource/action pairs that mean something on this backend. The
-// admin bypass list in handleNamespacePermissions is the source of truth; keep
-// these in sync (small list, hand-edited).
-
-type ActionFamily = 'read' | 'write' | 'destructive';
-type ActionDef = { key: string; family: ActionFamily };
-
-// `edit` is destructive (full YAML write via server dry-run + apply). Scale /
-// restart are "write" because they only change the obvious thing. logs/exec
-// stay as read/destructive — exec can still mutate pod state via a shell.
-const RESOURCE_CATALOG: Array<{ resource: string; actions: ActionDef[] }> = [
-  { resource: 'pods', actions: [
-    { key: 'list', family: 'read' },
-    { key: 'get', family: 'read' },
-    { key: 'logs', family: 'read' },
-    { key: 'exec', family: 'destructive' },
-    { key: 'edit', family: 'destructive' },
-  ]},
-  { resource: 'deployments', actions: [
-    { key: 'list', family: 'read' },
-    { key: 'get', family: 'read' },
-    { key: 'restart', family: 'write' },
-    { key: 'scale', family: 'write' },
-    { key: 'edit', family: 'destructive' },
-  ]},
-  { resource: 'daemonsets', actions: [
-    { key: 'list', family: 'read' },
-    { key: 'get', family: 'read' },
-    { key: 'edit', family: 'destructive' },
-  ]},
-  { resource: 'statefulsets', actions: [
-    { key: 'list', family: 'read' },
-    { key: 'get', family: 'read' },
-    { key: 'scale', family: 'write' },
-    { key: 'edit', family: 'destructive' },
-  ]},
-  { resource: 'hpas', actions: [
-    { key: 'list', family: 'read' },
-    { key: 'get', family: 'read' },
-    { key: 'edit', family: 'destructive' },
-  ]},
-  { resource: 'services', actions: [
-    { key: 'list', family: 'read' },
-    { key: 'get', family: 'read' },
-    { key: 'edit', family: 'destructive' },
-  ]},
-  { resource: 'configmaps', actions: [
-    { key: 'list', family: 'read' },
-    { key: 'get', family: 'read' },
-    { key: 'edit', family: 'destructive' },
-  ]},
-  // list/get expose names, types and key names only; reveal returns values
-  // and edit opens the full YAML (values included) — both audited, both in
-  // the destructive (red) family, so only the Admin template has them.
-  { resource: 'secrets', actions: [
-    { key: 'list', family: 'read' },
-    { key: 'get', family: 'read' },
-    { key: 'reveal', family: 'destructive' },
-    { key: 'edit', family: 'destructive' },
-  ]},
-  { resource: 'ingresses', actions: [
-    { key: 'list', family: 'read' },
-    { key: 'get', family: 'read' },
-    { key: 'edit', family: 'destructive' },
-  ]},
-  { resource: 'cronjobs', actions: [
-    { key: 'list', family: 'read' },
-    { key: 'get', family: 'read' },
-    { key: 'edit', family: 'destructive' },
-  ]},
-  { resource: 'jobs', actions: [
-    { key: 'list', family: 'read' },
-    { key: 'get', family: 'read' },
-    { key: 'edit', family: 'destructive' },
-  ]},
-];
-
-const FAMILY_CLASS: Record<ActionFamily, string> = {
-  read:
-    'bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700',
-  write:
-    'bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/15 dark:text-amber-200 dark:ring-amber-500/30',
-  destructive:
-    'bg-rose-50 text-rose-700 ring-1 ring-inset ring-rose-200 dark:bg-rose-500/15 dark:text-rose-200 dark:ring-rose-500/30',
-};
 
 // Templates seed the add-permissions modal. "Admin" selects everything; the
 // rest are opinionated starting points that reflect common on-call shapes.
@@ -146,14 +61,9 @@ function buildTemplateMatrix(template: Template): Record<string, Record<string, 
   return out;
 }
 
-const emptyMatrix = (): Record<string, Record<string, boolean>> =>
-  Object.fromEntries(
-    RESOURCE_CATALOG.map((r) => [r.resource, Object.fromEntries(r.actions.map((a) => [a.key, false]))])
-  );
-
 // ─── Props ──────────────────────────────────────────────────────────────────
 
-type RoleRow = { id: number; name: string; description: string };
+type RoleRow = { id: number; name: string; description: string; apiAccess?: ApiAccess };
 
 type Props = {
   roles: RoleRow[];
@@ -546,6 +456,11 @@ export const RolePermissionsPanel: React.FC<Props> = ({
                   <div className="text-[11px] text-slate-500 dark:text-slate-400">
                     {selectedRole.description || t('rolePermissions.noDescription')}
                   </div>
+                  {selectedRole.apiAccess && (
+                    <div className="mt-1.5">
+                      <RoleApiAccessLine value={selectedRole.apiAccess} />
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <Button variant="outline" size="sm" onClick={() => setCopyOpen(true)}>
@@ -895,23 +810,6 @@ const AddPermissionsModal: React.FC<{
     setMatrix(buildTemplateMatrix(tplKey));
   };
 
-  const toggle = (resource: string, action: string) => {
-    setTemplate(null);
-    setMatrix((m) => ({
-      ...m,
-      [resource]: { ...m[resource], [action]: !m[resource]?.[action] },
-    }));
-  };
-
-  const toggleResource = (resource: string, on: boolean) => {
-    setTemplate(null);
-    setMatrix((m) => {
-      const row = { ...m[resource] };
-      Object.keys(row).forEach((k) => { row[k] = on; });
-      return { ...m, [resource]: row };
-    });
-  };
-
   // Preview counter.
   //   add mode: how many brand-new rows will be inserted; "skipped" counts
   //             rows the role already has elsewhere (collision-free).
@@ -1101,67 +999,22 @@ const AddPermissionsModal: React.FC<{
           </div>
         </div>
 
-        <div className="rounded-lg border border-slate-200 dark:border-slate-800">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-left text-[10px] font-semibold text-slate-500 dark:bg-slate-900/70 dark:text-slate-400">
-              <tr>
-                <th className="px-3 py-2">{tr('common.resource')}</th>
-                <th className="px-3 py-2 text-right">{tr('common.actions')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {RESOURCE_CATALOG.map(({ resource, actions }) => {
-                const allOn = actions.every((a) => matrix[resource]?.[a.key]);
-                const anyOn = actions.some((a) => matrix[resource]?.[a.key]);
-                return (
-                  <tr key={resource} className="border-t border-slate-100 dark:border-slate-800">
-                    <td className="px-3 py-2">
-                      <label className="flex cursor-pointer items-center gap-2">
-                        <Checkbox
-                          checked={allOn}
-                          indeterminate={anyOn && !allOn}
-                          onChange={(v) => toggleResource(resource, v)}
-                        />
-                        <span className="font-mono text-[12px] text-slate-800 dark:text-slate-100">
-                          {resource}
-                        </span>
-                      </label>
-                    </td>
-                    <td className="px-3 py-2">
-                      <div className="flex flex-wrap justify-end gap-1.5">
-                        {actions.map((a) => {
-                          const on = !!matrix[resource]?.[a.key];
-                          // highlight rows where EVERY selected ns already has this (resource, action)
-                          const everywhereExists =
-                            selectedNs.length > 0 &&
-                            selectedNs.every((ns) =>
-                              existing.has(`${clusterId}:${ns}:${resource}:${a.key}`)
-                            );
-                          return (
-                            <button
-                              key={a.key}
-                              type="button"
-                              aria-pressed={on}
-                              onClick={() => toggle(resource, a.key)}
-                              className={`inline-flex items-center gap-1 rounded px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide transition-all ${
-                                on
-                                  ? FAMILY_CLASS[a.family]
-                                  : 'bg-white text-slate-500 ring-1 ring-inset ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-400 dark:ring-slate-700 dark:hover:bg-slate-800'
-                              } ${everywhereExists ? 'opacity-50 line-through' : ''}`}
-                              title={everywhereExists ? 'Already granted on every selected namespace — will be skipped' : a.family}
-                            >
-                              {a.key}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <PermissionMatrix
+          matrix={matrix}
+          onChange={(m) => {
+            setTemplate(null);
+            setMatrix(m);
+          }}
+          cell={(resource, a) => {
+            // Rows where EVERY selected ns already has this (resource, action) will be skipped.
+            const everywhereExists =
+              selectedNs.length > 0 &&
+              selectedNs.every((ns) => existing.has(`${clusterId}:${ns}:${resource}:${a.key}`));
+            return everywhereExists
+              ? { struck: true, title: 'Already granted on every selected namespace — will be skipped' }
+              : {};
+          }}
+        />
 
         {preview.mode === 'edit' ? (
           <Alert severity={preview.adds === 0 && preview.dels === 0 ? 'info' : 'success'}>

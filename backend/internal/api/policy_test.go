@@ -25,7 +25,7 @@ func TestPasswordPolicy(t *testing.T) {
 	tok := e.token(id, "carol")
 	e.expect("POST", "/api/auth/change-password", tok, map[string]string{"currentPassword": "Current-pass-1", "newPassword": "abc"}, http.StatusBadRequest)
 	e.expect("POST", "/api/auth/change-password", tok, map[string]string{"currentPassword": "Current-pass-1", "newPassword": "Current-pass-1"}, http.StatusBadRequest)
-	e.expect("POST", "/api/auth/change-password", tok, map[string]string{"currentPassword": "wrong", "newPassword": "Brand-new-pass-2"}, http.StatusUnauthorized)
+	e.expect("POST", "/api/auth/change-password", tok, map[string]string{"currentPassword": "wrong", "newPassword": "Brand-new-pass-2"}, http.StatusBadRequest)
 	e.expect("POST", "/api/auth/change-password", tok, map[string]string{"currentPassword": "Current-pass-1", "newPassword": "Brand-new-pass-2"}, http.StatusOK)
 }
 

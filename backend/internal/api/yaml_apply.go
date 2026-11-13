@@ -71,8 +71,9 @@ func (s *Server) handleYAMLApply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !s.can(r.Context(), user.ID, namespace, resource, "edit") {
-		s.recordApplyAudit(r, namespace, name, resource, audit.Denied, reasonForbidden, nil)
-		writeError(w, http.StatusForbidden, "forbidden")
+		reason := s.denyReason(r.Context(), namespace, resource, "edit")
+		s.recordApplyAudit(r, namespace, name, resource, audit.Denied, reason, nil)
+		writeError(w, http.StatusForbidden, reason)
 		return
 	}
 
@@ -138,7 +139,8 @@ func httpStatusFor(err error) int {
 	case apierrors.IsForbidden(err):
 		return http.StatusForbidden
 	case apierrors.IsUnauthorized(err):
-		return http.StatusUnauthorized
+		// The cluster rejected OpenConsole's credentials; a 401 would read as "your session ended".
+		return http.StatusBadGateway
 	case apierrors.IsAlreadyExists(err):
 		return http.StatusConflict
 	case apierrors.IsInvalid(err),

@@ -7,7 +7,14 @@ export type User = {
   /** Where the user signs in. Only local users can have their password reset. */
   authSource?: 'local' | 'ldap' | 'azure';
   activeClusterId?: number;
+  /** Replaces the role modes for this user's API keys; "" = by roles. */
+  apiAccessOverride?: ApiAccessOverride;
 };
+
+/** What a role's grants give API keys. */
+export type ApiAccess = 'off' | 'safe_read' | 'full';
+export type ApiAccessOverride = '' | ApiAccess;
+export type Role = { id: number; name: string; description: string; apiAccess: ApiAccess };
 
 export type NamespacePermission = {
   id: number;
@@ -21,6 +28,9 @@ export type NamespacePermission = {
 
 export type SessionSettings = {
   sessionMinutes: number;
+  /** API key expiry policy: the longest lifetime in days (0 = no limit), whether "never" is allowed. */
+  apiKeyMaxDays: number;
+  apiKeyAllowNoExpiry: boolean;
 };
 
 export type LDAPConfig = {
@@ -67,6 +77,28 @@ const BASE_URL = '';
 
 const getToken = () => localStorage.getItem('authToken') ?? '';
 
+// The session ended (expired, revoked, account disabled): drop the token and
+// reload on the sign-in page, which says why. The reload clears all app state.
+export const endSession = () => {
+  localStorage.removeItem('authToken');
+  if (window.location.pathname !== '/login') window.location.assign('/login?expired=1');
+};
+
+// Every 401 the server sends to a signed-in user means the session is gone.
+const checkSession = (status: number) => {
+  if (status === 401 && getToken()) endSession();
+};
+
+// When the JWT runs out (ms since epoch), or null if it can't be read.
+export const tokenExpiresAt = (): number | null => {
+  try {
+    const payload = JSON.parse(atob(getToken().split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))) as { exp?: number };
+    return payload.exp ? payload.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+};
+
 const apiRequest = async <T>(path: string, options: RequestInit = {}): Promise<T> => {
   let response: Response;
   try {
@@ -85,6 +117,7 @@ const apiRequest = async <T>(path: string, options: RequestInit = {}): Promise<T
     throw new Error(`Network error while contacting the server: ${target}`);
   }
 
+  checkSession(response.status);
   if (!response.ok) {
     const contentType = response.headers.get('content-type') || '';
     const messageText = await response.text();
@@ -131,6 +164,7 @@ const formRequest = async <T>(path: string, formData: FormData): Promise<T> => {
     throw new Error(`Network error while contacting the server: ${target}`);
   }
 
+  checkSession(response.status);
   if (!response.ok) {
     const contentType = response.headers.get('content-type') || '';
     const messageText = await response.text();
@@ -173,6 +207,7 @@ const xhrRequest = async <T>(path: string, payload: unknown): Promise<T> => {
       if (request.readyState !== XMLHttpRequest.DONE) {
         return;
       }
+      checkSession(request.status);
       if (request.status >= 200 && request.status < 300) {
         try {
           resolve(JSON.parse(request.responseText) as T);
@@ -646,7 +681,10 @@ export const createUser = (payload: {
     body: JSON.stringify(payload)
   });
 
-export const updateUser = (id: number, payload: { username: string; isActive: boolean; isAdmin: boolean }) =>
+export const updateUser = (
+  id: number,
+  payload: { username: string; isActive: boolean; isAdmin: boolean; apiAccessOverride?: ApiAccessOverride },
+) =>
   apiRequest<User>(`/api/admin/users/${id}`, {
     method: 'PUT',
     body: JSON.stringify(payload)
@@ -690,15 +728,15 @@ export const setGroupRoles = (id: number, roleIds: number[]) =>
 export const getGroupRoles = (id: number) =>
   apiRequest<{ roleIds: number[] }>(`/api/admin/groups/${id}/roles`);
 
-export const listRoles = () => apiRequest<{ items: Array<{ id: number; name: string; description: string }> }>('/api/admin/roles');
+export const listRoles = () => apiRequest<{ items: Role[] }>('/api/admin/roles');
 
-export const createRole = (payload: { name: string; description: string }) =>
+export const createRole = (payload: { name: string; description: string; apiAccess: ApiAccess }) =>
   apiRequest('/api/admin/roles', {
     method: 'POST',
     body: JSON.stringify(payload)
   });
 
-export const updateRole = (id: number, payload: { name: string; description: string }) =>
+export const updateRole = (id: number, payload: { name: string; description: string; apiAccess?: ApiAccess }) =>
   apiRequest(`/api/admin/roles/${id}`, {
     method: 'PUT',
     body: JSON.stringify(payload)
@@ -814,6 +852,9 @@ export type AuditQuery = {
   resourceType?: string;
   cluster?: string;
   namespace?: string;
+  /** web = no API key, api_key = any key */
+  source?: '' | 'web' | 'api_key';
+  apiKey?: string;
   start?: string;
   end?: string;
 };
@@ -838,6 +879,9 @@ export type AuditEntry = {
   sourceIp?: string;
   userAgent?: string;
   authSource?: string;
+  /** Set when the action was taken with an API key. */
+  apiKeyId?: number;
+  apiKeyName?: string;
 };
 
 export type AuditFacets = {
@@ -847,11 +891,12 @@ export type AuditFacets = {
   verbs: string[];
   resourceTypes: string[];
   clusters: string[];
+  apiKeys?: string[];
 };
 
 const auditParams = (q: AuditQuery) => {
   const p = new URLSearchParams();
-  for (const key of ['user', 'action', 'verb', 'outcome', 'resourceType', 'cluster', 'namespace', 'start', 'end'] as const) {
+  for (const key of ['user', 'action', 'verb', 'outcome', 'resourceType', 'cluster', 'namespace', 'source', 'apiKey', 'start', 'end'] as const) {
     if (q[key]) p.set(key, q[key] as string);
   }
   if (q.action && q.actionExact) p.set('actionExact', '1');
@@ -892,6 +937,7 @@ export const downloadWithAuth = async (path: string, fallbackName: string) => {
     cache: 'no-store',
     headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {},
   });
+  checkSession(response.status);
   if (!response.ok) {
     const text = await response.text();
     let message = text || response.statusText;
@@ -975,10 +1021,16 @@ export type SessionRecording = {
   sizeBytes: number;
   truncated: boolean;
   requestId: string;
+  apiKeyId?: number;
+  apiKeyName?: string;
+  /** shell = interactive shell; command = one command (POST …/pods/{name}/exec). */
+  mode?: 'shell' | 'command';
 };
 
 export type RecordingFilter = {
   user?: string;
+  source?: '' | 'web' | 'api_key';
+  apiKey?: string;
   namespace?: string;
   pod?: string;
   from?: string; // YYYY-MM-DD or RFC3339
@@ -1039,6 +1091,7 @@ const fetchRecordingCast = async (id: number, download: boolean): Promise<Respon
     cache: 'no-store',
     headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {},
   });
+  checkSession(response.status);
   if (!response.ok) {
     const text = await response.text();
     let message = text || response.statusText;
@@ -1102,3 +1155,150 @@ export const shareView = (id: number, shared: boolean) =>
 
 export const deleteView = (id: number) => apiRequest<{ status: string }>(`/api/views/${id}`, { method: 'DELETE' });
 
+
+// ─── API keys (web session only) ────────────────────────────────────────────
+
+export type ApiKeyScope = {
+  /** 0 = every cluster */
+  clusters: number[];
+  /** Every namespace the owner has, including ones granted later. */
+  allNamespaces: boolean;
+  namespaces: string[];
+  /** "pods:list" */
+  grants: string[];
+};
+
+export type ApiKey = ApiKeyScope & {
+  id: number;
+  name: string;
+  note: string;
+  /** "oc_ab12cd" — the secret is shown only once. */
+  prefix: string;
+  adminScope: boolean;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: string | null;
+  lastUsedAt: string | null;
+  lastUsedIp: string;
+  revokedAt: string | null;
+  /** Grants the owner no longer holds in any of the key's namespaces. */
+  invalidGrants?: string[];
+};
+
+/** What the caller may put into a key. */
+export type ApiKeyCeiling = {
+  isAdmin: boolean;
+  clusters: Array<{ id: number; name: string }>;
+  /** grants: what a key may hold here; blocked: what the user holds but the admin's API access policy keeps from keys. */
+  namespaces: Array<{ clusterId: number; namespace: string; grants: string[]; blocked: string[] }>;
+  /** Grants the operator switched off (FEATURE_*). */
+  disabled: string[];
+  /** An admin whose policy lets keys hold the Admin API scope. */
+  adminScopeAllowed: boolean;
+  /** The "safe read-only" grants (one definition, on the server). */
+  safeRead: string[];
+  /** Expiry policy for new and regenerated keys (maxDays 0 = no limit). */
+  maxDays: number;
+  allowNoExpiry: boolean;
+};
+
+export type ApiKeyInput = ApiKeyScope & { name: string; note: string; adminScope: boolean; expiresAt?: string | null };
+
+export const listApiKeys = () => apiRequest<{ items: ApiKey[] }>('/api/me/api-keys');
+export const getApiKeyCeiling = () => apiRequest<ApiKeyCeiling>('/api/me/api-keys/ceiling');
+
+// ─── API description (M16): /api/openapi.json, read by the Documentation tab ───
+
+export type OpenApiParam = {
+  $ref?: string;
+  name?: string;
+  in?: string;
+  required?: boolean;
+  description?: string;
+  schema?: { type?: string; default?: unknown; minimum?: number; maximum?: number };
+};
+type OpenApiExample = { $ref?: string; description?: string; content?: Record<string, { example?: unknown }> };
+export type OpenApiOperation = {
+  tags?: string[];
+  summary?: string;
+  description?: string;
+  security?: unknown[];
+  parameters?: OpenApiParam[];
+  requestBody?: OpenApiExample;
+  responses?: Record<string, OpenApiExample>;
+  /** All of these, in the path's namespace ("*:edit" = edit on the path's resource). */
+  'x-openconsole-permission'?: string[];
+  'x-openconsole-admin'?: boolean;
+  /** false = web session only. */
+  'x-openconsole-api-key'?: boolean;
+};
+export type OpenApiDoc = {
+  info: { title: string; version: string; description?: string };
+  tags: Array<{ name: string; description?: string }>;
+  paths: Record<string, Record<string, OpenApiOperation | OpenApiParam[]>>;
+  components: { parameters: Record<string, OpenApiParam>; responses: Record<string, OpenApiExample> };
+};
+export const getOpenApi = () => apiRequest<OpenApiDoc>('/api/openapi.json');
+
+/** One command in a container (argv, no shell); what agents call. */
+export const execPodCommand = (namespace: string, pod: string, body: { command: string[]; container?: string; timeoutSeconds?: number }) =>
+  apiRequest<{ stdout: string; stderr: string; exitCode: number; truncated: boolean; durationMs: number }>(
+    `/api/namespaces/${encodeURIComponent(namespace)}/pods/${encodeURIComponent(pod)}/exec`,
+    { method: 'POST', body: JSON.stringify(body) },
+  );
+export const createApiKey = (input: ApiKeyInput) =>
+  apiRequest<{ key: ApiKey; secret: string }>('/api/me/api-keys', { method: 'POST', body: JSON.stringify(input) });
+export const updateApiKey = (id: number, input: ApiKeyInput) =>
+  apiRequest<{ key: ApiKey }>(`/api/me/api-keys/${id}`, { method: 'PUT', body: JSON.stringify(input) });
+export const regenerateApiKey = (id: number, expiresAt: string | null) =>
+  apiRequest<{ key: ApiKey; secret: string }>(`/api/me/api-keys/${id}/regenerate`, {
+    method: 'POST',
+    body: JSON.stringify({ expiresAt }),
+  });
+export const revokeApiKey = (id: number) => apiRequest<{ status: string }>(`/api/me/api-keys/${id}/revoke`, { method: 'POST' });
+export const deleteApiKey = (id: number) => apiRequest<Record<string, never>>(`/api/me/api-keys/${id}`, { method: 'DELETE' });
+
+// ─── API keys of every user (admin, web session only) ───────────────────────
+
+export type AdminApiKey = ApiKey & {
+  ownerId: number;
+  owner: string;
+  status: 'active' | 'expired' | 'revoked';
+  /** An active key the expiry policy would not allow today. */
+  outsidePolicy: boolean;
+};
+
+/** What a user's keys may reach: per namespace (all | read | partial | none), or the admin's mode. */
+export type UserApiAccess = {
+  isAdmin: boolean;
+  /** Keys are refused on every call (policy off). */
+  refused: boolean;
+  activeKeys: number;
+  adminMode?: ApiAccess;
+  clusters?: Array<{ id: number; name: string }>;
+  namespaces?: Array<{ clusterId: number; namespace: string; level: 'all' | 'read' | 'partial' | 'none' }>;
+};
+
+export const listAllApiKeys = () => apiRequest<{ items: AdminApiKey[] }>('/api/admin/api-keys');
+export const exportApiKeysCsv = () => downloadWithAuth('/api/admin/api-keys/export', 'api-keys.csv');
+export const adminRevokeApiKey = (id: number, comment: string) =>
+  apiRequest<{ status: string }>(`/api/admin/api-keys/${id}/revoke`, { method: 'POST', body: JSON.stringify({ comment }) });
+export const revokeUserApiKeys = (userId: number) =>
+  apiRequest<{ revoked: number }>(`/api/admin/users/${userId}/revoke-api-keys`, { method: 'POST' });
+/** override: a choice not saved yet (undefined = the saved one). */
+export const getUserApiAccess = (userId: number, override?: ApiAccessOverride) =>
+  apiRequest<UserApiAccess>(
+    `/api/admin/users/${userId}/api-access` + (override === undefined ? '' : `?override=${encodeURIComponent(override)}`),
+  );
+
+let featuresPromise: Promise<Record<string, boolean>> | null = null;
+/** Feature flags (FEATURE_*); fetched once. A flag missing from the answer counts as on. */
+export const getFeatures = () => {
+  featuresPromise ??= apiRequest<{ features: Record<string, boolean> }>('/api/features')
+    .then((r) => r.features)
+    .catch(() => {
+      featuresPromise = null;
+      return {};
+    });
+  return featuresPromise;
+};

@@ -26,6 +26,8 @@ func (s *Server) handleListRecordings(w http.ResponseWriter, r *http.Request) {
 		Cluster:   q.Get("cluster"),
 		Namespace: q.Get("namespace"),
 		Pod:       q.Get("pod"),
+		Source:    q.Get("source"), // web | api_key
+		APIKey:    q.Get("apiKey"),
 		From:      parseTimeParam(q.Get("from")),
 		To:        parseTimeParam(q.Get("to")),
 	}
@@ -84,7 +86,7 @@ func (s *Server) handleRecordingCast(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteRecording(w http.ResponseWriter, r *http.Request) {
-	user, ok := s.userForRequest(r)
+	_, ok := s.userForRequest(r)
 	if !ok {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
@@ -95,9 +97,9 @@ func (s *Server) handleDeleteRecording(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	stub := &models.SessionRecording{ID: id}
-	if !user.IsAdmin || user.MustChangePassword {
+	if _, ok := s.isAdminRequest(r); !ok {
 		s.recordRecordingAudit(r, audit.VerbDelete, audit.Denied, reasonAdminOnly, stub, nil)
-		writeError(w, http.StatusForbidden, "admin only")
+		writeError(w, http.StatusForbidden, reasonAdminOnly)
 		return
 	}
 	rec, err := s.recorder.Delete(r.Context(), id)
@@ -133,14 +135,14 @@ func (s *Server) handleGetRecordingSettings(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleUpdateRecordingSettings(w http.ResponseWriter, r *http.Request) {
-	user, ok := s.userForRequest(r)
+	_, ok := s.userForRequest(r)
 	if !ok {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-	if !user.IsAdmin || user.MustChangePassword {
+	if _, ok := s.isAdminRequest(r); !ok {
 		s.recordSettingsAudit(r, audit.Denied, reasonAdminOnly, nil)
-		writeError(w, http.StatusForbidden, "admin only")
+		writeError(w, http.StatusForbidden, reasonAdminOnly)
 		return
 	}
 	var in models.RecordingSettings

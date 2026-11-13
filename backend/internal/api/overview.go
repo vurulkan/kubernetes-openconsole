@@ -118,17 +118,17 @@ type overviewEntry struct {
 var fetchNodeUsage = kube.NodeUsage
 
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
-	user, ok := s.userForRequest(r)
+	_, ok := s.userForRequest(r)
 	if !ok {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
 	ci := clusterFrom(r.Context())
 	event := models.AuditLog{Verb: audit.VerbViewOverview, ResourceType: audit.KindCluster, ResourceName: ci.Name, Cluster: ci.Name, ClusterID: ci.ID}
-	if !user.IsAdmin || user.MustChangePassword {
+	if _, ok := s.isAdminRequest(r); !ok {
 		event.Outcome, event.Reason = audit.Denied, reasonAdminOnly
 		s.auditEvent(r, event)
-		writeError(w, http.StatusForbidden, "admin only")
+		writeError(w, http.StatusForbidden, reasonAdminOnly)
 		return
 	}
 	client, ok := kubeFor(r).Client()
@@ -254,16 +254,16 @@ type historyEntry struct {
 // handleOverviewHistory is the overview's 24 h cluster CPU / memory, apart from the overview
 // so the page shows without waiting for Prometheus. Part of the page view: not audited again.
 func (s *Server) handleOverviewHistory(w http.ResponseWriter, r *http.Request) {
-	user, ok := s.userForRequest(r)
+	_, ok := s.userForRequest(r)
 	if !ok {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
 	ci := clusterFrom(r.Context())
-	if !user.IsAdmin || user.MustChangePassword {
+	if _, ok := s.isAdminRequest(r); !ok {
 		s.auditEvent(r, models.AuditLog{Verb: audit.VerbViewOverview, ResourceType: audit.KindCluster, ResourceName: ci.Name,
 			Cluster: ci.Name, ClusterID: ci.ID, Outcome: audit.Denied, Reason: reasonAdminOnly})
-		writeError(w, http.StatusForbidden, "admin only")
+		writeError(w, http.StatusForbidden, reasonAdminOnly)
 		return
 	}
 	c := s.promFor(r)

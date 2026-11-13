@@ -82,14 +82,14 @@ type nodeDetail struct {
 
 // nodeAdmin lets admins through; anyone else gets 403 and a denied audit event.
 func (s *Server) nodeAdmin(w http.ResponseWriter, r *http.Request, verb, name string) bool {
-	user, ok := s.userForRequest(r)
+	_, ok := s.userForRequest(r)
 	if !ok {
 		w.WriteHeader(http.StatusUnauthorized)
 		return false
 	}
-	if !user.IsAdmin || user.MustChangePassword {
+	if _, ok := s.isAdminRequest(r); !ok {
 		s.auditEvent(r, models.AuditLog{Verb: verb, ResourceType: audit.Kind("nodes"), ResourceName: name, Outcome: audit.Denied, Reason: reasonAdminOnly})
-		writeError(w, http.StatusForbidden, "admin only")
+		writeError(w, http.StatusForbidden, reasonAdminOnly)
 		return false
 	}
 	return true

@@ -7,12 +7,14 @@ import DashboardPage from './pages/DashboardPage';
 import AdminPage from './pages/AdminPage';
 import OverviewPage from './pages/OverviewPage';
 import NodesPage from './pages/NodesPage';
+import ApiKeysPage from './pages/ApiKeysPage';
+import ApiKeyFormPage from './pages/apikeys/ApiKeyFormPage';
 import CommandPalette from './components/CommandPalette';
 import ShortcutsHelp from './components/ShortcutsHelp';
 import { ConfirmProvider } from './components/ConfirmDialog';
 import { useGlobalShortcuts } from './hooks/useGlobalShortcuts';
 import { useTheme } from './components/ThemeProvider';
-import { getMe, listNamespaces, User } from './services/api';
+import { endSession, getMe, listNamespaces, tokenExpiresAt, User } from './services/api';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -39,6 +41,17 @@ const App: React.FC = () => {
       setLoading(false);
     }
   }, []);
+
+  // Back to the sign-in page when the session runs out, even on an idle screen
+  // that sends no requests. Polled, so a laptop waking from sleep is caught too.
+  useEffect(() => {
+    if (!user) return;
+    const timer = window.setInterval(() => {
+      const exp = tokenExpiresAt();
+      if (exp !== null && Date.now() >= exp) endSession();
+    }, 15_000);
+    return () => window.clearInterval(timer);
+  }, [user]);
 
   useEffect(() => {
     if (!user) return;
@@ -79,6 +92,8 @@ const App: React.FC = () => {
           path="/admin"
           element={user ? <AdminPage user={user} /> : <Navigate to="/login" />}
         />
+        <Route path="/account/api-keys" element={user ? <ApiKeysPage user={user} /> : <Navigate to="/login" />} />
+        <Route path="/account/api-keys/:id" element={user ? <ApiKeyFormPage user={user} /> : <Navigate to="/login" />} />
       </Routes>
       {user && <CommandPalette user={user} namespaces={namespaces} />}
       <ShortcutsHelp />

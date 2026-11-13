@@ -79,6 +79,8 @@ type Server struct {
 	nodes sync.Map
 	// nodeHistory caches a node's Prometheus history (nodeHistoryKey → historyEntry, one step).
 	nodeHistory sync.Map
+	// keyLimits rate-limits API keys and thins out their last-use writes.
+	keyLimits apiKeyLimits
 }
 
 // sessionValidator is the AuthMiddleware adapter around *store.Store. Returning
@@ -144,6 +146,23 @@ func NewServer(st *store.Store, auditLogger *audit.Logger, clusters *kube.Regist
 }
 
 func (s *Server) Router() http.Handler {
+	r := s.routes()
+	// Tracing: one server span per request, named after the chi route
+	// pattern (set in requestLogger); probes and metrics are not traced.
+	// With no OTLP endpoint configured the global provider is a no-op.
+	return otelhttp.NewHandler(r, "http.request",
+		otelhttp.WithFilter(func(r *http.Request) bool {
+			switch r.URL.Path {
+			case "/healthz", "/livez", "/readyz", "/metrics":
+				return false
+			}
+			return true
+		}),
+	)
+}
+
+// routes is every route; openapi_test.go walks it against openapi.yaml.
+func (s *Server) routes() *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(corsMiddleware)
 	r.Use(securityHeaders)
@@ -182,14 +201,16 @@ func (s *Server) Router() http.Handler {
 		r.Get("/azure/start", s.handleAzureStart)
 		r.Get("/azure/callback", s.handleAzureCallback)
 		r.Get("/providers", s.handleAuthProviders)
-		r.With(auth.AuthMiddleware(s.jwtKey, s.authValidator())).Get("/me", s.handleMe)
-		r.With(auth.AuthMiddleware(s.jwtKey, s.authValidator())).Post("/change-password", s.handleChangePassword)
+		r.With(auth.AuthMiddleware(s.jwtKey, s.authValidator(), s.keyAuth())).Get("/me", s.handleMe)
+		r.With(auth.AuthMiddleware(s.jwtKey, s.authValidator(), s.keyAuth())).Post("/change-password", s.handleChangePassword)
 	})
 
 	r.Get("/api/customization/logo", s.handleGetLogo)
+	// The API description; no sign-in, nothing secret in it.
+	r.Get("/api/openapi.json", handleOpenAPI)
 
 	r.Group(func(r chi.Router) {
-		r.Use(auth.AuthMiddleware(s.jwtKey, s.authValidator()))
+		r.Use(auth.AuthMiddleware(s.jwtKey, s.authValidator(), s.keyAuth()))
 		r.Use(s.clusterMiddleware)
 		r.Get("/api/cluster/active", s.handleGetActiveCluster)
 		r.Post("/api/cluster/select", s.handleSelectCluster)
@@ -202,6 +223,14 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/admin/nodes/{name}", s.handleNode)
 		r.Get("/api/admin/nodes/{name}/metrics/history", s.handleNodeHistory)
 		// Signed-in users only: the version isn't shown before login.
+		// API keys: web session only (checked in the handlers so a refusal is audited).
+		r.Get("/api/me/api-keys", s.handleListAPIKeys)
+		r.Get("/api/me/api-keys/ceiling", s.handleAPIKeyCeiling)
+		r.Post("/api/me/api-keys", s.handleCreateAPIKey)
+		r.Put("/api/me/api-keys/{id}", s.handleUpdateAPIKey)
+		r.Post("/api/me/api-keys/{id}/regenerate", s.handleRegenerateAPIKey)
+		r.Post("/api/me/api-keys/{id}/revoke", s.handleRevokeAPIKey)
+		r.Delete("/api/me/api-keys/{id}", s.handleDeleteAPIKey)
 		r.Get("/api/version", func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]string{"version": version.Version})
 		})
@@ -260,6 +289,8 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/namespaces/{namespace}/cronjobs/{name}/yaml", s.handleCronJobYAML)
 		r.Get("/api/namespaces/{namespace}/jobs", s.handleJobs)
 		r.Get("/api/namespaces/{namespace}/jobs/{name}/yaml", s.handleJobYAML)
+		r.Get("/api/namespaces/{namespace}/pods/{name}/logs", s.handlePodLogs)
+		r.Post("/api/namespaces/{namespace}/pods/{name}/exec", s.handlePodExecCommand)
 		r.Get("/ws/namespaces/{namespace}/pods/{name}/logs", s.handlePodLogsWS)
 		r.Get("/ws/namespaces/{namespace}/pods/{name}/exec", s.handlePodExecWS)
 		r.Get("/ws/namespaces/{namespace}/deployments/{name}/logs", s.handleDeploymentLogsWS)
@@ -275,12 +306,18 @@ func (s *Server) Router() http.Handler {
 	})
 
 	r.Group(func(r chi.Router) {
-		r.Use(auth.AuthMiddleware(s.jwtKey, s.authValidator()))
+		r.Use(auth.AuthMiddleware(s.jwtKey, s.authValidator(), s.keyAuth()))
 		r.Use(s.clusterMiddleware)
 		r.Use(s.requireAdmin)
 		r.Get("/api/admin/users", s.handleListUsers)
 		r.Get("/api/admin/users/export", s.handleExportUsers)
 		r.Get("/api/admin/groups/export", s.handleExportGroups)
+		// API keys of every user (M15): web session only, see apikeys_admin.go.
+		r.Get("/api/admin/api-keys", s.handleAdminListAPIKeys)
+		r.Get("/api/admin/api-keys/export", s.handleExportAPIKeys)
+		r.Post("/api/admin/api-keys/{id}/revoke", s.handleAdminRevokeAPIKey)
+		r.Post("/api/admin/users/{id}/revoke-api-keys", s.handleRevokeUserAPIKeys)
+		r.Get("/api/admin/users/{id}/api-access", s.handleUserAPIAccess)
 		r.Post("/api/admin/users", s.handleCreateUser)
 		r.Put("/api/admin/users/{id}", s.handleUpdateUser)
 		r.Delete("/api/admin/users/{id}", s.handleDeleteUser)
@@ -357,18 +394,7 @@ func (s *Server) Router() http.Handler {
 		r.MethodNotAllowed(s.serveSPA)
 	}
 
-	// Tracing: one server span per request, named after the chi route
-	// pattern (set in requestLogger); probes and metrics are not traced.
-	// With no OTLP endpoint configured the global provider is a no-op.
-	return otelhttp.NewHandler(r, "http.request",
-		otelhttp.WithFilter(func(r *http.Request) bool {
-			switch r.URL.Path {
-			case "/healthz", "/livez", "/readyz", "/metrics":
-				return false
-			}
-			return true
-		}),
-	)
+	return r
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
@@ -475,9 +501,27 @@ func clientIP(r *http.Request) string {
 // quietPaths are logged at debug level when they succeed.
 var quietPaths = map[string]bool{"/healthz": true, "/livez": true, "/readyz": true, "/metrics": true}
 
+// requestKey carries the API key a request was made with out to requestLogger,
+// which wraps the router and so never sees the context the auth middleware builds.
+type requestKey struct {
+	id   int
+	name string
+}
+
+type requestKeyCtx struct{}
+
+// noteRequestKey records the request's API key for its http.request line.
+func noteRequestKey(ctx context.Context, k *models.APIKey) {
+	if h, ok := ctx.Value(requestKeyCtx{}).(*requestKey); ok && k != nil {
+		h.id, h.name = k.ID, k.Name
+	}
+}
+
 func requestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		key := &requestKey{}
+		r = r.WithContext(context.WithValue(r.Context(), requestKeyCtx{}, key))
 		start := time.Now()
 		next.ServeHTTP(recorder, r)
 		duration := time.Since(start)
@@ -501,6 +545,10 @@ func requestLogger(next http.Handler) http.Handler {
 			slog.String("remote_ip", clientIP(r)),
 			slog.String("request_id", logpkg.RequestIDFrom(r.Context())),
 			slog.String("user_agent", r.UserAgent()),
+		}
+		if key.id != 0 {
+			// ECS: openconsole.api_key.id / .name, as on audit events.
+			attrs = append(attrs, slog.Int("api_key_id", key.id), slog.String("api_key_name", key.name))
 		}
 		if logpkg.ECS() {
 			// ECS event.duration is in nanoseconds; milliseconds would turn
@@ -549,17 +597,26 @@ func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) requireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		user, ok := s.userForRequest(r)
-		if !ok || !user.IsAdmin {
-			w.WriteHeader(http.StatusForbidden)
-			return
-		}
-		if user.MustChangePassword {
-			w.WriteHeader(http.StatusForbidden)
+		if _, ok := s.isAdminRequest(r); !ok {
+			writeError(w, http.StatusForbidden, reasonAdminOnly)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// isAdminRequest is the one admin check: an active admin who has changed the
+// initial password, on a web session or with an API key that has the admin
+// scope. Losing the admin flag takes effect on the next call, key or not.
+func (s *Server) isAdminRequest(r *http.Request) (*models.User, bool) {
+	user, ok := s.userForRequest(r)
+	if !ok || !user.IsAdmin || user.MustChangePassword {
+		return user, false
+	}
+	if k := apiKeyFrom(r.Context()); k != nil && (!k.AdminScope || !rbac.AdminScopeAllowed(user.APIAccessOverride)) {
+		return user, false
+	}
+	return user, true
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -1006,18 +1063,24 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	engine := rbac.New(perms)
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"user":        user,
-		"namespaces":  engine.AllowedNamespaces(clusterIDFrom(r.Context())),
-		"permissions": perms,
-	})
+	out := map[string]interface{}{"user": user}
+	if k := apiKeyFrom(r.Context()); k != nil {
+		// With a key: what the key reaches now, and the key itself (never its secret).
+		perms = rbac.Restrict(perms, &k.APIKeyScope)
+		out["apiKey"] = k
+	}
+	out["namespaces"] = rbac.New(perms).AllowedNamespaces(clusterIDFrom(r.Context()))
+	out["permissions"] = perms
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.userForRequest(r)
 	if !ok {
 		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	if s.denyAPIKey(w, r, models.AuditLog{Verb: audit.VerbChangePassword, ResourceType: audit.KindUser, ResourceName: user.Username}) {
 		return
 	}
 	var request struct {
@@ -1029,7 +1092,8 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := auth.ComparePassword(user.PasswordHash, request.CurrentPassword); err != nil {
-		w.WriteHeader(http.StatusUnauthorized)
+		// Not 401: the session is fine, and the UI signs out on 401.
+		writeError(w, http.StatusBadRequest, "the current password is incorrect")
 		return
 	}
 	if err := auth.CheckPasswordPolicy(request.NewPassword); err != nil {
@@ -1065,33 +1129,18 @@ func (s *Server) handleNamespaces(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
-	user, ok := s.userForRequest(r)
-	if !ok {
+	if _, ok := s.userForRequest(r); !ok {
 		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
-	if user.IsAdmin {
-		var all []string
-		for _, ns := range existing {
-			all = append(all, ns.Name)
-		}
-		s.auditRead(r, audit.VerbList, "namespaces", "", "*")
-		writeJSON(w, http.StatusOK, map[string]interface{}{"namespaces": all})
 		return
 	}
 	engine, ok := s.engineForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusForbidden, reasonForbidden)
 		return
-	}
-	allowed := engine.AllowedNamespaces(clusterIDFrom(r.Context()))
-	allowedSet := make(map[string]struct{})
-	for _, ns := range allowed {
-		allowedSet[ns] = struct{}{}
 	}
 	var result []string
 	for _, ns := range existing {
-		if _, ok := allowedSet[ns.Name]; ok {
+		if engine.SeesNamespace(clusterIDFrom(r.Context()), ns.Name) {
 			result = append(result, ns.Name)
 		}
 	}
@@ -1101,37 +1150,18 @@ func (s *Server) handleNamespaces(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleNamespacePermissions(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
-	user, ok := s.userForRequest(r)
-	if !ok {
+	if _, ok := s.userForRequest(r); !ok {
 		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
-	if user.IsAdmin {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"resources": filterByFeatures(map[string][]string{
-				"pods":         {"list", "get", "logs", "exec", "edit"},
-				"deployments":  {"list", "get", "restart", "scale", "edit"},
-				"daemonsets":   {"list", "get", "edit"},
-				"statefulsets": {"list", "get", "scale", "edit"},
-				"hpas":         {"list", "get", "edit"},
-				"services":     {"list", "get", "edit"},
-				"configmaps":   {"list", "get", "edit"},
-				"secrets":      {"list", "get", "reveal", "edit"},
-				"ingresses":    {"list", "get", "edit"},
-				"cronjobs":     {"list", "get", "edit"},
-				"jobs":         {"list", "get", "edit"},
-			}),
-		})
 		return
 	}
 	engine, ok := s.engineForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusForbidden, reasonForbidden)
 		return
 	}
 	permissions := filterByFeatures(engine.AllowedResources(clusterIDFrom(r.Context()), namespace))
 	if len(permissions) == 0 {
-		w.WriteHeader(http.StatusForbidden)
+		writeError(w, http.StatusForbidden, reasonForbidden)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"resources": permissions})
@@ -1591,6 +1621,8 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		Username string `json:"username"`
 		IsActive bool   `json:"isActive"`
 		IsAdmin  bool   `json:"isAdmin"`
+		// APIAccessOverride: "" = by roles, else a mode; absent = unchanged.
+		APIAccessOverride *string `json:"apiAccessOverride"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -1617,6 +1649,10 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if o := request.APIAccessOverride; o != nil && *o != "" && !rbac.ValidMode(*o) {
+		writeError(w, http.StatusBadRequest, errAPIAccess)
+		return
+	}
 	before := *user
 	user.Username = request.Username
 	user.IsActive = request.IsActive
@@ -1635,8 +1671,20 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	if before.IsAdmin != user.IsAdmin {
 		changed = append(changed, "is_admin")
 	}
-	s.auditEvent(r, models.AuditLog{Verb: audit.VerbUpdate, ResourceType: audit.KindUser, ResourceName: user.Username,
-		Details: audit.D{"changed": changed, "is_admin": user.IsAdmin, "is_active": user.IsActive}})
+	d := audit.D{"changed": changed, "is_admin": user.IsAdmin, "is_active": user.IsActive}
+	if o := request.APIAccessOverride; o != nil && *o != before.APIAccessOverride {
+		if err := s.store.SetUserAPIAccess(r.Context(), user.ID, *o); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		user.APIAccessOverride = *o
+		d["changed"] = append(changed, "api_access")
+		d["api_access"] = *o
+		if *o == "" {
+			d["api_access"] = "roles"
+		}
+	}
+	s.auditEvent(r, models.AuditLog{Verb: audit.VerbUpdate, ResourceType: audit.KindUser, ResourceName: user.Username, Details: d})
 	writeJSON(w, http.StatusOK, user)
 }
 
@@ -1826,9 +1874,17 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
+		APIAccess   string `json:"apiAccess"` // "" = safe_read
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if request.APIAccess == "" {
+		request.APIAccess = rbac.AccessSafeRead
+	}
+	if !rbac.ValidMode(request.APIAccess) {
+		writeError(w, http.StatusBadRequest, errAPIAccess)
 		return
 	}
 	id, err := s.store.CreateRole(r.Context(), request.Name, request.Description)
@@ -1836,8 +1892,15 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusConflict)
 		return
 	}
-	s.auditEvent(r, models.AuditLog{Verb: audit.VerbCreate, ResourceType: audit.KindRole, ResourceName: request.Name})
-	writeJSON(w, http.StatusCreated, models.Role{ID: id, Name: request.Name, Description: request.Description})
+	if request.APIAccess != rbac.AccessSafeRead {
+		if err := s.store.SetRoleAPIAccess(r.Context(), id, request.APIAccess); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+	}
+	s.auditEvent(r, models.AuditLog{Verb: audit.VerbCreate, ResourceType: audit.KindRole, ResourceName: request.Name,
+		Details: audit.D{"api_access": request.APIAccess}})
+	writeJSON(w, http.StatusCreated, models.Role{ID: id, Name: request.Name, Description: request.Description, APIAccess: request.APIAccess})
 }
 
 func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request) {
@@ -1847,19 +1910,44 @@ func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
+		Name        string  `json:"name"`
+		Description string  `json:"description"`
+		APIAccess   *string `json:"apiAccess"` // absent = unchanged
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	if err := s.store.UpdateRole(r.Context(), models.Role{ID: id, Name: request.Name, Description: request.Description}); err != nil {
+	if request.APIAccess != nil && !rbac.ValidMode(*request.APIAccess) {
+		writeError(w, http.StatusBadRequest, errAPIAccess)
+		return
+	}
+	roles, err := s.store.ListRoles(r.Context())
+	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	s.auditEvent(r, models.AuditLog{Verb: audit.VerbUpdate, ResourceType: audit.KindRole, ResourceName: request.Name})
-	writeJSON(w, http.StatusOK, models.Role{ID: id, Name: request.Name, Description: request.Description})
+	i := slices.IndexFunc(roles, func(x models.Role) bool { return x.ID == id })
+	if i < 0 {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	role := models.Role{ID: id, Name: request.Name, Description: request.Description, APIAccess: roles[i].APIAccess}
+	if err := s.store.UpdateRole(r.Context(), role); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	var d audit.D
+	if request.APIAccess != nil && *request.APIAccess != role.APIAccess {
+		if err := s.store.SetRoleAPIAccess(r.Context(), id, *request.APIAccess); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		role.APIAccess = *request.APIAccess
+		d = audit.D{"changed": []string{"api_access"}, "api_access": role.APIAccess}
+	}
+	s.auditEvent(r, models.AuditLog{Verb: audit.VerbUpdate, ResourceType: audit.KindRole, ResourceName: request.Name, Details: d})
+	writeJSON(w, http.StatusOK, role)
 }
 
 func (s *Server) handleDeleteRole(w http.ResponseWriter, r *http.Request) {
@@ -2153,7 +2241,12 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
-	var request models.SessionSettings
+	// Fields left out of the body keep their value.
+	request, err := s.store.GetSessionSettings(r.Context())
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		return
@@ -2162,11 +2255,16 @@ func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+	if request.APIKeyMaxDays < 0 || request.APIKeyMaxDays > 3650 {
+		writeError(w, http.StatusBadRequest, "the longest API key lifetime is 0 (no limit) to 3650 days")
+		return
+	}
 	if err := s.store.UpdateSessionSettings(r.Context(), request); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	s.recordSettingsUpdate(r, "session", audit.D{"summary": "session_minutes=" + strconv.Itoa(request.SessionMinutes)})
+	s.recordSettingsUpdate(r, "session", audit.D{"summary": fmt.Sprintf("session_minutes=%d api_key_max_days=%d api_key_allow_no_expiry=%t",
+		request.SessionMinutes, request.APIKeyMaxDays, request.APIKeyAllowNoExpiry)})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
@@ -2292,6 +2390,8 @@ func auditFilterFrom(w http.ResponseWriter, r *http.Request) (store.AuditFilter,
 		ResourceName: q.Get("resourceName"),
 		Cluster:      q.Get("cluster"),
 		Namespace:    q.Get("namespace"),
+		Source:       q.Get("source"), // web | api_key
+		APIKey:       q.Get("apiKey"),
 		Start:        parseTimeParam(q.Get("start")),
 		End:          parseTimeParam(q.Get("end")),
 	}
@@ -2337,7 +2437,7 @@ func (s *Server) handleAuditLogsExport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", "attachment; filename=audit-logs.csv")
 	writer := csv.NewWriter(w)
 	_ = writer.Write([]string{"timestamp", "user", "action", "verb", "outcome", "reason", "cluster", "namespace",
-		"resource_type", "resource_name", "details", "source_ip", "user_agent", "auth_source", "request_id"})
+		"resource_type", "resource_name", "details", "source_ip", "user_agent", "auth_source", "request_id", "api_key_name"})
 	for _, entry := range logs {
 		details := ""
 		if len(entry.Details) > 0 {
@@ -2360,6 +2460,7 @@ func (s *Server) handleAuditLogsExport(w http.ResponseWriter, r *http.Request) {
 			entry.UserAgent,
 			entry.AuthSource,
 			entry.RequestID,
+			entry.APIKeyName,
 		})
 	}
 	writer.Flush()
@@ -2456,48 +2557,97 @@ func parseTimeParam(value string) *time.Time {
 	return nil
 }
 
+// engineForRequest fails for a non-admin who must change the password: callers answer 403,
+// never 401, because the UI signs out on 401. (Admins kept reading before
+// changing it; their admin screens check it in isAdminRequest.)
 func (s *Server) engineForRequest(r *http.Request) (*rbac.Engine, bool) {
-	claims, ok := auth.FromContext(r.Context())
-	if !ok {
+	user, ok := s.userForRequest(r)
+	if !ok || (user.MustChangePassword && !user.IsAdmin) {
 		return nil, false
 	}
-	user, err := s.store.GetUserByID(r.Context(), claims.UserID)
-	if err != nil || !user.IsActive {
-		return nil, false
+	engine, err := s.accessFor(r.Context(), user)
+	return engine, err == nil
+}
+
+// accessFor is the single source of what user may do on this request: the
+// web access, or with an API key on ctx the key access narrowed to the key's scope.
+func (s *Server) accessFor(ctx context.Context, user *models.User) (*rbac.Engine, error) {
+	k := apiKeyScopeFrom(ctx)
+	if k == nil {
+		return s.webAccess(ctx, user)
 	}
-	if user.MustChangePassword {
-		return nil, false
-	}
-	perms, err := s.store.ListPermissionsByUser(r.Context(), user.ID)
+	engine, err := s.keyAccess(ctx, user)
 	if err != nil {
-		return nil, false
+		return nil, err
 	}
-	return rbac.New(perms), true
+	return engine.WithKey(k), nil
+}
+
+// webAccess: an admin holds every grant, anyone else their roles' grants.
+func (s *Server) webAccess(ctx context.Context, user *models.User) (*rbac.Engine, error) {
+	if user.IsAdmin {
+		return rbac.NewAdmin(), nil
+	}
+	perms, err := s.store.ListPermissionsByUser(ctx, user.ID)
+	if err != nil {
+		return nil, err
+	}
+	return rbac.New(perms), nil
+}
+
+// keyAccess is the most user's API keys may reach: the web access through the
+// admin's API access policy (role modes, the user's override). accessFor and
+// ceilingFor both use it, so the key form offers exactly what a key gets.
+func (s *Server) keyAccess(ctx context.Context, user *models.User) (*rbac.Engine, error) {
+	if user.IsAdmin {
+		return rbac.NewAdminKeys(user.APIAccessOverride), nil
+	}
+	perms, err := s.store.ListPermissionsByUser(ctx, user.ID)
+	if err != nil {
+		return nil, err
+	}
+	return rbac.New(rbac.KeyCeiling(perms, user.APIAccessOverride)), nil
+}
+
+// denyReason names a refusal: api_access_policy when the key lists the grant
+// and its owner holds it on the web, so only the admin's policy stands in
+// the way; forbidden otherwise.
+func (s *Server) denyReason(ctx context.Context, namespace, resource, action string) string {
+	c, ok := auth.FromContext(ctx)
+	if !ok || c.APIKey == nil || !featureAllows(resource, action) {
+		return reasonForbidden
+	}
+	user, err := s.store.GetUserByID(ctx, c.UserID)
+	if err != nil {
+		return reasonForbidden
+	}
+	web, err := s.webAccess(ctx, user)
+	if err == nil && web.WithKey(&c.APIKey.APIKeyScope).Can(clusterIDFrom(ctx), namespace, resource, action) {
+		return reasonAPIAccessPolicy
+	}
+	return reasonForbidden
 }
 
 func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, resource, action string) (string, bool) {
-	user, ok := s.userForRequest(r)
-	if !ok {
+	if _, ok := s.userForRequest(r); !ok {
 		w.WriteHeader(http.StatusUnauthorized)
 		return "", false
 	}
 	namespace := chi.URLParam(r, "namespace")
 	if !featureAllows(resource, action) {
 		s.auditReadDenied(r, resource, action, reasonFeatureDisabled)
-		writeError(w, http.StatusForbidden, "this feature is disabled by the operator")
+		writeError(w, http.StatusForbidden, reasonFeatureDisabled)
 		return "", false
-	}
-	if user.IsAdmin {
-		return namespace, true
 	}
 	engine, ok := s.engineForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusForbidden, reasonForbidden)
 		return "", false
 	}
 	if !engine.Can(clusterIDFrom(r.Context()), namespace, resource, action) {
-		s.auditReadDenied(r, resource, action, reasonForbidden)
-		w.WriteHeader(http.StatusForbidden)
+		reason := s.denyReason(r.Context(), namespace, resource, action)
+		s.auditReadDenied(r, resource, action, reason)
+		writeError(w, http.StatusForbidden, reason)
 		return "", false
 	}
 	return namespace, true
@@ -2511,15 +2661,8 @@ func (s *Server) can(ctx context.Context, userID int, namespace, resource, actio
 	if err != nil {
 		return false
 	}
-	if user.IsAdmin {
-		return true
-	}
-	perms, err := s.store.ListPermissionsByUser(ctx, userID)
-	if err != nil {
-		return false
-	}
-	engine := rbac.New(perms)
-	return engine.Can(clusterIDFrom(ctx), namespace, resource, action)
+	engine, err := s.accessFor(ctx, user)
+	return err == nil && engine.Can(clusterIDFrom(ctx), namespace, resource, action)
 }
 
 func (s *Server) userForRequest(r *http.Request) (*models.User, bool) {

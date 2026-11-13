@@ -20,7 +20,7 @@ import (
 // user must change the password at next login, and every existing session of
 // that user is revoked. Audited as user.reset_password (success, denied, failed).
 func (s *Server) handleResetUserPassword(w http.ResponseWriter, r *http.Request) {
-	admin, ok := s.userForRequest(r)
+	_, ok := s.userForRequest(r)
 	if !ok {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
@@ -30,9 +30,9 @@ func (s *Server) handleResetUserPassword(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if !admin.IsAdmin || admin.MustChangePassword {
+	if _, ok := s.isAdminRequest(r); !ok {
 		s.recordPasswordResetAudit(r, "id:"+strconv.Itoa(id), audit.Denied, reasonAdminOnly, nil)
-		writeError(w, http.StatusForbidden, "admin only")
+		writeError(w, http.StatusForbidden, reasonAdminOnly)
 		return
 	}
 	target, err := s.store.GetUserByID(r.Context(), id)

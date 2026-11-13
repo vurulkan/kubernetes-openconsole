@@ -53,8 +53,9 @@ func (s *Server) handleDeploymentRestart(w http.ResponseWriter, r *http.Request)
 	name := chi.URLParam(r, "name")
 
 	if !s.can(r.Context(), user.ID, namespace, "deployments", "restart") {
-		s.recordDeployAudit(r, namespace, name, audit.VerbRestart, audit.Denied, reasonForbidden, nil)
-		writeError(w, http.StatusForbidden, "forbidden")
+		reason := s.denyReason(r.Context(), namespace, "deployments", "restart")
+		s.recordDeployAudit(r, namespace, name, audit.VerbRestart, audit.Denied, reason, nil)
+		writeError(w, http.StatusForbidden, reason)
 		return
 	}
 
@@ -91,8 +92,9 @@ func (s *Server) handleDeploymentScale(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 
 	if !s.can(r.Context(), user.ID, namespace, "deployments", "scale") {
-		s.recordDeployAudit(r, namespace, name, audit.VerbScale, audit.Denied, reasonForbidden, nil)
-		writeError(w, http.StatusForbidden, "forbidden")
+		reason := s.denyReason(r.Context(), namespace, "deployments", "scale")
+		s.recordDeployAudit(r, namespace, name, audit.VerbScale, audit.Denied, reason, nil)
+		writeError(w, http.StatusForbidden, reason)
 		return
 	}
 

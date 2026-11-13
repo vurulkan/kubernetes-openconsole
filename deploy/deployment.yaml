@@ -109,6 +109,11 @@ spec:
             # history in the pod / deployment drawers) are kept. Default 30.
             - name: RESTART_HISTORY_RETENTION_DAYS
               value: "30"
+            # API_KEY_READ_RETENTION_DAYS: successful reads made with an API key
+            # (list / get / logs) are kept this long; everything else stays
+            # LOG_RETENTION_DAYS. Default 7.
+            # - name: API_KEY_READ_RETENTION_DAYS
+            #   value: "7"
 
             # ── Operational guardrails ───────────────────────────────────────────
             # MAX_REPLICAS: upper bound the Scale endpoint accepts for
@@ -134,7 +139,8 @@ spec:
             # Switch a capability off for EVERYONE, admins included, whatever
             # the roles say: FEATURE_POD_EXEC, FEATURE_YAML_EDIT,
             # FEATURE_WORKLOAD_ACTIONS, FEATURE_SECRETS, FEATURE_SECRET_REVEAL,
-            # FEATURE_SECRET_EDIT. Everything is on by default.
+            # FEATURE_SECRET_EDIT, FEATURE_API_KEYS (2.22.0: API keys, their page
+            # and signing in with one). Everything is on by default.
             # - name: FEATURE_POD_EXEC
             #   value: "false"
 

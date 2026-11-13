@@ -20,10 +20,11 @@ const (
 	FeatureSecrets         = "secrets"          // every secrets:* action
 	FeatureSecretReveal    = "secret_reveal"    // secrets:reveal
 	FeatureSecretEdit      = "secret_edit"      // secrets:edit
+	FeatureAPIKeys         = "api_keys"         // API keys: the screen, the endpoints and signing in with one
 )
 
 // AllFeatures lists every flag, for docs and GET /api/features.
-var AllFeatures = []string{FeaturePodExec, FeatureYAMLEdit, FeatureWorkloadActions, FeatureSecrets, FeatureSecretReveal, FeatureSecretEdit}
+var AllFeatures = []string{FeaturePodExec, FeatureYAMLEdit, FeatureWorkloadActions, FeatureSecrets, FeatureSecretReveal, FeatureSecretEdit, FeatureAPIKeys}
 
 // disabledFeatures is set once at startup (SetDisabledFeatures).
 var disabledFeatures = map[string]bool{}

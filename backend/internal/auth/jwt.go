@@ -4,11 +4,16 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"k8s-dashboard/backend/internal/models"
 )
 
 type Claims struct {
 	UserID   int    `json:"userId"`
 	Username string `json:"username"`
+	// APIKey is set when the request came with an API key instead of a web
+	// session (never part of a JWT).
+	APIKey *models.APIKey `json:"-"`
 	jwt.RegisteredClaims
 }
 

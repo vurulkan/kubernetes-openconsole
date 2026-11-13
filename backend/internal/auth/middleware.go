@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -33,13 +34,42 @@ type SessionValidator interface {
 	Touch(jti string)
 }
 
+// APIKeyPrefix starts every API key secret, so secret scanners can spot one.
+const APIKeyPrefix = "oc_"
+
+// KeyAuthenticator checks an API key: the secret from the Authorization
+// header, or (keyID > 0) the key a WebSocket ticket was issued with. A
+// non-zero status rejects the request with that status (and the message, if any, as {"error": …}).
+type KeyAuthenticator interface {
+	AuthenticateKey(r *http.Request, secret string, keyID int) (*Claims, int, string)
+}
+
 // AuthMiddleware parses the JWT and, when a SessionValidator is wired, cross-
 // checks the jti against the server-side session record so an admin can
 // revoke a token before its natural expiry. Pre-tracking JWTs (no jti) and
 // DB lookup failures are allowed through — rejecting on a transient DB blip
-// would turn a storage glitch into a global logout.
-func AuthMiddleware(secret []byte, sessions SessionValidator) func(http.Handler) http.Handler {
+// would turn a storage glitch into a global logout. A bearer token starting
+// with oc_ is an API key, checked by keys (nil = API keys are off).
+func AuthMiddleware(secret []byte, sessions SessionValidator, keys KeyAuthenticator) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
+		serveKey := func(w http.ResponseWriter, r *http.Request, secret string, keyID int) {
+			if keys == nil {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			claims, status, message := keys.AuthenticateKey(r, secret, keyID)
+			if status != 0 {
+				if message != "" {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(status)
+					_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
+					return
+				}
+				w.WriteHeader(status)
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(WithUser(r.Context(), claims)))
+		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			header := r.Header.Get("Authorization")
 			token := ""
@@ -50,7 +80,10 @@ func AuthMiddleware(secret []byte, sessions SessionValidator) func(http.Handler)
 				}
 			}
 			var claims *Claims
-			if token != "" {
+			if strings.HasPrefix(token, APIKeyPrefix) {
+				serveKey(w, r, token, 0)
+				return
+			} else if token != "" {
 				parsed, err := ParseToken(secret, token)
 				if err != nil {
 					w.WriteHeader(http.StatusUnauthorized)
@@ -62,6 +95,11 @@ func AuthMiddleware(secret []byte, sessions SessionValidator) func(http.Handler)
 				redeemed, ok := RedeemTicket(id, r.URL.Path)
 				if !ok {
 					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+				if redeemed.APIKey != nil {
+					// Checked again: the key may have been revoked since the ticket was issued.
+					serveKey(w, r, "", redeemed.APIKey.ID)
 					return
 				}
 				claims = redeemed

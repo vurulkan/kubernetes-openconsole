@@ -82,6 +82,43 @@ If the logs arrive through another integration, hook the same processor into tha
 
 Nothing has to change in the Elastic Agent policy.
 
+### Elasticsearch 8.7 and older
+
+`install.sh` needs 8.8 for the `reroute` processor. On 8.7 the same files work with three changes. Run them from Kibana → Dev Tools (this setup runs on 8.7.1):
+
+1. **Pipeline without routing.** Install `openconsole-logs.pipeline.json` **without its last processor** (`reroute`). Audit and application records then stay together in the data stream the Agent integration writes the OpenConsole pod's logs to, e.g. `logs-<dataset>-<namespace>`. Tell them apart with `event.dataset : "openconsole.audit"` / `"openconsole.app"`. Call the pipeline from that integration (its `@custom` pipeline or its pipeline setting), as above.
+2. **Index template on that data stream.** Install `logs-openconsole.index-template.json` with `index_patterns` set to that data stream (`["logs-<dataset>*"]`) and `priority` above the integration's template. Keep `ignore_missing_component_templates`: 8.7 has no stock `logs@settings` / `ecs@mappings`.
+3. **Lifecycle (ILM).** On 8.8+ the stock `logs@settings` gives the data streams the `logs` policy. On 8.7 nothing does: the data stream never rolls over and nothing is deleted (`GET _data_stream/<ds>` shows no `ilm_policy`). Add a policy and attach it:
+
+```text
+PUT _ilm/policy/openconsole-audit
+{
+  "policy": {
+    "_meta": { "description": "OpenConsole audit and app logs (kubernetes-openconsole)" },
+    "phases": {
+      "hot":    { "actions": { "rollover": { "max_age": "30d", "max_primary_shard_size": "10gb" } } },
+      "delete": { "min_age": "365d", "actions": { "delete": {} } }
+    }
+  }
+}
+
+PUT _component_template/openconsole@settings
+{ "template": { "settings": { "index.lifecycle.name": "openconsole-audit" } } }
+```
+
+Add `"openconsole@settings"` at the end of the index template's `composed_of` and `PUT _index_template/logs-openconsole` again (with the full body). New backing indices get the policy from the template; give it to the ones that exist (the data stream name reaches all of them):
+
+```text
+PUT <ds>/_settings
+{ "index.lifecycle.name": "openconsole-audit" }
+
+GET <ds>/_ilm/explain            ← every index "managed": true; the write index waits in hot / check-rollover-ready
+```
+
+The delete age is how long the audit trail stays in Elasticsearch (the database keeps `LOG_RETENTION_DAYS`); set it to what you must keep. Don't create `logs@custom` for this: other `logs-*` templates may use it too.
+
+**After an upgrade that adds fields** (2.22 added ten), `PUT _component_template/openconsole@mappings` with the new file only applies from the next backing index. To get them now, either roll over (`POST <ds>/_rollover`) or add them to the indices that exist: `PUT <ds>/_mapping` with just the new fields under `openconsole.properties`. A field that was already written before its mapping existed got a dynamic type (strings become `text`), which only a rollover fixes; Kibana shows such a field as a conflict until the older index is deleted. Check one with `GET <ds>/_mapping/field/openconsole.verb`.
+
 ## Check
 
 After the next request to OpenConsole, open Kibana → Discover with a `logs-openconsole.audit-*` data view, or use Dev Tools:
@@ -108,6 +145,8 @@ KQL examples (application, `logs-openconsole.app-*`):
 
 ```text
 event.category : "web" and event.outcome : "failure"
+openconsole.api_key.id : *              (requests made with an API key; also on audit events)
+openconsole.api_key.name : "claude-ci-dev" and http.response.status_code >= 400
 http.response.status_code >= 500
 log.level : "error"
 url.path : "/api/auth/login" and source.ip : "10.31.0.0/16"
@@ -142,3 +181,5 @@ Tested on Elasticsearch 8.15.3 and 9.1.0 with images built from this version (2.
 `install.sh` was run twice; the second run changed nothing it shouldn't.
 
 **2.17.0** (structured audit events): tested on 8.15.3 and 9.1.0 (LogsDB) with audit lines written by the 2.17.0 audit code (list, restart with `restarted_at`, a failed scale with `replicas_from` / `replicas_to` and an error, the end of a pod shell, a failed sign-in) and 2.16.2 / 2.16.1 audit lines (bare `list`, `*.success` / `*.denied`, `pod.exec.end`, `login.failed`, `deployments.apply.success`, `admin.create`), sent together through the pipeline. `_bulk` reported no errors; old and new lines are found by the same queries (`event.action : "deployment.restart"`, `event.action : "user.login"`, `event.outcome : "failure"`); `openconsole.restarted_at` is a `date`, `openconsole.replicas_to` / `cluster_id` / `exit_code` are `long`, and range queries on them work.
+
+**2.22.0** (API keys, policy, agent API): ten new fields (`openconsole.api_key.id` / `.name`, `admin_scope`, `expires_at`, `api_access`, `by_admin`, `comment`, `mode`, `program`, `recording_id`); the pipeline is unchanged. On an 8.7.1 cluster set up as in *Elasticsearch 8.7 and older*: `PUT <ds>/_mapping` added the ten fields to the live index with the right types; the component template from this version plus a rollover gave the new index every field as mapped here (five fields an older template had left out had been written as `text` before); the ILM policy above reported both backing indices as managed.

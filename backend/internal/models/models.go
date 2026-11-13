@@ -16,6 +16,9 @@ type User struct {
 	// ActiveClusterID is the cluster this user picked in the header
 	// switcher; 0 = use the default cluster.
 	ActiveClusterID int `json:"activeClusterId"`
+	// APIAccessOverride replaces the role modes for this user's API keys
+	// (rbac.Access*); "" = by roles.
+	APIAccessOverride string `json:"apiAccessOverride"`
 }
 
 // Where a user authenticates.
@@ -34,6 +37,8 @@ type Role struct {
 	ID          int    `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	// APIAccess is what this role's grants give API keys (rbac.Access*).
+	APIAccess string `json:"apiAccess"`
 }
 
 // NamespacePermission grants a role one (cluster, namespace, resource, action)
@@ -48,6 +53,8 @@ type NamespacePermission struct {
 	Namespace   string `json:"namespace"`
 	Resource    string `json:"resource"`
 	Action      string `json:"action"`
+	// RoleAPIAccess is the role's API access mode (rbac.Access*), filled by ListPermissionsByUser.
+	RoleAPIAccess string `json:"-"`
 }
 
 type LDAPConfig struct {
@@ -83,6 +90,10 @@ type AzureADConfig struct {
 
 type SessionSettings struct {
 	SessionMinutes int `json:"sessionMinutes"`
+	// API key expiry policy for new and regenerated keys: the longest
+	// lifetime in days (0 = no limit) and whether "never expires" is allowed.
+	APIKeyMaxDays       int  `json:"apiKeyMaxDays"`
+	APIKeyAllowNoExpiry bool `json:"apiKeyAllowNoExpiry"`
 }
 
 type KubeCredentials struct {
@@ -175,6 +186,9 @@ type AuditLog struct {
 	SourceIP   string `json:"sourceIp,omitempty"`
 	UserAgent  string `json:"userAgent,omitempty"`
 	AuthSource string `json:"authSource,omitempty"`
+	// The API key the action was taken with; empty for a web session.
+	APIKeyID   int    `json:"apiKeyId,omitempty"`
+	APIKeyName string `json:"apiKeyName,omitempty"`
 }
 
 // SessionTokenRow is one row from session_tokens with the owner's username
@@ -211,7 +225,16 @@ type SessionRecording struct {
 	Truncated  bool       `json:"truncated"`
 	RequestID  string     `json:"requestId"`
 	Path       string     `json:"-"`
+	APIKeyID   int        `json:"apiKeyId,omitempty"`
+	APIKeyName string     `json:"apiKeyName,omitempty"`
+	Mode       string     `json:"mode"` // RecordingModeShell | RecordingModeCommand
 }
+
+// What a recording captured: an interactive shell or one command (POST …/exec).
+const (
+	RecordingModeShell   = "shell"
+	RecordingModeCommand = "command"
+)
 
 // RecordingFilter narrows ListRecordings. Empty strings / nil times are
 // ignored; Limit <= 0 falls back to the store default.
@@ -220,10 +243,13 @@ type RecordingFilter struct {
 	Cluster   string
 	Namespace string
 	Pod       string
-	From      *time.Time
-	To        *time.Time
-	Limit     int
-	Offset    int
+	// Source: "web" (no API key) | "api_key" (any key); APIKey matches the key name.
+	Source string
+	APIKey string
+	From   *time.Time
+	To     *time.Time
+	Limit  int
+	Offset int
 }
 
 // Disk policies for when the recording quota or the free-space floor is hit.
@@ -258,4 +284,33 @@ type SavedView struct {
 	ViewMode    string    `json:"viewMode"`
 	Shared      bool      `json:"shared"`
 	CreatedAt   time.Time `json:"createdAt"`
+}
+
+// APIKey is a user's key for agents and scripts. The secret itself is never
+// stored or returned after creation: Hash is its SHA-256, Prefix the first
+// characters for recognising it in lists.
+type APIKey struct {
+	ID         int        `json:"id"`
+	UserID     int        `json:"-"`
+	Name       string     `json:"name"`
+	Note       string     `json:"note"`
+	Prefix     string     `json:"prefix"`
+	Hash       string     `json:"-"`
+	AdminScope bool       `json:"adminScope"`
+	CreatedAt  time.Time  `json:"createdAt"`
+	UpdatedAt  time.Time  `json:"updatedAt"`
+	ExpiresAt  *time.Time `json:"expiresAt"`
+	LastUsedAt *time.Time `json:"lastUsedAt"`
+	LastUsedIP string     `json:"lastUsedIp"`
+	RevokedAt  *time.Time `json:"revokedAt"`
+	APIKeyScope
+}
+
+// APIKeyScope is what a key may reach: Clusters × (AllNamespaces or
+// Namespaces), and the resource:action grants. Cluster 0 = every cluster.
+type APIKeyScope struct {
+	Clusters      []int    `json:"clusters"`
+	AllNamespaces bool     `json:"allNamespaces"`
+	Namespaces    []string `json:"namespaces"`
+	Grants        []string `json:"grants"` // "pods:list"
 }

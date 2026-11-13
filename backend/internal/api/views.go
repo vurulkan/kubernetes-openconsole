@@ -50,6 +50,9 @@ func (s *Server) handleSaveView(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
+	if s.denyAPIKey(w, r, models.AuditLog{Verb: audit.VerbCreate, ResourceType: audit.KindSavedView}) {
+		return
+	}
 	var body struct {
 		Name      string `json:"name"`
 		Namespace string `json:"namespace"`
@@ -128,6 +131,9 @@ func (s *Server) viewForWrite(w http.ResponseWriter, r *http.Request, verb strin
 	user, ok := s.userForRequest(r)
 	if !ok {
 		w.WriteHeader(http.StatusUnauthorized)
+		return nil, nil, false
+	}
+	if s.denyAPIKey(w, r, models.AuditLog{Verb: verb, ResourceType: audit.KindSavedView, ResourceName: chi.URLParam(r, "id")}) {
 		return nil, nil, false
 	}
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))

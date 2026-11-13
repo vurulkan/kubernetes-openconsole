@@ -10,9 +10,9 @@ manual (long, read only the section you need); this file is for working on the c
 `backend/` (Go, chi, client-go, slog, modernc sqlite) — entry point `cmd/server`.
 | Path | What |
 |---|---|
-| `internal/api` | HTTP + WebSocket handlers. `router.go` holds the routes, `requirePermission`, most handlers; features split out (`workloads.go`, `deployment_actions.go`, `secrets.go`, `pod_exec.go`, `logs.go` (pod / deployment / job log sockets, JSON frames), `ws_ticket.go`, `overview.go` (admin overview, 15 s cache), `nodes.go` (admin node list / detail / history), `yaml_apply.go`, `clusters.go`, `views.go`, `exports.go`, …). `authz_test.go` = authorization suite |
+| `internal/api` | HTTP + WebSocket handlers. `router.go` holds the routes, `requirePermission`, `accessFor` / `engineForRequest` (every permission check, API key included: `webAccess`, or `keyAccess` = web access through the admin's API access policy, which `ceilingFor` uses too), `denyReason` and `isAdminRequest` (the one admin check), most handlers; features split out (`apikeys.go` (API key sign-in, ceiling, expiry policy, `/api/me/api-keys`), `apikeys_admin.go` (admin key list / revoke, user API access preview), `workloads.go`, `deployment_actions.go`, `secrets.go`, `pod_exec.go` (shell socket), `pod_exec_command.go` (one command over REST), `logs.go` (pod / deployment / job log sockets, JSON frames; REST log `handlePodLogs`), `openapi.yaml` + `openapi.go` (the hand-written API description, `GET /api/openapi.json`; `openapi_test.go` walks `routes()` against it), `ws_ticket.go`, `overview.go` (admin overview, 15 s cache), `nodes.go` (admin node list / detail / history), `yaml_apply.go`, `clusters.go`, `views.go`, `exports.go`, …). `authz_test.go` = authorization suite |
 | `internal/audit` | audit events: `Verb*` constants, `DetailKeys` registry (`event.go`), DB + console mirror (`logger.go`), 2.16 legacy upgrade (`legacy.go`). Handlers call `s.auditEvent` / `s.auditRead` / `s.auditReadDenied` (`api/audit_events.go`) |
-| `internal/rbac` | permission engine (role → namespace / resource / action, cluster-scoped grants) |
+| `internal/rbac` | permission engine (role → namespace / resource / action, cluster-scoped grants); `Catalog` (every resource:action), `NewAdmin`, `WithKey` (API key scope ∩ the owner's grants); `policy.go` API key policy: `SafeRead` (the one definition of safe read-only, UI template included), `KeyCeiling` (role modes / user override), `NewAdminKeys` |
 | `internal/auth` | local passwords + policy, JWT sessions, LDAP, Azure AD |
 | `internal/kube` | per-cluster client + informer cache (`Manager`, `Registry`; nodes only with list + watch, pods indexed by `spec.nodeName`), event bus, resource reads, apply, YAML prettify; `metrics.go` 30 s metrics-server sampler (24 h in memory, per pod / workload / node / cluster), `terminations.go` container exits from the pod informer (restart history) |
 | `internal/prom` | Prometheus-compatible query client (API server proxy or URL; basic / bearer / Azure AD / mTLS), history queries, test-button diagnosis |
@@ -29,8 +29,9 @@ manual (long, read only the section you need); this file is for working on the c
 | `src/pages/DashboardPage.tsx` | workloads screen (cards + table, tabs per kind); `pages/dashboard/ResourceListView.tsx` table columns; `PodDrawer` / `WorkloadDrawer` (Deployment, StatefulSet, DaemonSet; + `DetailParts`, `RestartHistory`) detail views |
 | `src/pages/OverviewPage.tsx` | admin overview (`/overview`, admins land here); charts in `pages/overview/Charts.tsx`, line chart = `components/Usage` `LineChart`. A page without a Layout `panel` gets the full width |
 | `src/pages/NodesPage.tsx` | admin node list (`/nodes`, `?node=<name>` opens the drawer); `pages/nodes/NodeDrawer.tsx` detail, `NodeParts.tsx` status badges, meter, search |
-| `src/pages/AdminPage.tsx` | admin shell + audit, clusters, LDAP, Azure; `pages/admin/*` users, groups, roles, sessions, recordings, `PrometheusSettings` |
-| `src/components` | `ui.tsx` (Button, Badge, …), `DataTable` (sort + `sortStorageKey`, column picker `columnsStorageKey`, `keyboardNav`), `Drawer`, `ConfirmDialog`, `Combobox`, modals, `CommandPalette`, `LiveEventsPanel`, `LogViewer` (+ `utils/logStream.ts`: reconnect / resume), `ContainerPicker` (shell: which container), `PodStatusBadge` (+ `PodRestarts`, `ContainerSquares`), `Usage` (meter + SVG line charts) |
+| `src/pages/AdminPage.tsx` | admin shell + audit, clusters, LDAP, Azure; `pages/admin/*` users, groups, roles, sessions, recordings, `PrometheusSettings`, `ApiKeysSection` (every user's keys), `ApiAccessParts` (role / user API access, preview) |
+| `src/pages/ApiKeysPage.tsx` | the user's API keys (`/account/api-keys`, from the header account menu; `?tab=docs` = Documentation); `pages/apikeys/ApiKeyFormPage.tsx` create / edit, `ApiKeyParts.tsx` templates, expiry, secret box, `CopyRow`, `curlLine`; `ApiDocs.tsx` the Documentation tab, drawn from `/api/openapi.json` (greys out what the key ceiling doesn't reach) |
+| `src/components` | `ui.tsx` (Button, Badge, `Segmented`, …), `PermissionMatrix` (resource × action toggles + catalog, Role Permissions and API keys), `MenuPopover` (keyboard menu: DataTable columns, account menu, row ⋯), `DataTable` (sort + `sortStorageKey`, column picker `columnsStorageKey`, `keyboardNav`), `Drawer`, `ConfirmDialog`, `Combobox`, modals, `CommandPalette`, `LiveEventsPanel`, `LogViewer` (+ `utils/logStream.ts`: reconnect / resume), `ContainerPicker` (shell: which container), `PodStatusBadge` (+ `PodRestarts`, `ContainerSquares`), `Usage` (meter + SVG line charts) |
 | `src/hooks` | global / scoped keyboard shortcuts, modal scopes |
 | `src/services/api.ts` | every API call; `wsUrl()` = WebSocket URL with a single-use ticket (never the JWT) |
 | `src/i18n.ts` | EN + TR dictionaries (one file) |
@@ -72,8 +73,12 @@ Screenshots: Playwright's `chromium.launch` dies on this Mac; start Chrome yours
 
 ## When you add …
 
-- **an endpoint** → route in `router.go`, `requirePermission`, audit for success + denied + failed
-  (reads: `auditRead` / `auditReadDenied`), a case in `authz_test.go`, `services/api.ts`.
+- **an endpoint** → route in `router.go`, the operation in `internal/api/openapi.yaml` (tag, summary, `x-openconsole-permission` / `-admin` / `-api-key`; `TestOpenAPIMatchesRouter` fails without it), `requirePermission`, audit for success + denied + failed
+  (reads: `auditRead` / `auditReadDenied`), a case in `authz_test.go`, `services/api.ts`. Check permissions
+  only through `requirePermission` / `s.can` / `engineForRequest` and admin through `isAdminRequest` (they
+  know the API key; never `user.IsAdmin` for access), and add an API key case (allowed / refused) in
+  `apikeys_test.go`; `/api/admin/*` routes are scanned there automatically. Something a key must never do:
+  `denyAPIKey`.
 - **an audit detail key** → `audit.DetailKeys` + `deploy/elk/openconsole@mappings.component-template.json`.
   Never write secret values, YAML bodies, passwords or tokens into audit or logs.
 - **UI text** → key in both EN and TR in `i18n.ts` (the parity test fails otherwise).
@@ -104,8 +109,9 @@ complete change, reuse what the repo already has, no unrequested options or abst
 
 ## Release
 
-Feature branch `X.Y.Z-name`: every push publishes `:dev-<run>` + `:dev-latest` (test the pinned `:dev-<run>`
-before merging) → squash merge to `main` → `git tag -a vX.Y.Z` + push the tag → CI builds once
+Feature branch `X.Y.Z-name` **from `dev`**: every push publishes `:dev-<run>` + `:dev-latest` → squash merge
+into `dev` → the user tests `dev`'s pinned `:dev-<run>` on a real cluster → when the release's milestones are all
+in `dev`, squash merge `dev` to `main` → `git tag -a vX.Y.Z` + push the tag → CI builds once
 and publishes `ghcr.io/vurulkan/kubernetes-openconsole:X.Y.Z` and `:latest` (same digest, amd64 + arm64,
 GitHub attestations) → check digests, `gh attestation verify`, smoke test → `gh release create`.
 Pushes to `main` build and test but publish nothing. **Never `docker push` by hand**, never add `:<sha>` or

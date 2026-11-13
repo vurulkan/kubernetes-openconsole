@@ -385,3 +385,219 @@ func TestLastLoginBackfillAndUnclaimedAzure(t *testing.T) {
 		t.Fatal("still unclaimed after a sign-in")
 	}
 }
+
+// A 2.21 database gains the API key tables and columns; keys round-trip with
+// their scope, names are unique per user, and deleting the user removes them.
+func TestAPIKeysUpgradeAndCRUD(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	legacy, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`CREATE TABLE session_recordings (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL UNIQUE,
+			user TEXT NOT NULL, cluster TEXT NOT NULL DEFAULT '', namespace TEXT NOT NULL, pod TEXT NOT NULL,
+			container TEXT NOT NULL DEFAULT '', started_at DATETIME NOT NULL, ended_at DATETIME NULL,
+			size_bytes INTEGER NOT NULL DEFAULT 0, truncated INTEGER NOT NULL DEFAULT 0, request_id TEXT NOT NULL DEFAULT '', path TEXT NOT NULL)`,
+		`INSERT INTO session_recordings (session_id, user, namespace, pod, started_at, path) VALUES ('s1', 'olduser', 'ns', 'p', '2025-01-01 00:00:00', '/x')`,
+	} {
+		if _, err := legacy.Exec(stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	legacy.Close()
+	conn, st := open(t, path)
+	defer conn.Close()
+	ctx := context.Background()
+	if recs, _, err := st.ListRecordings(ctx, models.RecordingFilter{Source: "web"}); err != nil || len(recs) != 1 || recs[0].APIKeyID != 0 {
+		t.Fatalf("migrated recordings = %+v, %v", recs, err)
+	}
+
+	uid, _ := st.CreateUser(ctx, "bob", "h")
+	exp := time.Now().Add(time.Hour)
+	k := models.APIKey{UserID: uid, Name: "agent", Prefix: "oc_abcdef", Hash: "h1", ExpiresAt: &exp,
+		APIKeyScope: models.APIKeyScope{Clusters: []int{1, 2}, Namespaces: []string{"a", "b"}, Grants: []string{"pods:list", "pods:get"}}}
+	id, err := st.CreateAPIKey(ctx, k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetAPIKeyByHash(ctx, "h1")
+	if err != nil || got.ID != id || len(got.Clusters) != 2 || strings.Join(got.Namespaces, ",") != "a,b" ||
+		strings.Join(got.Grants, ",") != "pods:list,pods:get" || got.ExpiresAt == nil || got.AllNamespaces {
+		t.Fatalf("key = %+v, %v", got, err)
+	}
+	if _, err := st.CreateAPIKey(ctx, models.APIKey{UserID: uid, Name: "agent", Hash: "h2"}); err != store.ErrAPIKeyNameTaken {
+		t.Fatalf("duplicate name: %v", err)
+	}
+	got.Name, got.AllNamespaces, got.Grants = "agent-2", true, []string{"pods:logs"}
+	if err := st.UpdateAPIKey(ctx, *got); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RevokeAPIKey(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = st.GetAPIKey(ctx, id)
+	if got.Name != "agent-2" || !got.AllNamespaces || len(got.Namespaces) != 0 || strings.Join(got.Grants, ",") != "pods:logs" || got.RevokedAt == nil {
+		t.Fatalf("updated key = %+v", got)
+	}
+	if err := st.RegenerateAPIKey(ctx, id, "oc_zzzzzz", "h3", nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = st.GetAPIKeyByHash(ctx, "h3"); got == nil || got.RevokedAt != nil || got.ExpiresAt != nil {
+		t.Fatalf("regenerated key = %+v", got)
+	}
+	if _, err := st.GetAPIKeyByHash(ctx, "h1"); err != sql.ErrNoRows {
+		t.Fatalf("old secret still found: %v", err)
+	}
+	if err := st.DeleteUser(ctx, uid); err != nil {
+		t.Fatal(err)
+	}
+	var left int
+	_ = conn.QueryRow(`SELECT (SELECT COUNT(*) FROM api_keys) + (SELECT COUNT(*) FROM api_key_scopes) + (SELECT COUNT(*) FROM api_key_permissions)`).Scan(&left)
+	if left != 0 {
+		t.Fatalf("%d API key rows left after the user was deleted", left)
+	}
+}
+
+// Successful API key reads go after API_KEY_READ_RETENTION_DAYS; a key's
+// writes and denials, and web reads, stay.
+func TestPurgeAPIKeyReads(t *testing.T) {
+	conn, st := open(t, filepath.Join(t.TempDir(), "app.db"))
+	defer conn.Close()
+	ctx := context.Background()
+	old := time.Now().UTC().Add(-10 * 24 * time.Hour)
+	for _, e := range []models.AuditLog{
+		{Action: "pod.list", Verb: "list", Outcome: "success", APIKeyID: 1, APIKeyName: "k"},
+		{Action: "pod.logs", Verb: "logs", Outcome: "success", APIKeyID: 1, APIKeyName: "k"},
+		{Action: "pod.list", Verb: "list", Outcome: "denied", APIKeyID: 1, APIKeyName: "k"},
+		{Action: "deployment.restart", Verb: "restart", Outcome: "success", APIKeyID: 1, APIKeyName: "k"},
+		{Action: "pod.list", Verb: "list", Outcome: "success"},
+	} {
+		e.Timestamp, e.User = old, "bob"
+		if err := st.AddAuditLog(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.PurgeAPIKeyReads(ctx, time.Now().UTC().Add(-7*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	logs, _ := st.ListAuditLogsFiltered(ctx, 10, 0, store.AuditFilter{})
+	if len(logs) != 3 {
+		t.Fatalf("left %d entries: %+v", len(logs), logs)
+	}
+	if n, _ := st.CountAuditLogsFiltered(ctx, store.AuditFilter{Source: "api_key", APIKey: "k"}); n != 2 {
+		t.Fatalf("key entries = %d", n)
+	}
+	if n, _ := st.CountAuditLogsFiltered(ctx, store.AuditFilter{Source: "web"}); n != 1 {
+		t.Fatalf("web entries = %d", n)
+	}
+}
+
+// M15: roles of an older release start at safe read-only, users follow their
+// roles, the expiry policy keeps today's behaviour; the policy columns round-trip.
+func TestAPIKeyPolicyUpgrade(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	legacy, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE,
+			password_hash TEXT NOT NULL, must_change_password INTEGER NOT NULL DEFAULT 1,
+			is_active INTEGER NOT NULL DEFAULT 1, is_admin INTEGER NOT NULL DEFAULT 0, created_at DATETIME NOT NULL)`,
+		`CREATE TABLE roles (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, description TEXT NOT NULL DEFAULT '')`,
+		`CREATE TABLE session_settings (id INTEGER PRIMARY KEY CHECK (id = 1), session_minutes INTEGER NOT NULL)`,
+		`INSERT INTO users (username, password_hash, must_change_password, is_active, is_admin, created_at)
+			VALUES ('olduser', 'hash', 0, 1, 0, '2025-01-01 00:00:00')`,
+		`INSERT INTO roles (name) VALUES ('ops')`,
+		`INSERT INTO session_settings (id, session_minutes) VALUES (1, 45)`,
+	} {
+		if _, err := legacy.Exec(stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	legacy.Close()
+	conn, st := open(t, path)
+	defer conn.Close()
+	ctx := context.Background()
+
+	roles, err := st.ListRoles(ctx)
+	if err != nil || len(roles) != 1 || roles[0].APIAccess != "safe_read" {
+		t.Fatalf("migrated roles = %+v, %v", roles, err)
+	}
+	u, err := st.GetUserByUsername(ctx, "olduser")
+	if err != nil || u.APIAccessOverride != "" {
+		t.Fatalf("migrated user = %+v, %v", u, err)
+	}
+	ss, err := st.GetSessionSettings(ctx)
+	if err != nil || ss.SessionMinutes != 45 || ss.APIKeyMaxDays != 0 || !ss.APIKeyAllowNoExpiry {
+		t.Fatalf("migrated session settings = %+v, %v", ss, err)
+	}
+	newRole, _ := st.CreateRole(ctx, "new", "")
+	roles, _ = st.ListRoles(ctx) // "new", "ops"
+	if roles[0].ID != newRole || roles[0].APIAccess != "safe_read" {
+		t.Fatalf("a new role should start at safe_read: %+v", roles)
+	}
+
+	if err := st.SetRoleAPIAccess(ctx, roles[1].ID, "full"); err != nil {
+		t.Fatal(err)
+	}
+	g, _ := st.CreateGroup(ctx, "g")
+	_ = st.SetGroupRoles(ctx, g, []int{roles[1].ID, newRole})
+	_ = st.SetUserGroups(ctx, u.ID, []int{g})
+	_ = st.AddNamespacePermission(ctx, roles[1].ID, 0, "a", "pods", "exec")
+	perms, err := st.ListPermissionsByUser(ctx, u.ID)
+	if err != nil || len(perms) != 1 || perms[0].RoleAPIAccess != "full" {
+		t.Fatalf("permissions = %+v, %v", perms, err)
+	}
+	// The role without permission rows counts too.
+	modes, err := st.ListRoleAccessByUser(ctx, u.ID)
+	if err != nil || len(modes) != 2 {
+		t.Fatalf("role modes = %v, %v", modes, err)
+	}
+
+	for _, o := range []string{"off", ""} {
+		if err := st.SetUserAPIAccess(ctx, u.ID, o); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := st.GetUserByID(ctx, u.ID); got.APIAccessOverride != o {
+			t.Fatalf("override = %q, want %q", got.APIAccessOverride, o)
+		}
+	}
+	ss.APIKeyMaxDays, ss.APIKeyAllowNoExpiry = 30, false
+	if err := st.UpdateSessionSettings(ctx, ss); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.GetSessionSettings(ctx); got != ss {
+		t.Fatalf("session settings = %+v, want %+v", got, ss)
+	}
+
+	// Revoke all: only live keys count; ListAPIKeys(0) lists every user's.
+	past, future := time.Now().Add(-time.Hour), time.Now().Add(time.Hour)
+	other, _ := st.CreateUser(ctx, "other", "h")
+	for i, k := range []models.APIKey{
+		{UserID: u.ID, Name: "live", Hash: "a", ExpiresAt: &future},
+		{UserID: u.ID, Name: "forever", Hash: "b"},
+		{UserID: u.ID, Name: "old", Hash: "c", ExpiresAt: &past},
+		{UserID: u.ID, Name: "gone", Hash: "d"},
+		{UserID: other, Name: "theirs", Hash: "e"},
+	} {
+		k.Clusters, k.Grants = []int{0}, []string{"pods:list"}
+		id, err := st.CreateAPIKey(ctx, k)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == 3 {
+			_ = st.RevokeAPIKey(ctx, id)
+		}
+	}
+	if n, err := st.RevokeUserAPIKeys(ctx, u.ID); err != nil || n != 2 {
+		t.Fatalf("revoked %d, %v; want 2", n, err)
+	}
+	if all, _ := st.ListAPIKeys(ctx, 0); len(all) != 5 {
+		t.Fatalf("all keys = %d, want 5", len(all))
+	}
+	if theirs, _ := st.GetAPIKeyByHash(ctx, "e"); theirs.RevokedAt != nil {
+		t.Fatal("another user's key was revoked")
+	}
+}
