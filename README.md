@@ -1,6 +1,6 @@
 # Kubernetes OpenConsole
 
-Modern, production-ready Kubernetes visibility and operations console with strict application-level authorization. Runs inside Kubernetes, reads cluster data using a single ServiceAccount identity per cluster, and enforces every access decision in the app layer (not via Kubernetes RBAC).
+Modern, production-ready Kubernetes visibility and operations console with strict application-level authorization. Runs inside Kubernetes, reads cluster data using a single ServiceAccount identity per cluster, and enforces every access decision in the app layer (not via Kubernetes RBAC). Scripts and AI agents use the same rules through a documented REST API with scoped API keys.
 
 ## Highlights
 
@@ -23,8 +23,8 @@ Pods, Deployments, **DaemonSets**, **StatefulSets**, **HorizontalPodAutoscalers 
 - **Deployment restart** (`deployments:restart`)
 - **Deployment / StatefulSet scale** (`deployments:scale`, `statefulsets:scale`)
 - **YAML view + edit + server dry-run + apply** for every workload above (`{resource}:edit`), powered by Monaco. Diff view, dry-run returns the server-canonicalized object, optimistic concurrency via `resourceVersion`.
-- **Pod shell** (`pods:exec`) over WebSocket with xterm.js.
-- **Pod shell session recording** — every shell is saved as an asciicast v2 file and can be replayed by admins (Admin → Recordings) with an in-browser player. See [Session Recording](#session-recording).
+- **Pod shell** (`pods:exec`) over WebSocket with xterm.js, and one command over REST for scripts and agents (`POST …/pods/{name}/exec`).
+- **Pod shell session recording** — every shell and every single command is saved as an asciicast v2 file and can be replayed by admins (Admin → Recordings) with an in-browser player. See [Session Recording](#session-recording).
 - **Secrets** (`secrets:list`, `secrets:get`, `secrets:reveal`, `secrets:edit`) — names, types and key names by default; values are revealed one key at a time, and secrets can be edited in the YAML editor (diff + dry-run). Every reveal and every YAML open is audited. See [Secrets](#secrets).
 - **Pod / Deployment / Job logs** (`pods:logs`): container picker (init containers included; opens on the `kubectl.kubernetes.io/default-container` annotation, else the container named after the workload, so a sidecar listed first is not the default), live or the instance before the last restart, follows a restarting container and resumes after a dropped connection without losing or repeating lines; find, pause, wrap, copy, download; keeps the last 10,000 lines. Per user: 10 new log streams at once, then one per second.
 
@@ -39,6 +39,14 @@ Every read and write is an audit event with its own fields: `action` (`deploymen
 - **Session management** (Admin → Sessions): list every active token, revoke individual sessions or every session for a user, change-password revokes everything.
 - **Session recordings** (Admin → Recordings): filter, replay (1x / 2x / 4x, seek, skip idle), download `.cast`, delete; retention, quota and on/off switch editable in the UI.
 - **Login brute-force protection** (5 fails per IP+user → 5-minute lock, audited). Every sign-in is audited as `user.login` with the outcome (`success` / `failed` / `locked`), the method (`login_method`: `local` / `ldap` / `azure`) and, for a failure, the reason.
+
+### API & AI agents
+- **API keys** (account menu → API keys) for Claude Code, Cursor or your own scripts: `oc_…` keys limited to chosen clusters, namespaces and a permission matrix, never more than their owner holds at the time of the call; expiry, regenerate, revoke. The key is shown once and stored as a SHA-256 hash. Every call is audited with the user **and the key's name**; shells and commands run with a key are always recorded.
+- **Admin policy** — per role, how much of it a key may get (Off / Safe read-only / All of the role's permissions), a per-user override, an expiry policy (longest lifetime, no-expiry allowed or not), and Admin → API keys: every user's keys, revoke with a reason, CSV.
+- **OpenAPI 3.1** at `/api/openapi.json` (no sign-in) and an in-app **Documentation** tab: quick start, a text to hand your agent, every endpoint with its permission and a `curl` example, greyed out where your keys can't reach it.
+- **No WebSocket needed** — a pod's log as text (`GET …/pods/{name}/logs`) and one command with its output and exit code (`POST …/pods/{name}/exec`; the audit log keeps the program name, never the command line).
+
+See [API and agents](#api-and-agents).
 
 ### UX
 - **Light / Dark / System theme** (persisted; respects OS).
