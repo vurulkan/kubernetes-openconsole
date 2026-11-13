@@ -270,6 +270,7 @@ What each `json` field becomes in `ecs`:
 | `duration_ms` | `event.duration` (nanoseconds, measured, not rounded) |
 | — | `http.response.body.bytes` |
 | `event` (audit action), `reason`, `error`, `trace_id` | `event.action`, `event.reason`, `error.message`, `trace.id` |
+| `api_key_id`, `api_key_name` | `openconsole.api_key.id`, `openconsole.api_key.name`: the [API key](#api-and-agents) on audit events **and** on `http.request` lines (also a refused key's), absent for a web session. Tell API from web with `openconsole.api_key.id : *`, not the user agent, which the client chooses |
 | everything else (`verb`, `outcome`, `cluster`, `namespace`, `resource_name`, audit details such as `replicas_to`, …) | `openconsole.<name>` |
 
 Every `ecs` record also has `event.dataset`: `openconsole.audit` for audit events, `openconsole.app` for the rest. HTTP requests carry `event.kind: event`, `event.category: [web]`, `event.type: [access]` and `event.outcome` (`failure` for 4xx / 5xx). Audit events carry `event.kind: event`, `event.outcome` (`success`, or `failure` for denied / failed / rate_limited / locked; the exact value is in `openconsole.outcome`), `event.type` from the verb (`access` for reads, `change`, `creation`, `deletion`, `start` / `end` for shells and sign-ins) and, where it applies, `event.category` (`authentication`, `session`, `process`, `iam`, `configuration`). `log.logger` is `http` or `audit`.

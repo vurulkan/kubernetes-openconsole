@@ -169,6 +169,8 @@ func (s *Server) AuthenticateKey(r *http.Request, secret string, keyID int) (*au
 		slog.Warn("API key lookup failed; refusing", slog.Any("error", err), slog.String("request_id", logpkg.RequestIDFrom(ctx)))
 		return nil, http.StatusUnauthorized, ""
 	}
+	// Named on the request's log line from here on, refused (expired, revoked, policy off) or not.
+	noteRequestKey(ctx, key)
 	user, err := s.store.GetUserByID(ctx, key.UserID)
 	if err != nil {
 		slog.Warn("API key owner lookup failed; refusing", slog.Any("error", err), slog.String("request_id", logpkg.RequestIDFrom(ctx)))

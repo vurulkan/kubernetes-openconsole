@@ -501,9 +501,27 @@ func clientIP(r *http.Request) string {
 // quietPaths are logged at debug level when they succeed.
 var quietPaths = map[string]bool{"/healthz": true, "/livez": true, "/readyz": true, "/metrics": true}
 
+// requestKey carries the API key a request was made with out to requestLogger,
+// which wraps the router and so never sees the context the auth middleware builds.
+type requestKey struct {
+	id   int
+	name string
+}
+
+type requestKeyCtx struct{}
+
+// noteRequestKey records the request's API key for its http.request line.
+func noteRequestKey(ctx context.Context, k *models.APIKey) {
+	if h, ok := ctx.Value(requestKeyCtx{}).(*requestKey); ok && k != nil {
+		h.id, h.name = k.ID, k.Name
+	}
+}
+
 func requestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		key := &requestKey{}
+		r = r.WithContext(context.WithValue(r.Context(), requestKeyCtx{}, key))
 		start := time.Now()
 		next.ServeHTTP(recorder, r)
 		duration := time.Since(start)
@@ -527,6 +545,10 @@ func requestLogger(next http.Handler) http.Handler {
 			slog.String("remote_ip", clientIP(r)),
 			slog.String("request_id", logpkg.RequestIDFrom(r.Context())),
 			slog.String("user_agent", r.UserAgent()),
+		}
+		if key.id != 0 {
+			// ECS: openconsole.api_key.id / .name, as on audit events.
+			attrs = append(attrs, slog.Int("api_key_id", key.id), slog.String("api_key_name", key.name))
 		}
 		if logpkg.ECS() {
 			// ECS event.duration is in nanoseconds; milliseconds would turn

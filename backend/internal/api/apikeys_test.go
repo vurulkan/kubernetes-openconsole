@@ -1,15 +1,18 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -458,4 +461,54 @@ func TestAPIKeyRESTLogs(t *testing.T) {
 		t.Fatalf("audit key = %q", l.APIKeyName)
 	}
 	e.expect("GET", "/api/namespaces/team-b/pods/api-1/logs", key, nil, http.StatusForbidden)
+}
+
+// lockedBuffer collects log output written from the server's goroutines.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) lines(path string) []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var out []string
+	for _, line := range strings.Split(l.b.String(), "\n") {
+		if strings.Contains(line, `"msg":"http.request"`) && strings.Contains(line, `"path":"`+path+`"`) {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// The http.request line names the key (openconsole.api_key.* in ECS), so the
+// application log can be filtered like the audit log; a web session's has none.
+func TestAPIKeyInRequestLog(t *testing.T) {
+	e := newTestEnv(t)
+	bobID, bob := e.user("bob", false)
+	e.grant(bobID, [4]any{0, "team-a", "pods", "list"})
+	key, _ := e.createKey(bob, keyBody("agent-log", []string{"team-a"}, "pods:list"))
+	logs := &lockedBuffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	e.expect("GET", "/api/namespaces/team-a/pods", key, nil, http.StatusOK)
+	e.expect("GET", "/api/auth/me", key, nil, http.StatusOK) // not audited, still logged with the key
+	e.expect("GET", "/api/namespaces", bob, nil, http.StatusOK)
+	e.expect("GET", "/api/namespaces/team-b/pods", key, nil, http.StatusForbidden) // refused, still named
+	for _, p := range []string{"/api/namespaces/team-a/pods", "/api/auth/me", "/api/namespaces/team-b/pods"} {
+		if l := logs.lines(p); len(l) != 1 || !strings.Contains(l[0], `"api_key_name":"agent-log"`) || !strings.Contains(l[0], `"api_key_id":`) {
+			t.Errorf("%s request line = %v", p, l)
+		}
+	}
+	if l := logs.lines("/api/namespaces"); len(l) != 1 || strings.Contains(l[0], "api_key") {
+		t.Errorf("web session request line = %v", l)
+	}
 }
