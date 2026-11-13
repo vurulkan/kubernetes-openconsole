@@ -2,8 +2,10 @@
 
 Web console for several Kubernetes clusters: users see and operate workloads in the namespaces their
 roles allow; every action is audited. One Go binary serves the API and the React build from a single
-image; state is SQLite on a ReadWriteOnce volume (so **always 1 replica**). README.md is the user
-manual (long, read only the section you need); this file is for working on the code.
+image; state is SQLite on a ReadWriteOnce volume (so **always 1 replica**). The user manual is the docs
+site, <https://vurulkan.com/openconsole-docs/>, source in [vurulkan/openconsole-docs](https://github.com/vurulkan/openconsole-docs)
+(its own `CLAUDE.md`); README.md still carries the same text until the docs series ends (long, read only the
+section you need). This file is for working on the code.
 
 ## Map
 
@@ -87,6 +89,8 @@ Screenshots: Playwright's `chromium.launch` dies on this Mac; start Chrome yours
 - **a UI poll** → send `X-OpenConsole-Refresh: auto` (`autoRefresh(true)` in `api.ts`) so it isn't audited.
 - **a DB column / table** → migration in `internal/db` (idempotent; store tests upgrade an old schema).
 - **any UI** → light + dark theme, TR + EN, keyboard reachable, axe clean (frontend tests run axe).
+- **anything a user or operator notices** → README now, and a PR in `vurulkan/openconsole-docs` when the release
+  ships (the site describes the latest release).
 
 ## UI / UX
 
@@ -113,7 +117,8 @@ Feature branch `X.Y.Z-name` **from `dev`**: every push publishes `:dev-<run>` + 
 into `dev` → the user tests `dev`'s pinned `:dev-<run>` on a real cluster → when the release's milestones are all
 in `dev`, squash merge `dev` to `main` → `git tag -a vX.Y.Z` + push the tag → CI builds once
 and publishes `ghcr.io/vurulkan/kubernetes-openconsole:X.Y.Z` and `:latest` (same digest, amd64 + arm64,
-GitHub attestations) → check digests, `gh attestation verify`, smoke test → `gh release create`.
+GitHub attestations) → check digests, `gh attestation verify`, smoke test → `gh release create` →
+`gh workflow run docs.yml -R vurulkan/openconsole-docs` (the docs site's release notes) + the release's docs PR.
 Pushes to `main` build and test but publish nothing. **Never `docker push` by hand**, never add `:<sha>` or
 signature tags. The version comes from the tag (`dev-<run>` on branches; Dockerfile `ARG VERSION` →
 `internal/version`, `dev` locally).
