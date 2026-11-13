@@ -81,14 +81,14 @@ docker build -t kubernetes-openconsole:local .
 ### Option B — prebuilt image (GHCR)
 
 ```yaml
-image: ghcr.io/vurulkan/kubernetes-openconsole:2.21.0   # pin a release
+image: ghcr.io/vurulkan/kubernetes-openconsole:2.22.0   # pin a release
 ```
 
 Images are multi-arch (**linux/amd64** and **linux/arm64**: Graviton, Ampere, Apple silicon); the runtime picks the right one. CI is the only publisher. Release tags:
 
 | Tag | Points to | Moves? |
 |---|---|---|
-| `X.Y.Z` (e.g. `2.21.0`) | that release | no — use this in production |
+| `X.Y.Z` (e.g. `2.22.0`) | that release | no — use this in production |
 | `latest` | the newest release, same image (same digest) as its `X.Y.Z` | yes, on each release |
 
 Releasing = push the `vX.Y.Z` git tag; CI builds once and pushes `:X.Y.Z` and `:latest`. Pushes to `main` are built and tested but not published. Pushes to other branches publish pre-release test images as `:dev-<build number>` and `:dev-latest`; never run those in production, and `:latest` never points to one.
@@ -99,12 +99,12 @@ Every release image has a signed SLSA **build provenance** and an SPDX **SBOM** 
 
 ```bash
 # Provenance: built by this repository's CI from a release tag
-gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.21.0 \
+gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.22.0 \
   --repo vurulkan/kubernetes-openconsole \
   --signer-workflow vurulkan/kubernetes-openconsole/.github/workflows/ci.yml
 
 # SBOM (packages in the image)
-gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.21.0 \
+gh attestation verify oci://ghcr.io/vurulkan/kubernetes-openconsole:2.22.0 \
   --repo vurulkan/kubernetes-openconsole \
   --predicate-type https://spdx.dev/Document/v2.3 --format json \
   --jq '.[0].verificationResult.statement.predicate.packages | length'
@@ -132,7 +132,7 @@ cd frontend && npx tsc --noEmit -p . && npm test && npm run build
 docker run --rm -p 8080:8080 \
   -e TIMEZONE=Europe/Istanbul \
   -v kubernetes-openconsole-data:/data \
-  ghcr.io/vurulkan/kubernetes-openconsole:2.21.0
+  ghcr.io/vurulkan/kubernetes-openconsole:2.22.0
 ```
 
 The image defaults to `DATA_PATH=/data/app.db` and `STATIC_DIR=/app/public`; the SQLite DB and session recordings live under `/data`. Drop the `-v` for a throwaway instance. Then open http://localhost:8080 and add a cluster ([Connecting clusters](#connecting-clusters)).
@@ -159,7 +159,7 @@ Then:
 1. Open the UI and log in as `admin` / `admin` ([First login](#first-login)).
 2. Add the cluster in **Admin → Clusters** ([Connecting clusters](#connecting-clusters)). The backend never picks up a cluster on its own.
 
-To upgrade, run `kubectl -n kubernetes-openconsole rollout restart deploy/kubernetes-openconsole`. The pod pulls `:latest`, i.e. the newest release. To stay on a fixed version, set a release tag (e.g. `2.21.0`) in `deployment.yaml` or through the `images:` override in `kustomization.yaml`, then re-apply.
+To upgrade, run `kubectl -n kubernetes-openconsole rollout restart deploy/kubernetes-openconsole`. The pod pulls `:latest`, i.e. the newest release. To stay on a fixed version, set a release tag (e.g. `2.22.0`) in `deployment.yaml` or through the `images:` override in `kustomization.yaml`, then re-apply.
 
 ## Environment variables
 
@@ -329,6 +329,9 @@ openconsole.outcome : "denied" and user.name : "dev1"
 
 - **Elastic**: re-run `deploy/elk/install.sh` once: it adds the mapping of `openconsole.api_key.id` / `.name`, `openconsole.admin_scope`, `openconsole.expires_at`, `openconsole.api_access`, `openconsole.by_admin`, `openconsole.comment`, `openconsole.mode`, `openconsole.program` and `openconsole.recording_id` (the pipeline is unchanged). If you don't, nothing is lost: the fields are mapped dynamically, and get the right type from the next rollover after you run it.
 - **Database**: new tables and columns are added on the first start; nothing to do.
+- **Elasticsearch 8.7** (no `reroute`, so no `install.sh`): see `deploy/elk/README.md` → *Elasticsearch 8.7 and older* for the same steps by hand, an ILM policy, and adding the new fields to the live index.
+- **Logs**: `http.request` lines now carry `openconsole.api_key.id` / `.name` for requests made with a key (also refused ones); `openconsole.api_key.id : *` separates API from web in the application log as in the audit log.
+- **403 bodies** name the reason (`{"error": "forbidden"}`, `api_key_not_allowed`, `admin_only`, `feature_disabled`, `api_access_policy`, `api_access_off`) instead of a sentence or an empty body; the audit CSV gains a last column `api_key_name`.
 - **API key policy**: every existing role starts at **Safe read-only** API access, so keys made before the upgrade lose exec, edit, scale, restart, ConfigMaps and Secrets until an admin opens a role (Admin → Roles → *API access*). The keys themselves are not changed: they work as before once the policy allows it.
 
 #### Upgrading from 2.16
