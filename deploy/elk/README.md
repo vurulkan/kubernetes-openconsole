@@ -145,6 +145,8 @@ KQL examples (application, `logs-openconsole.app-*`):
 
 ```text
 event.category : "web" and event.outcome : "failure"
+openconsole.api_key.id : *              (requests made with an API key; also on audit events)
+openconsole.api_key.name : "claude-ci-dev" and http.response.status_code >= 400
 http.response.status_code >= 500
 log.level : "error"
 url.path : "/api/auth/login" and source.ip : "10.31.0.0/16"
