@@ -150,7 +150,7 @@ const Operation: React.FC<{ doc: OpenApiDoc; entry: Entry; ceiling: ApiKeyCeilin
 
 const ERRORS: Array<[string, string[]]> = [
   ['401', []],
-  ['403', ['forbidden', 'api_access_policy', 'api_access_off', 'api_key_not_allowed', 'feature_disabled']],
+  ['403', ['forbidden', 'api_access_policy', 'api_access_off', 'api_key_not_allowed', 'feature_disabled', 'admin_only']],
   ['429', []],
 ];
 

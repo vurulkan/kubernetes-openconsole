@@ -128,7 +128,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.isAdminRequest(r); !ok {
 		event.Outcome, event.Reason = audit.Denied, reasonAdminOnly
 		s.auditEvent(r, event)
-		writeError(w, http.StatusForbidden, "admin only")
+		writeError(w, http.StatusForbidden, reasonAdminOnly)
 		return
 	}
 	client, ok := kubeFor(r).Client()
@@ -263,7 +263,7 @@ func (s *Server) handleOverviewHistory(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.isAdminRequest(r); !ok {
 		s.auditEvent(r, models.AuditLog{Verb: audit.VerbViewOverview, ResourceType: audit.KindCluster, ResourceName: ci.Name,
 			Cluster: ci.Name, ClusterID: ci.ID, Outcome: audit.Denied, Reason: reasonAdminOnly})
-		writeError(w, http.StatusForbidden, "admin only")
+		writeError(w, http.StatusForbidden, reasonAdminOnly)
 		return
 	}
 	c := s.promFor(r)

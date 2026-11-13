@@ -245,7 +245,7 @@ func (s *Server) denyAPIKey(w http.ResponseWriter, r *http.Request, e models.Aud
 	}
 	e.Outcome, e.Reason = audit.Denied, reasonAPIKeyNotAllowed
 	s.auditEvent(r, e)
-	writeError(w, http.StatusForbidden, "not allowed with an API key")
+	writeError(w, http.StatusForbidden, reasonAPIKeyNotAllowed)
 	return true
 }
 
@@ -415,7 +415,7 @@ func (s *Server) apiKeyGate(w http.ResponseWriter, r *http.Request, verb string)
 	if !featureEnabled(FeatureAPIKeys) {
 		e.Outcome, e.Reason = audit.Denied, reasonFeatureDisabled
 		s.auditEvent(r, e)
-		writeError(w, http.StatusForbidden, "this feature is disabled by the operator")
+		writeError(w, http.StatusForbidden, reasonFeatureDisabled)
 		return nil, false
 	}
 	if s.denyAPIKey(w, r, e) {

@@ -44,7 +44,7 @@ func TestAuditFacetsAndFilters(t *testing.T) {
 	e.expect("GET", "/api/admin/audit-logs?outcome=bogus", admin, nil, http.StatusBadRequest)
 	csv := e.expect("GET", "/api/admin/audit-logs/export?outcome=success&action=deployment.*", admin, nil, http.StatusOK)
 	if strings.Count(strings.TrimSpace(csv), "\n") != 1 || !strings.Contains(csv, "deployment.restart,restart,success,") ||
-		!strings.HasPrefix(csv, "timestamp,user,action,verb,outcome,reason,") {
+		!strings.HasPrefix(csv, "timestamp,user,action,verb,outcome,reason,") || !strings.Contains(csv, ",request_id,api_key_name\n") {
 		t.Fatalf("export = %s", csv)
 	}
 }

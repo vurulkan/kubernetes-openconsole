@@ -576,7 +576,7 @@ func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
 func (s *Server) requireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := s.isAdminRequest(r); !ok {
-			w.WriteHeader(http.StatusForbidden)
+			writeError(w, http.StatusForbidden, reasonAdminOnly)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -1113,7 +1113,7 @@ func (s *Server) handleNamespaces(w http.ResponseWriter, r *http.Request) {
 	}
 	engine, ok := s.engineForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusForbidden)
+		writeError(w, http.StatusForbidden, reasonForbidden)
 		return
 	}
 	var result []string
@@ -1134,12 +1134,12 @@ func (s *Server) handleNamespacePermissions(w http.ResponseWriter, r *http.Reque
 	}
 	engine, ok := s.engineForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusForbidden)
+		writeError(w, http.StatusForbidden, reasonForbidden)
 		return
 	}
 	permissions := filterByFeatures(engine.AllowedResources(clusterIDFrom(r.Context()), namespace))
 	if len(permissions) == 0 {
-		w.WriteHeader(http.StatusForbidden)
+		writeError(w, http.StatusForbidden, reasonForbidden)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"resources": permissions})
@@ -2415,7 +2415,7 @@ func (s *Server) handleAuditLogsExport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", "attachment; filename=audit-logs.csv")
 	writer := csv.NewWriter(w)
 	_ = writer.Write([]string{"timestamp", "user", "action", "verb", "outcome", "reason", "cluster", "namespace",
-		"resource_type", "resource_name", "details", "source_ip", "user_agent", "auth_source", "request_id"})
+		"resource_type", "resource_name", "details", "source_ip", "user_agent", "auth_source", "request_id", "api_key_name"})
 	for _, entry := range logs {
 		details := ""
 		if len(entry.Details) > 0 {
@@ -2438,6 +2438,7 @@ func (s *Server) handleAuditLogsExport(w http.ResponseWriter, r *http.Request) {
 			entry.UserAgent,
 			entry.AuthSource,
 			entry.RequestID,
+			entry.APIKeyName,
 		})
 	}
 	writer.Flush()
@@ -2613,12 +2614,12 @@ func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, resou
 	namespace := chi.URLParam(r, "namespace")
 	if !featureAllows(resource, action) {
 		s.auditReadDenied(r, resource, action, reasonFeatureDisabled)
-		writeError(w, http.StatusForbidden, "this feature is disabled by the operator")
+		writeError(w, http.StatusForbidden, reasonFeatureDisabled)
 		return "", false
 	}
 	engine, ok := s.engineForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusForbidden)
+		writeError(w, http.StatusForbidden, reasonForbidden)
 		return "", false
 	}
 	if !engine.Can(clusterIDFrom(r.Context()), namespace, resource, action) {
