@@ -102,7 +102,7 @@ const en = {
     agentText: 'Text for your agent',
     agentTextHint: 'Paste this into your agent (Claude Code, Cursor) with the key in OPENCONSOLE_API_KEY. The key itself is not in it.',
     agentPrompt:
-      'You can use the OpenConsole API (a Kubernetes console) at {{origin}}.\nRead its description first: {{origin}}/api/openapi.json (no sign-in needed).\nSend "Authorization: Bearer $OPENCONSOLE_API_KEY" on every request; the key is in the OPENCONSOLE_API_KEY environment variable. Never print it.\nSend "X-OpenConsole-Cluster: {{cluster}}" to work on that cluster.\nStart with GET /api/auth/me: it shows the namespaces and permissions the key has.\nFor logs use GET /api/namespaces/<ns>/pods/<pod>/logs?tailLines=200 (add previous=true for the crashed instance). To run one command use POST /api/namespaces/<ns>/pods/<pod>/exec with {"command": ["cat", "/etc/os-release"]} (an argv array, not run in a shell).\nEvery call is audited under the key\'s name.',
+      'You can use the OpenConsole API (a Kubernetes console) at {{origin}}.\nRead its description first: {{origin}}/api/openapi.json (no sign-in needed).\nSend "Authorization: Bearer $OPENCONSOLE_API_KEY" on every request; the key is in the OPENCONSOLE_API_KEY environment variable. Never print it.\nSend "X-OpenConsole-Cluster: {{cluster}}" to work on that cluster.\nStart with GET /api/auth/me: it shows the namespaces and permissions the key has.\nFor logs use GET /api/namespaces/<ns>/pods/<pod>/logs?tailLines=200 (add previous=true for the crashed instance). To run one command use POST /api/namespaces/<ns>/pods/<pod>/exec with {"command": ["cat", "/etc/os-release"]} (an argv array, not run in a shell).\nEvery action and resource read is audited under the key\'s name.',
     copyAgentText: 'Copy the text for your agent',
     endpoints: 'Endpoints',
     endpointsHint: 'What an API key can call. Greyed out: none of your keys can call it now (the badge says why). Open one for its parameters and an example.',
@@ -132,7 +132,7 @@ const en = {
       feature_disabled: 'switched off by the operator (FEATURE_*) for everyone',
       admin_only: 'an admin endpoint; with a key, only an admin\'s key with the Admin API scope (and a policy that allows it)',
     },
-    audited: 'Every call made with a key is written to the audit log under the key\'s name, reads included. Commands and shells are recorded.',
+    audited: 'Every action and every resource read made with a key (lists, details, logs, YAML, exec) is written to the audit log under the key\'s name; helper calls such as /api/auth/me and /api/ws-ticket are not. Commands and shells are recorded.',
   },
   apiKeys: {
     title: 'API keys',
@@ -141,7 +141,7 @@ const en = {
     tabDocs: 'Documentation',
     subtitle: 'For your agents and scripts to call the OpenConsole API in your name. A key can do at most what you can.',
     new: 'New API key',
-    empty: 'An API key lets an AI agent (Claude Code, Cursor) or a script use OpenConsole in your name, with no more permissions than you choose, and every call is audited under the key\'s name.',
+    empty: 'An API key lets an AI agent (Claude Code, Cursor) or a script use OpenConsole in your name, with no more permissions than you choose, and every action and read is audited under the key\'s name.',
     createFirst: 'Create your first key',
     name: 'Name',
     note: 'Note',
@@ -1435,7 +1435,7 @@ const tr = {
     agentText: 'Agent\'a verilecek metin',
     agentTextHint: 'Bunu agent\'ınıza (Claude Code, Cursor) verin; anahtar OPENCONSOLE_API_KEY ortam değişkeninde olsun. Anahtarın kendisi metinde yok.',
     agentPrompt:
-      'OpenConsole API\'sini (bir Kubernetes konsolu) kullanabilirsin: {{origin}}.\nÖnce açıklamasını oku: {{origin}}/api/openapi.json (giriş gerekmez).\nHer istekte "Authorization: Bearer $OPENCONSOLE_API_KEY" gönder; anahtar OPENCONSOLE_API_KEY ortam değişkeninde. Anahtarı asla yazdırma.\nO cluster\'da çalışmak için "X-OpenConsole-Cluster: {{cluster}}" gönder.\nGET /api/auth/me ile başla: anahtarın namespace\'lerini ve yetkilerini gösterir.\nLog için GET /api/namespaces/<ns>/pods/<pod>/logs?tailLines=200 (crash eden önceki örnek için previous=true). Tek komut için POST /api/namespaces/<ns>/pods/<pod>/exec, gövde {"command": ["cat", "/etc/os-release"]} (argv dizisi, shell\'de çalışmaz).\nHer çağrı anahtarın adıyla audit\'e yazılır.',
+      'OpenConsole API\'sini (bir Kubernetes konsolu) kullanabilirsin: {{origin}}.\nÖnce açıklamasını oku: {{origin}}/api/openapi.json (giriş gerekmez).\nHer istekte "Authorization: Bearer $OPENCONSOLE_API_KEY" gönder; anahtar OPENCONSOLE_API_KEY ortam değişkeninde. Anahtarı asla yazdırma.\nO cluster\'da çalışmak için "X-OpenConsole-Cluster: {{cluster}}" gönder.\nGET /api/auth/me ile başla: anahtarın namespace\'lerini ve yetkilerini gösterir.\nLog için GET /api/namespaces/<ns>/pods/<pod>/logs?tailLines=200 (crash eden önceki örnek için previous=true). Tek komut için POST /api/namespaces/<ns>/pods/<pod>/exec, gövde {"command": ["cat", "/etc/os-release"]} (argv dizisi, shell\'de çalışmaz).\nHer işlem ve kaynak okuması anahtarın adıyla audit\'e yazılır.',
     copyAgentText: 'Agent metnini kopyala',
     endpoints: 'Uçlar',
     endpointsHint: 'Bir API anahtarının çağırabileceği uçlar. Soluk olanları şu an hiçbir anahtarınız çağıramaz (rozet nedenini söyler). Parametreler ve örnek için açın.',
@@ -1465,7 +1465,7 @@ const tr = {
       feature_disabled: 'operatör herkes için kapattı (FEATURE_*)',
       admin_only: 'admin ucu; anahtarla yalnız admin\'in Admin API kapsamlı anahtarı (ve politika izin veriyorsa)',
     },
-    audited: 'Anahtarla yapılan her çağrı, okumalar dahil, anahtarın adıyla audit\'e yazılır. Komutlar ve shell\'ler kaydedilir.',
+    audited: 'Anahtarla yapılan her işlem ve her kaynak okuması (liste, detay, log, YAML, exec) anahtarın adıyla audit\'e yazılır; /api/auth/me ve /api/ws-ticket gibi yardımcı çağrılar yazılmaz. Komutlar ve shell\'ler kaydedilir.',
   },
   apiKeys: {
     title: 'API anahtarları',
@@ -1474,7 +1474,7 @@ const tr = {
     tabDocs: 'Dokümantasyon',
     subtitle: 'Agent\'larınızın ve script\'lerinizin sizin adınıza OpenConsole API\'sine erişmesi için. Yetki en fazla sizinki kadar.',
     new: 'Yeni API anahtarı',
-    empty: 'API anahtarı, bir AI agent\'ın (Claude Code, Cursor) ya da bir script\'in OpenConsole\'u sizin adınıza, seçtiğiniz yetkiden fazlası olmadan kullanmasını sağlar; her çağrı anahtarın adıyla audit\'e yazılır.',
+    empty: 'API anahtarı, bir AI agent\'ın (Claude Code, Cursor) ya da bir script\'in OpenConsole\'u sizin adınıza, seçtiğiniz yetkiden fazlası olmadan kullanmasını sağlar; her işlem ve okuma anahtarın adıyla audit\'e yazılır.',
     createFirst: 'İlk anahtarını oluştur',
     name: 'Ad',
     note: 'Not',
