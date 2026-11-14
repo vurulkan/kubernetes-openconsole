@@ -925,6 +925,8 @@ const en = {
   about: {
     github: 'OpenConsole {{version}} · source on GitHub',
     loginFooter: 'Kubernetes OpenConsole · GitHub',
+    docs: 'Docs',
+    docsTitle: 'OpenConsole documentation',
   },
   multiSelect: {
     remove: 'Remove {{label}}',
@@ -2208,6 +2210,8 @@ const tr = {
   about: {
     github: 'OpenConsole {{version}} · GitHub\'da kaynak kodu',
     loginFooter: 'Kubernetes OpenConsole · GitHub',
+    docs: 'Dokümanlar',
+    docsTitle: 'OpenConsole dokümanları',
   },
   multiSelect: {
     remove: '{{label}} öğesini kaldır',

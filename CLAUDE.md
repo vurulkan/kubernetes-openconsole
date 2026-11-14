@@ -3,7 +3,7 @@
 Web console for several Kubernetes clusters: users see and operate workloads in the namespaces their
 roles allow; every action is audited. One Go binary serves the API and the React build from a single
 image; state is SQLite on a ReadWriteOnce volume (so **always 1 replica**). The user manual is the docs
-site, <https://vurulkan.com/openconsole-docs/>, source in [vurulkan/openconsole-docs](https://github.com/vurulkan/openconsole-docs)
+site, <https://k8sopenconsole.github.io/>, source in [k8sopenconsole/k8sopenconsole.github.io](https://github.com/k8sopenconsole/k8sopenconsole.github.io)
 (its own `CLAUDE.md`); README.md still carries the same text until the docs series ends (long, read only the
 section you need). This file is for working on the code.
 
@@ -98,11 +98,11 @@ Screenshots: Playwright's `chromium.launch` dies on this Mac; start Chrome yours
 - **a UI poll** → send `X-OpenConsole-Refresh: auto` (`autoRefresh(true)` in `api.ts`) so it isn't audited.
 - **a DB column / table** → migration in `internal/db` (idempotent; store tests upgrade an old schema).
 - **any UI** → light + dark theme, TR + EN, keyboard reachable, axe clean (frontend tests run axe).
-- **anything a user or operator notices** → README now, and a PR in `vurulkan/openconsole-docs` when the release
+- **anything a user or operator notices** → README now, and a PR in `k8sopenconsole/k8sopenconsole.github.io` when the release
   ships (the site describes the latest release).
 
 **Every app change updates the docs too.** A change to the app is not finished until the docs site says the same:
-the affected pages in `vurulkan/openconsole-docs` (EN + TR), its screenshots if the screen changed
+the affected pages in `k8sopenconsole/k8sopenconsole.github.io` (EN + TR), its screenshots if the screen changed
 (`screenshots/`: record → shoot), and the generated reference via docgen. Write the docs change together with the
 code change and open the docs PR when the release ships; the PR description names the pages it touches.
 
@@ -130,7 +130,7 @@ complete change, reuse what the repo already has, no unrequested options or abst
 `docs/reference/*.md` (env vars, permissions, audit events, metrics, Kubernetes permissions, keyboard shortcuts) is
 written by `backend/cmd/docgen` from the registries above; never edit it by hand. The docs site copies it, plus
 `internal/api/openapi.yaml` for the endpoint reference, from a pinned ref of this repo
-(`openconsole-docs/reference.json`, `npm run reference:sync`); bump that ref when a release ships.
+(`reference.json` in the docs repo, `npm run reference:sync`); bump that ref when a release ships.
 
 ## Release
 
@@ -139,7 +139,7 @@ into `dev` → the user tests `dev`'s pinned `:dev-<run>` on a real cluster → 
 in `dev`, squash merge `dev` to `main` → `git tag -a vX.Y.Z` + push the tag → CI builds once
 and publishes `ghcr.io/vurulkan/kubernetes-openconsole:X.Y.Z` and `:latest` (same digest, amd64 + arm64,
 GitHub attestations) → check digests, `gh attestation verify`, smoke test → `gh release create` →
-`gh workflow run docs.yml -R vurulkan/openconsole-docs` (the docs site's release notes) + the release's docs PR
+`gh workflow run docs.yml -R k8sopenconsole/k8sopenconsole.github.io` (the docs site's release notes) + the release's docs PR
 (bump `reference.json` there to the new tag).
 Pushes to `main` build and test but publish nothing. **Never `docker push` by hand**, never add `:<sha>` or
 signature tags. The version comes from the tag (`dev-<run>` on branches; Dockerfile `ARG VERSION` →

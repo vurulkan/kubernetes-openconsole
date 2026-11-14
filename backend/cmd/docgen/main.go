@@ -6,7 +6,7 @@
 // the comments in deploy/rbac*.yaml, frontend/src/shortcuts.json).
 //
 // Run from backend/:  go run ./cmd/docgen   (writes ../docs/reference/*.md)
-// CI runs it and fails on `git diff`; the docs site (vurulkan/openconsole-docs)
+// CI runs it and fails on `git diff`; the docs site (k8sopenconsole/k8sopenconsole.github.io)
 // copies the files from a tag of this repo.
 package main
 
