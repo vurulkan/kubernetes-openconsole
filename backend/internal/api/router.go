@@ -1867,6 +1867,7 @@ func (s *Server) handleListRoles(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
+	s.auditEvent(r, models.AuditLog{Verb: audit.VerbExport, ResourceType: audit.KindRole, ResourceName: "*"}) // fake: must fail CI
 	writeJSON(w, http.StatusOK, map[string]interface{}{"items": roles})
 }
 
