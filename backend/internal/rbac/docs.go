@@ -33,6 +33,7 @@ var ActionDocs = map[string]string{
 	"secrets:get":         "One Secret's metadata, key names and value sizes. Never the values.",
 	"secrets:reveal":      "Show one value of a Secret per request. Each reveal is audited with the key name.",
 	"secrets:edit":        "The Secret YAML editor, which shows every value, and apply. Opening it is audited as `secret.view_yaml`.",
+	"cronjobs:trigger":    "Fake permission: this branch checks that CI fails when docgen wasn't run.",
 	"configmaps:get":      "One ConfigMap with its data; the YAML view.",
 }
 

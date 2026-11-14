@@ -23,7 +23,7 @@ var Catalog = []struct {
 	{"configmaps", []string{"list", "get", "edit"}},
 	{"secrets", []string{"list", "get", "reveal", "edit"}},
 	{"ingresses", []string{"list", "get", "edit"}},
-	{"cronjobs", []string{"list", "get", "edit"}},
+	{"cronjobs", []string{"list", "get", "edit", "trigger"}},
 	{"jobs", []string{"list", "get", "edit"}},
 }
 
