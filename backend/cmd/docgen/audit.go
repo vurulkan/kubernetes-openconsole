@@ -14,59 +14,61 @@ import (
 	"k8s-dashboard/backend/internal/logging"
 )
 
-func auditPage(root string) (string, error) {
+func auditPage(root, lang string) (string, error) {
 	actions, err := scanAuditActions(filepath.Join(root, "backend/internal/audit"),
 		filepath.Join(root, "backend/internal/api"), filepath.Join(root, "backend/internal/recording"))
 	if err != nil {
 		return "", err
 	}
 	var b strings.Builder
-	b.WriteString("Every audited action is one event. It is stored in the database (**Admin → Audit Logs**, CSV export) and, " +
-		"with `LOG_INCLUDE_AUDIT=true` (the default), written to stdout as one line, so the same fields can be filtered in " +
-		"the UI and in your log platform. The **ECS** names apply with `LOG_FORMAT=ecs`; `json` uses the plain names.\n\n" +
-		"Reads are audited too (`deployment.list`, `pod.get`, `pod.logs`), refused ones included. The lists the UI reloads " +
-		"on its own are not (they send `X-OpenConsole-Refresh: auto`); the HTTP request log still has every request. " +
-		"With an API key that header is ignored: every read is audited.\n\n")
+	b.WriteString(t(lang, "Every audited action is one event. It is stored in the database (**Admin → Audit Logs**, CSV export) and, "+
+		"with `LOG_INCLUDE_AUDIT=true` (the default), written to stdout as one line, so the same fields can be filtered in "+
+		"the UI and in your log platform. The **ECS** names apply with `LOG_FORMAT=ecs`; `json` uses the plain names.\n\n"+
+		"Reads are audited too (`deployment.list`, `pod.get`, `pod.logs`), refused ones included. The lists the UI reloads "+
+		"on its own are not (they send `X-OpenConsole-Refresh: auto`); the HTTP request log still has every request. "+
+		"With an API key that header is ignored: every read is audited.\n\n"))
 
-	b.WriteString("## Fields\n\n")
+	heading(&b, lang, "Fields")
 	var rows [][]string
 	for _, f := range audit.FieldDocs {
 		rows = append(rows, []string{code(f.Key), code(logging.ECSField(f.Key)), f.Description})
 	}
-	table(&b, []string{"Field", "ECS", "Meaning"}, rows)
+	table(&b, lang, []string{"Field", "ECS", "Meaning"}, rows)
 
-	b.WriteString("## Actions\n\nThe action is `<resource type>.<verb>`. Read from the handlers' code; an action shows every " +
-		"outcome it can end with. `<resource>` stands for any Kubernetes resource type the check is made for (`pod`, " +
-		"`deployment`, …).\n\n")
+	heading(&b, lang, "Actions")
+	b.WriteString(t(lang, "The action is `<resource type>.<verb>`. Read from the handlers' code; an action shows every "+
+		"outcome it can end with. `<resource>` stands for any Kubernetes resource type the check is made for (`pod`, "+
+		"`deployment`, …).\n\n"))
 	rows = nil
 	for _, a := range sortedKeys(actions) {
 		outs := sortedKeys(actions[a])
 		sort.SliceStable(outs, func(i, j int) bool { return outcomeOrder(outs[i]) < outcomeOrder(outs[j]) })
 		rows = append(rows, []string{code(a), codeList(outs)})
 	}
-	table(&b, []string{"Action", "Outcomes"}, rows)
+	table(&b, lang, []string{"Action", "Outcomes"}, rows)
 
-	b.WriteString("## Verbs\n\n")
+	heading(&b, lang, "Verbs")
 	rows = nil
 	for _, v := range audit.Verbs {
 		rows = append(rows, []string{code(v), audit.VerbDocs[v]})
 	}
-	table(&b, []string{"Verb", "Meaning"}, rows)
+	table(&b, lang, []string{"Verb", "Meaning"}, rows)
 
-	b.WriteString("## Outcomes\n\n")
+	heading(&b, lang, "Outcomes")
 	rows = nil
 	for _, o := range audit.Outcomes {
 		rows = append(rows, []string{code(o), audit.OutcomeDocs[o]})
 	}
-	table(&b, []string{"Outcome", "Meaning"}, rows)
+	table(&b, lang, []string{"Outcome", "Meaning"}, rows)
 
-	b.WriteString("## Details\n\nA fixed set of typed keys; each is its own field on the log line. They never hold a secret " +
-		"value, a YAML body, a password or a token. **Type** is the Elasticsearch type in `deploy/elk`.\n\n")
+	heading(&b, lang, "Details")
+	b.WriteString(t(lang, "A fixed set of typed keys; each is its own field on the log line. They never hold a secret "+
+		"value, a YAML body, a password or a token. **Type** is the Elasticsearch type in `deploy/elk`.\n\n"))
 	rows = nil
 	for _, k := range sortedKeys(audit.DetailKeys) {
 		rows = append(rows, []string{code(k), string(audit.DetailKeys[k]), code(logging.ECSField(k)), audit.DetailDocs[k]})
 	}
-	table(&b, []string{"Key", "Type", "ECS", "Meaning"}, rows)
+	table(&b, lang, []string{"Key", "Type", "ECS", "Meaning"}, rows)
 	return b.String(), nil
 }
 

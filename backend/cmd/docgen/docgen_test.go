@@ -54,3 +54,17 @@ func TestClusterRoleRules(t *testing.T) {
 		t.Errorf("want the commented-out services/proxy rule as optional, got %d", optional)
 	}
 }
+
+// Turkish headings carry the anchor Docusaurus gives the English one.
+func TestSlug(t *testing.T) {
+	for in, want := range map[string]string{
+		"Full (`deploy/rbac.yaml`)":               "full-deployrbacyaml",
+		"Read only (`deploy/rbac-readonly.yaml`)": "read-only-deployrbac-readonlyyaml",
+		"Tracing (OpenTelemetry)":                 "tracing-opentelemetry",
+		"Sign-in":                                 "sign-in",
+	} {
+		if got := slug(in); got != want {
+			t.Errorf("slug(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
