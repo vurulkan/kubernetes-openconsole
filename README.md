@@ -98,3 +98,18 @@ is [k8sopenconsole/k8sopenconsole.github.io](https://github.com/k8sopenconsole/k
 
 OpenConsole is an internal visibility and operations platform, **not** a Kubernetes security boundary
 ([Security model](https://k8sopenconsole.github.io/operations/security)).
+
+## Community
+
+- [Contributing](CONTRIBUTING.md) (DCO sign-off), [Code of Conduct](CODE_OF_CONDUCT.md) (CNCF),
+  [Governance](GOVERNANCE.md), [Maintainers](MAINTAINERS.md), [Roadmap](ROADMAP.md)
+- Security reports: privately, see [SECURITY.md](SECURITY.md)
+- Using OpenConsole? Add your organisation to [ADOPTERS.md](ADOPTERS.md).
+
+## License
+
+Copyright 2026 Mustafa Volkan Vurulkan.
+
+The code is licensed under the [Apache License 2.0](LICENSE); the documentation site under
+[CC BY 4.0](https://github.com/k8sopenconsole/k8sopenconsole.github.io/blob/main/LICENSE). The OpenConsole name and logo
+are not covered by these licenses; see [TRADEMARKS.md](TRADEMARKS.md).

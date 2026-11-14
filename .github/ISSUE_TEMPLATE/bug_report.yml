@@ -1,0 +1,41 @@
+name: Bug report
+description: Something doesn't work as the documentation says.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security problems go to SECURITY.md, not here. Please don't paste tokens, kubeconfigs, secret values or
+        customer names; redact them.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The image tag or `GET /api/version`.
+      placeholder: "2.23.0"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Who was signed in (admin, a role with which permissions, an API key), which cluster, which screen or endpoint.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Kubernetes version and distribution, how OpenConsole is deployed, browser if it is a UI problem.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant server log lines or the browser console, redacted.
+      render: text
