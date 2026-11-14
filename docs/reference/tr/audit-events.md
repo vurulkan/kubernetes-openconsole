@@ -24,7 +24,7 @@ Okumalar da audit'e yazılır (`deployment.list`, `pod.get`, `pod.logs`), redded
 | `event` | `event.action` | The action, `<resource type>.<verb>`: `deployment.restart`, `secret.reveal`, `user.login`. |
 | `verb` | `openconsole.verb` | What was done (see Verbs below). |
 | `outcome` | `openconsole.outcome` | How it ended (see Outcomes below). In ECS also `event.outcome`: `success` or `failure`. |
-| `reason` | `event.reason` | Why it was denied or failed: `forbidden`, `feature_disabled`, `admin_only`, `api_access_policy`, `k8s_forbidden`, `not_found`, `bad_password`, … |
+| `reason` | `event.reason` | Why it was denied or failed: `forbidden`, `feature_disabled`, `admin_only`, `api_access_policy`, `k8s_forbidden`, `not_found`, `conflict`, `invalid`, `bad_password`, … |
 | `user` | `user.name` | Who: the signed-in user (for a failed sign-in, the name typed). |
 | `auth_source` | `openconsole.auth_source` | Where the account signs in: `local`, `ldap` or `azure`. |
 | `cluster` | `openconsole.cluster` | The cluster the action targeted. Empty for actions that don't run on a cluster (sign-ins, users, roles, settings, saved views). A permission grant records the grant's cluster (empty = all clusters). |
