@@ -23,6 +23,10 @@ RUN GOOS=$TARGETOS GOARCH=$TARGETARCH go build \
       -o /app/server ./cmd/server
 
 FROM alpine:3.19 AS runtime
+LABEL org.opencontainers.image.title="Kubernetes OpenConsole" \
+      org.opencontainers.image.source="https://github.com/vurulkan/kubernetes-openconsole" \
+      org.opencontainers.image.documentation="https://k8sopenconsole.github.io/" \
+      org.opencontainers.image.licenses="Apache-2.0"
 RUN apk add --no-cache ca-certificates iputils bind-tools busybox-extras \
   && addgroup -S appgroup \
   && adduser -S appuser -G appgroup \
