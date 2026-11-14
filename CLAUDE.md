@@ -101,6 +101,11 @@ Screenshots: Playwright's `chromium.launch` dies on this Mac; start Chrome yours
 - **anything a user or operator notices** → README now, and a PR in `vurulkan/openconsole-docs` when the release
   ships (the site describes the latest release).
 
+**Every app change updates the docs too.** A change to the app is not finished until the docs site says the same:
+the affected pages in `vurulkan/openconsole-docs` (EN + TR), its screenshots if the screen changed
+(`screenshots/`: record → shoot), and the generated reference via docgen. Write the docs change together with the
+code change and open the docs PR when the release ships; the PR description names the pages it touches.
+
 ## UI / UX
 
 Designs follow the project design system, generated with
