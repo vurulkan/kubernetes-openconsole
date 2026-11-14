@@ -26,6 +26,18 @@ const (
 // AllFeatures lists every flag, for docs and GET /api/features.
 var AllFeatures = []string{FeaturePodExec, FeatureYAMLEdit, FeatureWorkloadActions, FeatureSecrets, FeatureSecretReveal, FeatureSecretEdit, FeatureAPIKeys}
 
+// FeatureDocs says what FEATURE_<NAME>=false turns off (cmd/docgen, the
+// Environment variables page). Every flag in AllFeatures needs one.
+var FeatureDocs = map[string]string{
+	FeaturePodExec:         "pod shell and one-command exec (`pods:exec`)",
+	FeatureYAMLEdit:        "YAML edit / apply on every resource except Secrets (`{resource}:edit`)",
+	FeatureWorkloadActions: "Deployment restart and scale, StatefulSet scale",
+	FeatureSecrets:         "the whole Secrets tab (every `secrets:*`)",
+	FeatureSecretReveal:    "revealing secret values (`secrets:reveal`)",
+	FeatureSecretEdit:      "editing Secrets (`secrets:edit`)",
+	FeatureAPIKeys:         "API keys: the page, the `/api/me/api-keys` endpoints and signing in with a key (a key then gets 401)",
+}
+
 // disabledFeatures is set once at startup (SetDisabledFeatures).
 var disabledFeatures = map[string]bool{}
 

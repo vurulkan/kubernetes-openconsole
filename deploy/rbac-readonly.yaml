@@ -31,6 +31,7 @@ kind: ClusterRole
 metadata:
   name: openconsole-readonly
 rules:
+  # Reads for every Dashboard tab + events for the Live Events panel.
   - apiGroups: [""]
     resources: [namespaces, pods, services, configmaps, events]
     verbs: [get, list, watch]
@@ -49,6 +50,7 @@ rules:
   #   resources: [secrets]
   #   verbs: [get, list]
 
+  # Deployments, DaemonSets and StatefulSets tabs.
   - apiGroups: [apps]
     resources: [deployments, daemonsets, statefulsets]
     verbs: [get, list, watch]
@@ -77,14 +79,17 @@ rules:
   #   resourceNames: ["monitoring-kube-prometheus-prometheus:9090"]  # <service>:<port>, or http:<service>:<port>
   #   verbs: [get]
 
+  # HPA tab (autoscaling/v2).
   - apiGroups: [autoscaling]
     resources: [horizontalpodautoscalers]
     verbs: [get, list, watch]
 
+  # Ingresses tab.
   - apiGroups: [networking.k8s.io]
     resources: [ingresses]
     verbs: [get, list, watch]
 
+  # CronJobs and Jobs tabs.
   - apiGroups: [batch]
     resources: [cronjobs, jobs]
     verbs: [get, list, watch]

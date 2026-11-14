@@ -901,7 +901,7 @@ paths:
   /api/admin/cluster:
     get: {tags: [Admin], x-openconsole-admin: true, summary: The default cluster's connection (legacy), responses: {"200": {$ref: '#/components/responses/ok'}}}
     post: {tags: [Admin], x-openconsole-admin: true, summary: Save the default cluster's connection (legacy), responses: {"200": {$ref: '#/components/responses/ok'}}}
-    put: {tags: [Admin], x-openconsole-admin: true, summary: Save the default cluster's connection (legacy), responses: {"200": {$ref: '#/components/responses/ok'}}}
+    put: {tags: [Admin], x-openconsole-admin: true, summary: "Save the default cluster's connection (legacy, PUT)", responses: {"200": {$ref: '#/components/responses/ok'}}}
   /api/admin/cluster/validate:
     post: {tags: [Admin], x-openconsole-admin: true, summary: Check cluster credentials without saving, responses: {"200": {$ref: '#/components/responses/ok'}}}
   /api/admin/clusters:

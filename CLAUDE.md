@@ -9,7 +9,8 @@ section you need). This file is for working on the code.
 
 ## Map
 
-`backend/` (Go, chi, client-go, slog, modernc sqlite) — entry point `cmd/server`.
+`backend/` (Go, chi, client-go, slog, modernc sqlite) — entry point `cmd/server`; `cmd/docgen` writes the docs site's
+reference pages into `docs/reference/` (see "Generated reference" below).
 | Path | What |
 |---|---|
 | `internal/api` | HTTP + WebSocket handlers. `router.go` holds the routes, `requirePermission`, `accessFor` / `engineForRequest` (every permission check, API key included: `webAccess`, or `keyAccess` = web access through the admin's API access policy, which `ceilingFor` uses too), `denyReason` and `isAdminRequest` (the one admin check), most handlers; features split out (`apikeys.go` (API key sign-in, ceiling, expiry policy, `/api/me/api-keys`), `apikeys_admin.go` (admin key list / revoke, user API access preview), `workloads.go`, `deployment_actions.go`, `secrets.go`, `pod_exec.go` (shell socket), `pod_exec_command.go` (one command over REST), `logs.go` (pod / deployment / job log sockets, JSON frames; REST log `handlePodLogs`), `openapi.yaml` + `openapi.go` (the hand-written API description, `GET /api/openapi.json`; `openapi_test.go` walks `routes()` against it), `ws_ticket.go`, `overview.go` (admin overview, 15 s cache), `nodes.go` (admin node list / detail / history), `yaml_apply.go`, `clusters.go`, `views.go`, `exports.go`, …). `authz_test.go` = authorization suite |
@@ -19,7 +20,7 @@ section you need). This file is for working on the code.
 | `internal/kube` | per-cluster client + informer cache (`Manager`, `Registry`; nodes only with list + watch, pods indexed by `spec.nodeName`), event bus, resource reads, apply, YAML prettify; `metrics.go` 30 s metrics-server sampler (24 h in memory, per pod / workload / node / cluster), `terminations.go` container exits from the pod informer (restart history) |
 | `internal/prom` | Prometheus-compatible query client (API server proxy or URL; basic / bearer / Azure AD / mTLS), history queries, test-button diagnosis |
 | `internal/store`, `internal/db` | SQLite store (users, roles, clusters + their Prometheus settings, sessions, views, recordings settings, restart history) and migrations; credentials encrypted at rest |
-| `internal/config` | env vars (`Load`), feature flags (`FEATURE_*`) |
+| `internal/config` | env vars (`Load`; `Vars` = every one with default + description, `vars_test.go` scans the backend for reads), feature flags (`FEATURE_*`) |
 | `internal/logging` | slog setup; `LOG_FORMAT=text|json|ecs` (`ecs.go`) |
 | `internal/recording` | pod shell session recording (asciicast), quota / eviction |
 | `internal/telemetry`, `internal/version` | OpenTelemetry tracing; build version |
@@ -37,6 +38,7 @@ section you need). This file is for working on the code.
 | `src/hooks` | global / scoped keyboard shortcuts, modal scopes |
 | `src/services/api.ts` | every API call; `wsUrl()` = WebSocket URL with a single-use ticket (never the JWT) |
 | `src/i18n.ts` | EN + TR dictionaries (one file) |
+| `src/shortcuts.json` | rows of the `?` cheat sheet with EN + TR text (`ShortcutsHelp`); docgen makes the docs page from it |
 | `src/utils` | `formatAge`, `formatBytes`, `formatDuration`, Kubernetes quantities (`parseCpu` / `parseMem` / `formatCpu` / `formatMem`); `podStatus.ts` = kubectl STATUS logic, last container termination, exit code hints, `podOwner` ("Deployment/web"), `podController` (direct controller), `containerStates` (per-container look for the Containers squares); use it, don't re-derive pod health or ownership; `resources.ts` requests / limits sums; `searchText.ts` what the Dashboard search matches per tab (add a column → add its text there); `openDashboard.ts` opens a Dashboard view or a pod drawer from another page |
 
 `deploy/`: kustomize manifests; `rbac.yaml` / `rbac-readonly.yaml` = ClusterRole of the token users paste in;
@@ -81,11 +83,18 @@ Screenshots: Playwright's `chromium.launch` dies on this Mac; start Chrome yours
   know the API key; never `user.IsAdmin` for access), and add an API key case (allowed / refused) in
   `apikeys_test.go`; `/api/admin/*` routes are scanned there automatically. Something a key must never do:
   `denyAPIKey`.
-- **an audit detail key** → `audit.DetailKeys` + `deploy/elk/openconsole@mappings.component-template.json`.
+- **an audit detail key** → `audit.DetailKeys` + `audit.DetailDocs` + `deploy/elk/openconsole@mappings.component-template.json`.
+  A new verb → `audit.Verbs` + `VerbDocs`. Keep `Verb` / `ResourceType` / `Outcome` constants (or helper parameters
+  called with constants): docgen reads the actions from the code and fails on what it can't follow.
   Never write secret values, YAML bodies, passwords or tokens into audit or logs.
 - **UI text** → key in both EN and TR in `i18n.ts` (the parity test fails otherwise).
-- **an env var / feature flag** → `internal/config` + README "Environment variables" + `deploy/deployment.yaml` comment.
-- **a Kubernetes API the app reads or writes** → `deploy/rbac.yaml` and `deploy/rbac-readonly.yaml`, plus the README ClusterRole table.
+- **an env var / feature flag** → `config.Vars` (or `api.AllFeatures` + `api.FeatureDocs`) + README "Environment variables"
+  (until M23 slims it) + `deploy/deployment.yaml` comment.
+- **a metric** → `api.Metrics` (help text lives there only). **A permission** → `rbac.Catalog` + `rbac.ActionDocs` if
+  the generic text doesn't fit. **A keyboard shortcut** → `frontend/src/shortcuts.json` (EN + TR text) + the binding.
+- **a Kubernetes API the app reads or writes** → `deploy/rbac.yaml` and `deploy/rbac-readonly.yaml`, each rule with a
+  comment above it saying what it is for (docgen fails without), plus the README ClusterRole table.
+- **any of the above** → `cd backend && go run ./cmd/docgen` and commit `docs/reference/` (CI fails on a diff).
 - **a UI poll** → send `X-OpenConsole-Refresh: auto` (`autoRefresh(true)` in `api.ts`) so it isn't audited.
 - **a DB column / table** → migration in `internal/db` (idempotent; store tests upgrade an old schema).
 - **any UI** → light + dark theme, TR + EN, keyboard reachable, axe clean (frontend tests run axe).
@@ -111,6 +120,13 @@ complete change, reuse what the repo already has, no unrequested options or abst
 - Review a change before the PR with `/ponytail-review`; whole-repo audit with `/ponytail-audit`.
 - Without the plugin, follow the same rules by hand.
 
+## Generated reference
+
+`docs/reference/*.md` (env vars, permissions, audit events, metrics, Kubernetes permissions, keyboard shortcuts) is
+written by `backend/cmd/docgen` from the registries above; never edit it by hand. The docs site copies it, plus
+`internal/api/openapi.yaml` for the endpoint reference, from a pinned ref of this repo
+(`openconsole-docs/reference.json`, `npm run reference:sync`); bump that ref when a release ships.
+
 ## Release
 
 Feature branch `X.Y.Z-name` **from `dev`**: every push publishes `:dev-<run>` + `:dev-latest` → squash merge
@@ -118,7 +134,8 @@ into `dev` → the user tests `dev`'s pinned `:dev-<run>` on a real cluster → 
 in `dev`, squash merge `dev` to `main` → `git tag -a vX.Y.Z` + push the tag → CI builds once
 and publishes `ghcr.io/vurulkan/kubernetes-openconsole:X.Y.Z` and `:latest` (same digest, amd64 + arm64,
 GitHub attestations) → check digests, `gh attestation verify`, smoke test → `gh release create` →
-`gh workflow run docs.yml -R vurulkan/openconsole-docs` (the docs site's release notes) + the release's docs PR.
+`gh workflow run docs.yml -R vurulkan/openconsole-docs` (the docs site's release notes) + the release's docs PR
+(bump `reference.json` there to the new tag).
 Pushes to `main` build and test but publish nothing. **Never `docker push` by hand**, never add `:<sha>` or
 signature tags. The version comes from the tag (`dev-<run>` on branches; Dockerfile `ARG VERSION` →
 `internal/version`, `dev` locally).

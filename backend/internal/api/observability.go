@@ -1,9 +1,9 @@
 package api
 
 import (
-	"strings"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -167,14 +167,46 @@ func metricsRecordRequest(status int, durationMs int64) {
 }
 
 // Public hooks so other files can bump counters.
-func MetricsAuditIncr()       { metricsStore.auditEventsTotal.Add(1) }
-func MetricsExecIncr()        { metricsStore.execSessionsTotal.Add(1) }
-func MetricsLogStreamIncr()   { metricsStore.wsLogStreamsStarted.Add(1) }
-func MetricsDeployAction()    { metricsStore.deployActionsTotal.Add(1) }
+func MetricsAuditIncr()     { metricsStore.auditEventsTotal.Add(1) }
+func MetricsExecIncr()      { metricsStore.execSessionsTotal.Add(1) }
+func MetricsLogStreamIncr() { metricsStore.wsLogStreamsStarted.Add(1) }
+func MetricsDeployAction()  { metricsStore.deployActionsTotal.Add(1) }
 
-func writeMetric(w http.ResponseWriter, name, help, typ string, value int64, labels string) {
-	_, _ = w.Write([]byte("# HELP " + name + " " + help + "\n"))
-	_, _ = w.Write([]byte("# TYPE " + name + " " + typ + "\n"))
+// MetricDoc describes one series of GET /metrics. Metrics is the only place
+// their help text lives: handleMetrics writes it, cmd/docgen turns it into the
+// docs site's Metrics page, and observability_test.go fails on a series
+// missing from it.
+type MetricDoc struct {
+	Name, Type, Help string
+	Labels           []string
+}
+
+var Metrics = []MetricDoc{
+	{"openconsole_http_requests_total", "counter", "HTTP requests served.", nil},
+	{"openconsole_http_requests_status_total", "counter", "HTTP requests served, by status class (2xx, 3xx, 4xx, 5xx).", []string{"status"}},
+	{"openconsole_http_request_duration_ms_sum", "counter", "Sum of request durations in milliseconds.", nil},
+	{"openconsole_http_request_duration_ms_count", "counter", "Count of observed requests used for duration stats.", nil},
+	{"openconsole_audit_events_total", "counter", "Audit log entries recorded.", nil},
+	{"openconsole_pod_exec_sessions_total", "counter", "Pod exec sessions started.", nil},
+	{"openconsole_pod_log_streams_total", "counter", "Pod log WebSocket streams started.", nil},
+	{"openconsole_deployment_actions_total", "counter", "Deployment restart or scale actions attempted.", nil},
+	{"openconsole_pod_exec_active", "gauge", "Pod exec sessions currently open.", nil},
+	{"openconsole_cluster_requests_total", "counter", "Authenticated API requests per cluster.", []string{"cluster"}},
+	{"openconsole_cluster_connected", "gauge", "1 when OpenConsole holds a live connection to the cluster.", []string{"cluster"}},
+}
+
+// metricHeader writes the # HELP / # TYPE lines of a metric from Metrics.
+func metricHeader(w http.ResponseWriter, name string) {
+	for _, m := range Metrics {
+		if m.Name == name {
+			_, _ = w.Write([]byte("# HELP " + name + " " + m.Help + "\n# TYPE " + name + " " + m.Type + "\n"))
+			return
+		}
+	}
+}
+
+func writeMetric(w http.ResponseWriter, name string, value int64, labels string) {
+	metricHeader(w, name)
 	line := name
 	if labels != "" {
 		line += "{" + labels + "}"
@@ -185,8 +217,7 @@ func writeMetric(w http.ResponseWriter, name, help, typ string, value int64, lab
 
 func handleMetrics(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
-	writeMetric(w, "openconsole_http_requests_total", "HTTP requests served.", "counter",
-		metricsStore.requestsTotal.Load(), "")
+	writeMetric(w, "openconsole_http_requests_total", metricsStore.requestsTotal.Load(), "")
 
 	metricsStore.requestsByStatus.Range(func(key, value any) bool {
 		bucket := key.(string)
@@ -198,31 +229,23 @@ func handleMetrics(w http.ResponseWriter, _ *http.Request) {
 
 	sum := metricsStore.durationSumMs.Load()
 	count := metricsStore.durationCount.Load()
-	writeMetric(w, "openconsole_http_request_duration_ms_sum",
-		"Sum of request durations in milliseconds.", "counter", sum, "")
-	writeMetric(w, "openconsole_http_request_duration_ms_count",
-		"Count of observed requests used for duration stats.", "counter", count, "")
+	writeMetric(w, "openconsole_http_request_duration_ms_sum", sum, "")
+	writeMetric(w, "openconsole_http_request_duration_ms_count", count, "")
 
-	writeMetric(w, "openconsole_audit_events_total", "Audit log entries recorded.", "counter",
-		metricsStore.auditEventsTotal.Load(), "")
-	writeMetric(w, "openconsole_pod_exec_sessions_total", "Pod exec sessions started.", "counter",
-		metricsStore.execSessionsTotal.Load(), "")
-	writeMetric(w, "openconsole_pod_log_streams_total", "Pod log WebSocket streams started.", "counter",
-		metricsStore.wsLogStreamsStarted.Load(), "")
-	writeMetric(w, "openconsole_deployment_actions_total",
-		"Deployment restart or scale actions attempted.", "counter",
-		metricsStore.deployActionsTotal.Load(), "")
-	writeMetric(w, "openconsole_pod_exec_active", "Pod exec sessions currently open.", "gauge",
-		metricExecActive.Load(), "")
+	writeMetric(w, "openconsole_audit_events_total", metricsStore.auditEventsTotal.Load(), "")
+	writeMetric(w, "openconsole_pod_exec_sessions_total", metricsStore.execSessionsTotal.Load(), "")
+	writeMetric(w, "openconsole_pod_log_streams_total", metricsStore.wsLogStreamsStarted.Load(), "")
+	writeMetric(w, "openconsole_deployment_actions_total", metricsStore.deployActionsTotal.Load(), "")
+	writeMetric(w, "openconsole_pod_exec_active", metricExecActive.Load(), "")
 
-	_, _ = w.Write([]byte("# HELP openconsole_cluster_requests_total Authenticated API requests per cluster.\n# TYPE openconsole_cluster_requests_total counter\n"))
+	metricHeader(w, "openconsole_cluster_requests_total")
 	metricsStore.requestsByCluster.Range(func(key, value any) bool {
 		_, _ = w.Write([]byte("openconsole_cluster_requests_total{cluster=\"" + promLabel(key.(string)) + "\"} " +
 			strconv.FormatInt(value.(*atomic.Int64).Load(), 10) + "\n"))
 		return true
 	})
 	if fn := clusterStatusFn; fn != nil {
-		_, _ = w.Write([]byte("# HELP openconsole_cluster_connected 1 when OpenConsole holds a live connection to the cluster.\n# TYPE openconsole_cluster_connected gauge\n"))
+		metricHeader(w, "openconsole_cluster_connected")
 		for name, up := range fn() {
 			v := "0"
 			if up {

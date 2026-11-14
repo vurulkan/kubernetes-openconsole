@@ -73,3 +73,14 @@ func TestFeatureAllowsMapping(t *testing.T) {
 		}
 	}
 }
+
+func TestEveryFeatureIsDocumented(t *testing.T) {
+	if len(FeatureDocs) != len(AllFeatures) {
+		t.Fatalf("FeatureDocs has %d entries, AllFeatures %d", len(FeatureDocs), len(AllFeatures))
+	}
+	for _, f := range AllFeatures {
+		if FeatureDocs[f] == "" {
+			t.Errorf("FeatureDocs[%q] is missing (the docs' Environment variables page)", f)
+		}
+	}
+}

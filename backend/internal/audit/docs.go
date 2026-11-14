@@ -1,0 +1,123 @@
+package audit
+
+// Descriptions for the docs site's Audit events page (cmd/docgen). docs_test.go
+// fails when a verb, outcome, details key or console field has none. The
+// actions themselves (<resource type>.<verb> and their outcomes) are read from
+// the handlers' code by cmd/docgen.
+
+// FieldDocs are the fields every audit event carries, in the order of the
+// console line, keyed by their json / DB name.
+var FieldDocs = []struct{ Key, Description string }{
+	{"event", "The action, `<resource type>.<verb>`: `deployment.restart`, `secret.reveal`, `user.login`."},
+	{"verb", "What was done (see Verbs below)."},
+	{"outcome", "How it ended (see Outcomes below). In ECS also `event.outcome`: `success` or `failure`."},
+	{"reason", "Why it was denied or failed: `forbidden`, `feature_disabled`, `admin_only`, `api_access_policy`, `k8s_forbidden`, `not_found`, `bad_password`, …"},
+	{"user", "Who: the signed-in user (for a failed sign-in, the name typed)."},
+	{"auth_source", "Where the account signs in: `local`, `ldap` or `azure`."},
+	{"cluster", "The cluster the action targeted. Empty for actions that don't run on a cluster (sign-ins, users, roles, settings, saved views). A permission grant records the grant's cluster (empty = all clusters)."},
+	{"cluster_id", "The id of that cluster."},
+	{"namespace", "The target's namespace."},
+	{"resource_type", "Singular resource type: `deployment`, `pod`, `user`, `api_key`, …"},
+	{"resource_name", "The target's name; `*` for a list."},
+	{"request_id", "Same as the `http.request` log line of the request, and the `X-Request-Id` response header."},
+	{"remote_ip", "Client address: the first `X-Forwarded-For` entry, else `X-Real-Ip`, else the connection's address."},
+	{"user_agent", "The client's User-Agent."},
+	{"api_key_id", "The API key the action was taken with; empty for a web session."},
+	{"api_key_name", "That key's name."},
+}
+
+// VerbDocs: one line per verb.
+var VerbDocs = map[string]string{
+	VerbList:           "listed (`*` as the name)",
+	VerbGet:            "read one object",
+	VerbLogs:           "read or followed logs",
+	VerbExec:           "opened a shell (`phase` start / end) or ran one command (`mode` command)",
+	VerbRestart:        "rolling restart",
+	VerbScale:          "changed the replica count",
+	VerbApply:          "applied YAML (`dry_run` true for the dry run)",
+	VerbViewYAML:       "opened the YAML (for a Secret: the editor, which shows the values)",
+	VerbReveal:         "revealed one Secret value",
+	VerbView:           "played a session recording",
+	VerbDownload:       "downloaded a session recording",
+	VerbCreate:         "created",
+	VerbUpdate:         "changed",
+	VerbDelete:         "deleted",
+	VerbShare:          "shared or unshared a saved view",
+	VerbSelect:         "picked a cluster to work on",
+	VerbActivate:       "made a cluster the default",
+	VerbDeactivate:     "deactivated",
+	VerbRevoke:         "revoked a session or an API key",
+	VerbExport:         "exported a CSV",
+	VerbImport:         "imported users from LDAP",
+	VerbLogin:          "signed in",
+	VerbChangePassword: "changed one's own password",
+	VerbResetPassword:  "an admin set a new password for a local user",
+	VerbEvict:          "deleted a recording to stay within the disk quota",
+	VerbPurge:          "deleted recordings past their retention",
+	VerbViewOverview:   "opened the admin overview",
+	VerbRegenerate:     "replaced an API key's secret",
+	VerbUse:            "presented an API key (recorded only when it was refused or rate limited)",
+}
+
+// OutcomeDocs: one line per outcome.
+var OutcomeDocs = map[string]string{
+	Success:     "done",
+	Denied:      "refused by OpenConsole: permission, feature flag, API key policy, admin only",
+	Failed:      "allowed, but it didn't work: Kubernetes refused it, not found, conflict, bad password",
+	RateLimited: "too many at once: open shells per user, API key requests per second",
+	Locked:      "sign-in refused while the account is locked after failed attempts",
+}
+
+// DetailDocs: what each DetailKeys key holds, and on which actions.
+var DetailDocs = map[string]string{
+	"restarted_at":     "`deployment.restart`: the time written to the pod template",
+	"replicas_from":    "`*.scale`: replicas before",
+	"replicas_to":      "`*.scale`: replicas requested",
+	"pod":              "`recording.create`, `recording.evict`: the pod of the shell",
+	"pods":             "`deployment.logs`, `job.logs`: how many pods the stream follows",
+	"container":        "`pod.exec`, `pod.logs`, `recording.create`: the container",
+	"previous":         "`pod.logs`: logs of the previous (crashed) container",
+	"command":          "`pod.exec` shell: the shell started (`/bin/sh`, …)",
+	"phase":            "`pod.exec` shell: `start` or `end`",
+	"mode":             "`pod.exec`: `command` for one command over the API",
+	"program":          "`pod.exec` command: the program only (first element), never the arguments",
+	"recording_id":     "`pod.exec` command: the session recording's id",
+	"exit_code":        "`pod.exec`: the exit code",
+	"bytes_in":         "`pod.exec` shell end: bytes typed",
+	"bytes_out":        "`pod.exec`: bytes of output",
+	"duration_ms":      "`pod.exec`, `recording.create`: how long it ran",
+	"max_sessions":     "`pod.exec` rate limited: the per-user limit",
+	"key":              "`secret.reveal`: the key name (never the value)",
+	"dry_run":          "`*.apply`: true for the server-side dry run",
+	"yaml_from":        "`*.apply`: sha256 prefix of the object before (never the YAML)",
+	"yaml_to":          "`*.apply`: sha256 prefix of the YAML applied",
+	"session_id":       "`session.revoke`: the sign-in session revoked",
+	"owner":            "`recording.evict`, `saved_view.*`, `api_key.revoke` by an admin: whose it is",
+	"started_at":       "`recording.evict`: when the recorded session started",
+	"size_bytes":       "`recording.*`: file size (`recording.purge`: bytes freed)",
+	"truncate_reason":  "`pod.exec` end: why the recording stopped early (size cap, disk quota)",
+	"retention_days":   "`recording.purge`: the retention applied",
+	"login_method":     "`user.login`: `local`, `ldap` or `azure`",
+	"account_source":   "`user.*`: the target account's source",
+	"linked_by":        "`user.login` with Azure AD: the claim a pre-created account was matched by (UPN or e-mail)",
+	"signed_in_as":     "`user.login` with Azure AD: the name the user signed in with",
+	"must_change":      "`user.reset_password`: the user must choose a new password",
+	"auto_provisioned": "`user.create`: created on first LDAP sign-in",
+	"is_admin":         "`user.*`: admin after the change",
+	"is_active":        "`user.update`: active after the change",
+	"groups":           "`user.*`, `user.import`: number of groups",
+	"count":            "`*.export`, `*.list` of API keys, `user.import`, `recording.purge`, `api_key.revoke` all: how many",
+	"all":              "`session.revoke`, `api_key.revoke`: every one of the user's",
+	"id":               "`api_key.*`, `permission.*`, `recording.delete`: the id",
+	"role":             "`permission.*`: the role",
+	"grant":            "`permission.*`: `resource:action`",
+	"changed":          "`*.update`: names of the fields changed, never their values",
+	"shared":           "`saved_view.*`: shared with everyone",
+	"summary":          "`settings.update`, `api_key.*`, `user.import`: a short summary of what was set",
+	"admin_scope":      "`api_key.*`: the key holds the Admin API scope",
+	"expires_at":       "`api_key.*`: expiry",
+	"api_access":       "`role.update`, `user.update`: API access mode (`off`, `safe_read`, `full`, `roles`)",
+	"by_admin":         "`api_key.revoke`: an admin revoked another user's key",
+	"comment":          "`api_key.revoke`: the admin's reason",
+	"error":            "`failed` events: the error message (in ECS `error.message`)",
+}
