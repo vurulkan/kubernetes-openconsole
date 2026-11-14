@@ -1,0 +1,59 @@
+[
+  {"id": "global", "title": {"en": "Global", "tr": "Genel"}, "rows": [
+    {"keys": ["⌘", "K"], "text": {"en": "Open command palette", "tr": "Komut paletini aç"}},
+    {"keys": ["?"], "text": {"en": "Open this cheat sheet", "tr": "Bu kısayol listesini aç"}},
+    {"keys": ["Esc"], "text": {"en": "Close the active modal / palette", "tr": "Aktif modal / paleti kapat"}}
+  ]},
+  {"id": "navigate", "title": {"en": "Navigate", "tr": "Gezinme"}, "rows": [
+    {"keys": ["g", "o"], "text": {"en": "Go to Overview (admins only)", "tr": "Genel bakışa git (sadece admin)"}},
+    {"keys": ["g", "n"], "text": {"en": "Go to Nodes (admins only)", "tr": "Node'lara git (sadece admin)"}},
+    {"keys": ["g", "d"], "text": {"en": "Go to Dashboard", "tr": "Panel'e git"}},
+    {"keys": ["g", "a"], "text": {"en": "Go to Admin (admins only)", "tr": "Yönetim'e git (sadece admin)"}}
+  ]},
+  {"id": "theme", "title": {"en": "Theme", "tr": "Tema"}, "rows": [
+    {"keys": ["t", "l"], "text": {"en": "Theme → Light", "tr": "Tema → Açık"}},
+    {"keys": ["t", "d"], "text": {"en": "Theme → Dark", "tr": "Tema → Koyu"}},
+    {"keys": ["t", "s"], "text": {"en": "Theme → System", "tr": "Tema → Sistem"}}
+  ]},
+  {"id": "dashboard", "title": {"en": "Dashboard", "tr": "Panel"}, "rows": [
+    {"keys": ["[", "ğ"], "join": "or", "text": {"en": "Previous resource tab", "tr": "Önceki kaynak sekmesi"}},
+    {"keys": ["]", "ü"], "join": "or", "text": {"en": "Next resource tab", "tr": "Sonraki kaynak sekmesi"}},
+    {"keys": ["r"], "text": {"en": "Refresh the current resource list", "tr": "Mevcut kaynak listesini yenile"}},
+    {"keys": ["/", "."], "join": "or", "text": {"en": "Focus the search box", "tr": "Arama kutusuna odaklan"}},
+    {"keys": ["n"], "text": {"en": "Focus the namespace filter", "tr": "Namespace filtresine odaklan"}},
+    {"keys": ["e"], "text": {"en": "Toggle Live Events panel", "tr": "Canlı Olaylar panelini aç/kapat"}},
+    {"keys": ["Esc"], "text": {"en": "Close Live Events panel (when open)", "tr": "Canlı Olaylar panelini kapat (açıkken)"}},
+    {"keys": ["c"], "text": {"en": "Open cluster switcher (your own cluster)", "tr": "Cluster seçiciyi aç (kendi cluster'ınız)"}},
+    {"keys": ["v"], "text": {"en": "Open Saved Views dropdown", "tr": "Kayıtlı Görünümler menüsünü aç"}}
+  ]},
+  {"id": "cluster", "title": {"en": "Cluster switcher", "tr": "Cluster seçici"}, "rows": [
+    {"keys": ["1", "9"], "join": "or", "text": {"en": "Pick by index (1–9)", "tr": "İndeksle seç (1–9)"}},
+    {"keys": ["↑", "↓"], "join": "or", "text": {"en": "Move focus", "tr": "Odağı oynat"}},
+    {"keys": ["↵"], "text": {"en": "Activate focused item", "tr": "Odaklı öğeyi aktive et"}},
+    {"keys": ["Esc"], "text": {"en": "Close without switching", "tr": "Değiştirmeden kapat"}}
+  ]},
+  {"id": "admin", "title": {"en": "Admin", "tr": "Yönetim"}, "rows": [
+    {"keys": ["[", "ğ"], "join": "or", "text": {"en": "Previous sub-section", "tr": "Önceki alt-bölüm"}},
+    {"keys": ["]", "ü"], "join": "or", "text": {"en": "Next sub-section", "tr": "Sonraki alt-bölüm"}}
+  ]},
+  {"id": "tables", "title": {"en": "Admin tables", "tr": "Admin tabloları"}, "rows": [
+    {"keys": ["j", "k"], "join": "or", "text": {"en": "Move the row cursor down / up", "tr": "Satır imlecini aşağı / yukarı taşı"}},
+    {"keys": ["↵"], "text": {"en": "Open the selected row", "tr": "Seçili satırı aç"}},
+    {"keys": ["d"], "text": {"en": "Delete the selected row (asks first)", "tr": "Seçili satırı sil (önce sorar)"}},
+    {"keys": ["n", "p"], "join": "or", "text": {"en": "Next / previous page", "tr": "Sonraki / önceki sayfa"}}
+  ]},
+  {"id": "logs", "title": {"en": "Log viewer", "tr": "Log görüntüleyici"}, "rows": [
+    {"keys": ["p"], "text": {"en": "Toggle pause", "tr": "Durdur/devam et"}},
+    {"keys": ["w"], "text": {"en": "Toggle word wrap", "tr": "Satır sarmayı aç/kapat"}},
+    {"keys": ["⌘", "F"], "text": {"en": "Find in the log", "tr": "Logda ara"}}
+  ]},
+  {"id": "scale", "title": {"en": "Scale modal", "tr": "Ölçekleme modal'ı"}, "rows": [
+    {"keys": ["↑", "↓"], "text": {"en": "Replica ±1 (while input focused)", "tr": "Replika ±1 (input focus'luyken)"}},
+    {"keys": ["⇧", "↑/↓"], "text": {"en": "Replica ±10 (while input focused)", "tr": "Replika ±10 (input focus'luyken)"}}
+  ]},
+  {"id": "palette", "title": {"en": "Command palette", "tr": "Komut paleti"}, "rows": [
+    {"keys": ["↑", "↓"], "text": {"en": "Move selection", "tr": "Seçimi oynat"}},
+    {"keys": ["↵"], "text": {"en": "Run selected command", "tr": "Seçili komutu çalıştır"}},
+    {"keys": ["Esc"], "text": {"en": "Close the active modal / palette", "tr": "Aktif modal / paleti kapat"}}
+  ]}
+]

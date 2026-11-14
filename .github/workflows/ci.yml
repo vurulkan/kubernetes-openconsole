@@ -50,6 +50,14 @@ jobs:
       - run: go vet ./...
       - run: go build ./...
       - run: go test -race ./...
+      # The docs site's reference pages are generated from the code: a change
+      # to env vars, permissions, audit actions, metrics, ClusterRole rules or
+      # shortcuts must come with `go run ./cmd/docgen` (backend/cmd/docgen).
+      - name: Generated docs are current
+        run: |
+          go run ./cmd/docgen
+          git add -N ../docs/reference
+          git diff --exit-code -- ../docs/reference || { echo "::error::docs/reference is out of date: run 'cd backend && go run ./cmd/docgen' and commit"; exit 1; }
 
   docker:
     name: Docker image build
