@@ -4,8 +4,8 @@ Web console for several Kubernetes clusters: users see and operate workloads in 
 roles allow; every action is audited. One Go binary serves the API and the React build from a single
 image; state is SQLite on a ReadWriteOnce volume (so **always 1 replica**). The user manual is the docs
 site, <https://k8sopenconsole.github.io/>, source in [k8sopenconsole/k8sopenconsole.github.io](https://github.com/k8sopenconsole/k8sopenconsole.github.io)
-(its own `CLAUDE.md`); README.md still carries the same text until the docs series ends (long, read only the
-section you need). This file is for working on the code.
+(its own `CLAUDE.md`), English and Turkish. README.md is a short front door that links there. This file is for
+working on the code.
 
 ## Map
 
@@ -88,23 +88,26 @@ Screenshots: Playwright's `chromium.launch` dies on this Mac; start Chrome yours
   called with constants): docgen reads the actions from the code and fails on what it can't follow.
   Never write secret values, YAML bodies, passwords or tokens into audit or logs.
 - **UI text** → key in both EN and TR in `i18n.ts` (the parity test fails otherwise).
-- **an env var / feature flag** → `config.Vars` (or `api.AllFeatures` + `api.FeatureDocs`) + README "Environment variables"
-  (until M23 slims it) + `deploy/deployment.yaml` comment.
+- **an env var / feature flag** → `config.Vars` (or `api.AllFeatures` + `api.FeatureDocs`) + `deploy/deployment.yaml` comment.
 - **a metric** → `api.Metrics` (help text lives there only). **A permission** → `rbac.Catalog` + `rbac.ActionDocs` if
   the generic text doesn't fit. **A keyboard shortcut** → `frontend/src/shortcuts.json` (EN + TR text) + the binding.
 - **a Kubernetes API the app reads or writes** → `deploy/rbac.yaml` and `deploy/rbac-readonly.yaml`, each rule with a
-  comment above it saying what it is for (docgen fails without), plus the README ClusterRole table.
-- **any of the above** → `cd backend && go run ./cmd/docgen` and commit `docs/reference/` (CI fails on a diff).
+  comment above it saying what it is for (docgen fails without).
+- **any of the above** → `cd backend && go run ./cmd/docgen` and commit `docs/reference/` (CI fails on a diff). New
+  fixed text in docgen (a title, an intro, a table header) needs its Turkish in `cmd/docgen/tr.go` (docgen stops without).
 - **a UI poll** → send `X-OpenConsole-Refresh: auto` (`autoRefresh(true)` in `api.ts`) so it isn't audited.
 - **a DB column / table** → migration in `internal/db` (idempotent; store tests upgrade an old schema).
 - **any UI** → light + dark theme, TR + EN, keyboard reachable, axe clean (frontend tests run axe).
-- **anything a user or operator notices** → README now, and a PR in `k8sopenconsole/k8sopenconsole.github.io` when the release
-  ships (the site describes the latest release).
+- **anything a user or operator notices** → the docs site (below); the README only if a highlight or the quick start
+  changes.
 
-**Every app change updates the docs too.** A change to the app is not finished until the docs site says the same:
-the affected pages in `k8sopenconsole/k8sopenconsole.github.io` (EN + TR), its screenshots if the screen changed
-(`screenshots/`: record → shoot), and the generated reference via docgen. Write the docs change together with the
-code change and open the docs PR when the release ships; the PR description names the pages it touches.
+**Every app change updates the docs too.** A change to the app is not finished until the docs site
+([k8sopenconsole/k8sopenconsole.github.io](https://github.com/k8sopenconsole/k8sopenconsole.github.io)) says the
+same: the affected pages in English **and Turkish** (`i18n/tr/…`, terms of the app's TR UI, `i18n/tr/GLOSSARY.md`),
+its screenshots if a screen changed (`screenshots/`: record → shoot), and the generated reference (docgen here, then
+`reference.json` + `npm run reference:sync` there). Open the docs PR with the code PR and merge it when the code
+reaches `dev`: it lands in the site's unreleased "Next" docs, which a release freezes (see Release). The PR
+description names the pages it touches.
 
 ## UI / UX
 
@@ -130,7 +133,9 @@ complete change, reuse what the repo already has, no unrequested options or abst
 `docs/reference/*.md` (env vars, permissions, audit events, metrics, Kubernetes permissions, keyboard shortcuts) is
 written by `backend/cmd/docgen` from the registries above; never edit it by hand. The docs site copies it, plus
 `internal/api/openapi.yaml` for the endpoint reference, from a pinned ref of this repo
-(`reference.json` in the docs repo, `npm run reference:sync`); bump that ref when a release ships.
+(`reference.json` in the docs repo, `npm run reference:sync`); bump that ref when a release ships. Turkish pages
+(`docs/reference/tr/`, same anchors as English) translate the fixed text from `cmd/docgen/tr.go`; descriptions from
+the code stay English.
 
 ## Release
 
@@ -139,8 +144,9 @@ into `dev` → the user tests `dev`'s pinned `:dev-<run>` on a real cluster → 
 in `dev`, squash merge `dev` to `main` → `git tag -a vX.Y.Z` + push the tag → CI builds once
 and publishes `ghcr.io/vurulkan/kubernetes-openconsole:X.Y.Z` and `:latest` (same digest, amd64 + arm64,
 GitHub attestations) → check digests, `gh attestation verify`, smoke test → `gh release create` →
-`gh workflow run docs.yml -R k8sopenconsole/k8sopenconsole.github.io` (the docs site's release notes) + the release's docs PR
-(bump `reference.json` there to the new tag).
+**freeze the docs version** (minor releases: in the docs repo `npm run docs:freeze -- X.Y` with `reference.json`
+pinned to the new tag; patch releases update the frozen `X.Y` pages instead; see its CLAUDE.md) + the release's docs
+PR, then `gh workflow run docs.yml -R k8sopenconsole/k8sopenconsole.github.io` (the site's release notes).
 Pushes to `main` build and test but publish nothing. **Never `docker push` by hand**, never add `:<sha>` or
 signature tags. The version comes from the tag (`dev-<run>` on branches; Dockerfile `ARG VERSION` →
 `internal/version`, `dev` locally).

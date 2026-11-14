@@ -47,6 +47,10 @@ Uygulamadaki **?** listesinin aynısı. "`g` sonra `o`": `g`'ye, bir saniye içi
 | <kbd>Esc</kbd> | Canlı Olaylar panelini kapat (açıkken) |
 | <kbd>c</kbd> | Cluster seçiciyi aç (kendi cluster'ınız) |
 | <kbd>v</kbd> | Kayıtlı Görünümler menüsünü aç |
+| <kbd>↑</kbd> ya da <kbd>↓</kbd> | Kayıtlı Görünümler açıkken: odağı taşı |
+| <kbd>↵</kbd> | Kayıtlı Görünümler açıkken: odaktaki görünümü aç |
+| <kbd>1…9</kbd> | Kayıtlı Görünümler açıkken: o sıradaki görünümü aç |
+| <kbd>Esc</kbd> | Kayıtlı Görünümler menüsünü kapat |
 
 ## Cluster seçici {#cluster-switcher}
 
@@ -72,6 +76,7 @@ Uygulamadaki **?** listesinin aynısı. "`g` sonra `o`": `g`'ye, bir saniye içi
 | <kbd>↵</kbd> | Seçili satırı aç |
 | <kbd>d</kbd> | Seçili satırı sil (önce sorar) |
 | <kbd>n</kbd> ya da <kbd>p</kbd> | Sonraki / önceki sayfa |
+| <kbd>Esc</kbd> | Seçimi temizle |
 
 ## Log görüntüleyici {#log-viewer}
 

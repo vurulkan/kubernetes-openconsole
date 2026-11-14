@@ -47,6 +47,10 @@ The same list as **?** in the app. "`g` then `o`" means: press `g`, then `o` wit
 | <kbd>Esc</kbd> | Close Live Events panel (when open) |
 | <kbd>c</kbd> | Open cluster switcher (your own cluster) |
 | <kbd>v</kbd> | Open Saved Views dropdown |
+| <kbd>↑</kbd> or <kbd>↓</kbd> | Saved Views open: move the focus |
+| <kbd>↵</kbd> | Saved Views open: restore the focused view |
+| <kbd>1…9</kbd> | Saved Views open: restore the view with that number |
+| <kbd>Esc</kbd> | Close Saved Views |
 
 ## Cluster switcher
 
@@ -72,6 +76,7 @@ The same list as **?** in the app. "`g` then `o`" means: press `g`, then `o` wit
 | <kbd>↵</kbd> | Open the selected row |
 | <kbd>d</kbd> | Delete the selected row (asks first) |
 | <kbd>n</kbd> or <kbd>p</kbd> | Next / previous page |
+| <kbd>Esc</kbd> | Clear the selection |
 
 ## Log viewer
 
