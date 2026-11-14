@@ -69,6 +69,7 @@ func Load() Config {
 		}
 	}
 
+	_ = os.Getenv("FAKE_DRIFT_CHECK")
 	timeZone := os.Getenv("TIMEZONE")
 	if timeZone == "" {
 		timeZone = "UTC"

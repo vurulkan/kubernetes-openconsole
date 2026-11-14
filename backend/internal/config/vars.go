@@ -23,6 +23,7 @@ var Vars = []Var{
 	{"LOG_RETENTION_DAYS", "Core", "30", "How long audit events are kept in the database; older ones are purged automatically."},
 	{"API_KEY_READ_RETENTION_DAYS", "Core", "7", "How long **successful reads made with an API key** (`list`, `get`, `logs`, `view_yaml`, `view_overview`) are kept; they are most of an agent's audit volume. Writes, denials, failures, `pod.exec` and `api_key.*` events stay for `LOG_RETENTION_DAYS`. Console / Elastic lines are not affected."},
 	{"RESTART_HISTORY_RETENTION_DAYS", "Core", "30", "How long container exits (restart history) are kept."},
+	{"FAKE_DRIFT_CHECK", "Core", "", "Fake variable: this branch checks that CI fails when docgen wasn't run."},
 	{"MAX_REPLICAS", "Core", "100", "Highest replica count the Scale endpoint accepts for Deployments and StatefulSets."},
 
 	{"LOG_FORMAT", "Logging", "text", "`ecs` (Elastic Common Schema, nested JSON; use it for Elastic), `json` (flat JSON with short field names) or `text` (for reading by eye)."},
