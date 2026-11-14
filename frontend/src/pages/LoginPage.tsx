@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ShieldCheck } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Alert, Button, Input } from '../components/ui';
-import { getAuthProviders, login, PROJECT_URL, startAzureLogin } from '../services/api';
+import { docsUrl, getAuthProviders, login, PROJECT_URL, startAzureLogin } from '../services/api';
 import LocaleSwitcher from '../components/LocaleSwitcher';
 
 type Props = {
@@ -12,7 +12,7 @@ type Props = {
 
 const LoginPage: React.FC<Props> = ({ onLogin }) => {
   const navigate = useNavigate();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -202,14 +202,15 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
         </div>
       </div>
 
-      <a
-        href={PROJECT_URL}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="relative mt-6 text-xs text-slate-500 transition-colors hover:text-slate-700 focus:outline-none focus-visible:underline dark:text-slate-400 dark:hover:text-slate-200"
-      >
-        {t('about.loginFooter')}
-      </a>
+      <div className="relative mt-6 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+        <a href={PROJECT_URL} target="_blank" rel="noopener noreferrer" className="text-slate-500 transition-colors hover:text-slate-700 focus:outline-none focus-visible:underline dark:text-slate-400 dark:hover:text-slate-200">
+          {t('about.loginFooter')}
+        </a>
+        <span aria-hidden="true">|</span>
+        <a href={docsUrl(i18n.language)} target="_blank" rel="noopener noreferrer" className="text-slate-500 transition-colors hover:text-slate-700 focus:outline-none focus-visible:underline dark:text-slate-400 dark:hover:text-slate-200">
+          {t('about.docs')}
+        </a>
+      </div>
     </div>
   );
 };

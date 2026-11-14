@@ -47,6 +47,8 @@ func TestOpenAPIMatchesRouter(t *testing.T) {
 		}
 	}
 	inSpec := map[string]openapiOp{}
+	// The docs site makes one page per operation, named after its summary.
+	summaries := map[string]string{}
 	for path, item := range spec.Paths {
 		for method, raw := range item {
 			if method == "parameters" {
@@ -64,6 +66,10 @@ func TestOpenAPIMatchesRouter(t *testing.T) {
 				}
 			}
 			inSpec[strings.ToUpper(method)+" "+path] = op
+			if prev, dup := summaries[op.Summary]; dup {
+				t.Errorf("%s %s: summary %q is also on %s; make it unique", method, path, op.Summary, prev)
+			}
+			summaries[op.Summary] = strings.ToUpper(method) + " " + path
 		}
 	}
 	routes := map[string]bool{}

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ChevronDown, Gauge, Github, Home, KeyRound, Keyboard, LockKeyhole, LogOut, Menu, Radio, Server, Settings, ShieldCheck, X } from 'lucide-react';
+import { BookOpen, ChevronDown, Gauge, Github, Home, KeyRound, Keyboard, LockKeyhole, LogOut, Menu, Radio, Server, Settings, ShieldCheck, X } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button } from './ui';
@@ -7,7 +7,7 @@ import { ThemeToggle } from './ThemeProvider';
 import ClusterSwitcher from './ClusterSwitcher';
 import LocaleSwitcher from './LocaleSwitcher';
 import { dispatchOpenShortcuts, dispatchToggleEvents } from '../hooks/useGlobalShortcuts';
-import { getFeatures, getVersion, PROJECT_URL, User } from '../services/api';
+import { docsUrl, getFeatures, getVersion, PROJECT_URL, User } from '../services/api';
 import { MenuPopover, menuItemClass } from './MenuPopover';
 
 type Props = {
@@ -71,7 +71,7 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, liveEvents, children
   const navigate = useNavigate();
   const location = useLocation();
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [version, setVersion] = useState('');
   const [apiKeysOn, setApiKeysOn] = useState(true);
   const [userMenu, setUserMenu] = useState<HTMLElement | null>(null);
@@ -283,6 +283,16 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, liveEvents, children
           <div className="flex h-10 w-10 items-center justify-center rounded-lg text-emerald-400" title="Permissioned cluster access">
             <ShieldCheck size={18} />
           </div>
+          <a
+            href={docsUrl(i18n.language)}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={t('about.docsTitle')}
+            aria-label={t('about.docsTitle')}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-white/5 hover:text-slate-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/60"
+          >
+            <BookOpen size={15} />
+          </a>
           <a
             href={PROJECT_URL}
             target="_blank"

@@ -64,7 +64,7 @@ rules:
     resources: [pods, services, configmaps]
     verbs: [update]
 
-  # apps/v1 workloads.
+  # Deployments, DaemonSets and StatefulSets tabs; update for YAML apply.
   - apiGroups: [apps]
     resources: [deployments, daemonsets, statefulsets]
     verbs: [get, list, watch, update]
@@ -103,15 +103,17 @@ rules:
     resources: [deployments/scale, statefulsets/scale]
     verbs: [get, update]
 
-  # HorizontalPodAutoscaler (v2).
+  # HPA tab (autoscaling/v2); update for YAML apply (hpas:edit).
   - apiGroups: [autoscaling]
     resources: [horizontalpodautoscalers]
     verbs: [get, list, watch, update]
 
+  # Ingresses tab; update for YAML apply (ingresses:edit).
   - apiGroups: [networking.k8s.io]
     resources: [ingresses]
     verbs: [get, list, watch, update]
 
+  # CronJobs and Jobs tabs; update for YAML apply (cronjobs:edit, jobs:edit).
   - apiGroups: [batch]
     resources: [cronjobs, jobs]
     verbs: [get, list, watch, update]

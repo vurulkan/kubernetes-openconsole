@@ -145,6 +145,9 @@ func (h *ecsHandler) Handle(_ context.Context, r slog.Record) error {
 	return err
 }
 
+// ECSField returns the ECS field a record attribute is written to (cmd/docgen).
+func ECSField(key string) string { return ecsPath(key) }
+
 func ecsPath(key string) string {
 	if name, ok := ecsFieldNames[key]; ok {
 		return name

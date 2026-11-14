@@ -913,6 +913,8 @@ export const listAuditLogs = (limit = 50, offset = 0, q: AuditQuery = {}) => {
 };
 
 export const PROJECT_URL = 'https://github.com/vurulkan/kubernetes-openconsole';
+/** The docs site, in the UI's language (English is the site's default locale). */
+export const docsUrl = (lang: string) => `https://k8sopenconsole.github.io/${lang.startsWith('tr') ? 'tr/' : ''}`;
 
 let versionPromise: Promise<string> | null = null;
 /** The server's build version (signed-in users only); fetched once. */
