@@ -151,6 +151,13 @@ Pushes to `main` build and test but publish nothing. **Never `docker push` by ha
 signature tags. The version comes from the tag (`dev-<run>` on branches; Dockerfile `ARG VERSION` →
 `internal/version`, `dev` locally).
 
+## Project files
+
+Apache-2.0 (`LICENSE`; docs site CC BY 4.0). `CONTRIBUTING.md`, `GOVERNANCE.md`, `MAINTAINERS.md`, `SECURITY.md`
+(private GitHub reports), `CODE_OF_CONDUCT.md` (CNCF), `ROADMAP.md`, `ADOPTERS.md`, `TRADEMARKS.md`, `.github/`
+issue + PR templates: aimed at a CNCF Sandbox application. Commits are signed off (`git commit -s`, DCO). Keep
+`ROADMAP.md` at the level of themes: open security findings stay in the private milestones repo.
+
 ## Planning
 
 Milestones, decisions and status: <https://github.com/vurulkan/milestones> → `kubernetes-openconsole/`

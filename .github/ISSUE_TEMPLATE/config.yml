@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/vurulkan/kubernetes-openconsole/security/advisories/new
+    about: Report it privately, never in a public issue (SECURITY.md).
+  - name: Documentation
+    url: https://k8sopenconsole.github.io/
+    about: Installation, user and admin guides, API, operations and troubleshooting (English and Turkish).
