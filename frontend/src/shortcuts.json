@@ -24,7 +24,11 @@
     {"keys": ["e"], "text": {"en": "Toggle Live Events panel", "tr": "Canlı Olaylar panelini aç/kapat"}},
     {"keys": ["Esc"], "text": {"en": "Close Live Events panel (when open)", "tr": "Canlı Olaylar panelini kapat (açıkken)"}},
     {"keys": ["c"], "text": {"en": "Open cluster switcher (your own cluster)", "tr": "Cluster seçiciyi aç (kendi cluster'ınız)"}},
-    {"keys": ["v"], "text": {"en": "Open Saved Views dropdown", "tr": "Kayıtlı Görünümler menüsünü aç"}}
+    {"keys": ["v"], "text": {"en": "Open Saved Views dropdown", "tr": "Kayıtlı Görünümler menüsünü aç"}},
+    {"keys": ["↑", "↓"], "join": "or", "text": {"en": "Saved Views open: move the focus", "tr": "Kayıtlı Görünümler açıkken: odağı taşı"}},
+    {"keys": ["↵"], "text": {"en": "Saved Views open: restore the focused view", "tr": "Kayıtlı Görünümler açıkken: odaktaki görünümü aç"}},
+    {"keys": ["1…9"], "text": {"en": "Saved Views open: restore the view with that number", "tr": "Kayıtlı Görünümler açıkken: o sıradaki görünümü aç"}},
+    {"keys": ["Esc"], "text": {"en": "Close Saved Views", "tr": "Kayıtlı Görünümler menüsünü kapat"}}
   ]},
   {"id": "cluster", "title": {"en": "Cluster switcher", "tr": "Cluster seçici"}, "rows": [
     {"keys": ["1", "9"], "join": "or", "text": {"en": "Pick by index (1–9)", "tr": "İndeksle seç (1–9)"}},
@@ -40,7 +44,8 @@
     {"keys": ["j", "k"], "join": "or", "text": {"en": "Move the row cursor down / up", "tr": "Satır imlecini aşağı / yukarı taşı"}},
     {"keys": ["↵"], "text": {"en": "Open the selected row", "tr": "Seçili satırı aç"}},
     {"keys": ["d"], "text": {"en": "Delete the selected row (asks first)", "tr": "Seçili satırı sil (önce sorar)"}},
-    {"keys": ["n", "p"], "join": "or", "text": {"en": "Next / previous page", "tr": "Sonraki / önceki sayfa"}}
+    {"keys": ["n", "p"], "join": "or", "text": {"en": "Next / previous page", "tr": "Sonraki / önceki sayfa"}},
+    {"keys": ["Esc"], "text": {"en": "Clear the selection", "tr": "Seçimi temizle"}}
   ]},
   {"id": "logs", "title": {"en": "Log viewer", "tr": "Log görüntüleyici"}, "rows": [
     {"keys": ["p"], "text": {"en": "Toggle pause", "tr": "Durdur/devam et"}},

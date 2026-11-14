@@ -25,7 +25,7 @@ var sectionIntro = map[string]string{
 		"`SESSION_RECORDING_DIR`, which is read on every start.",
 }
 
-func envPage(root string) (string, error) {
+func envPage(root, lang string) (string, error) {
 	image, err := dockerfileEnv(filepath.Join(root, "Dockerfile"))
 	if err != nil {
 		return "", err
@@ -35,19 +35,19 @@ func envPage(root string) (string, error) {
 		return "", err
 	}
 	var b strings.Builder
-	b.WriteString("Every variable the server reads. Set them on the container; `deploy/deployment.yaml` lists the common ones. " +
-		"**Default** is what the server uses when the variable is unset; the image and `deploy/deployment.yaml` set a few themselves.\n\n")
+	b.WriteString(t(lang, "Every variable the server reads. Set them on the container; `deploy/deployment.yaml` lists the common ones. "+
+		"**Default** is what the server uses when the variable is unset; the image and `deploy/deployment.yaml` set a few themselves.\n\n"))
 	for _, section := range config.Sections {
-		fmt.Fprintf(&b, "## %s\n\n", section)
+		heading(&b, lang, section)
 		if intro := sectionIntro[section]; intro != "" {
-			b.WriteString(intro + "\n\n")
+			b.WriteString(t(lang, intro) + "\n\n")
 		}
 		var rows [][]string
 		for _, v := range config.Vars {
 			if v.Section != section {
 				continue
 			}
-			def := "none"
+			def := t(lang, "none")
 			if v.Default != "" {
 				def = code(v.Default)
 				if v.Default == "the build version" {
@@ -55,25 +55,25 @@ func envPage(root string) (string, error) {
 				}
 			}
 			if val, ok := image[v.Name]; ok {
-				def += "; image: " + code(val)
+				def += t(lang, "; image: ") + code(val)
 			}
 			if val, ok := manifest[v.Name]; ok && val != image[v.Name] && val != v.Default {
 				def += "; `deployment.yaml`: " + code(val)
 			}
 			rows = append(rows, []string{code(v.Name), def, v.Description})
 		}
-		table(&b, []string{"Variable", "Default", "Description"}, rows)
+		table(&b, lang, []string{"Variable", "Default", "Description"}, rows)
 	}
-	b.WriteString("## Feature flags\n\n" +
-		"Switch a capability off **for everyone, admins included**, whatever the roles grant: `FEATURE_<NAME>=false` " +
-		"(or `0`, `no`). Anything else, or unset, leaves it on. A disabled feature disappears from the UI, its endpoints " +
-		"answer 403 `feature_disabled` and the attempt is audited as `denied`. `GET /api/features` shows the current state; " +
-		"the startup log lists what is off.\n\n")
+	heading(&b, lang, "Feature flags")
+	b.WriteString(t(lang, "Switch a capability off **for everyone, admins included**, whatever the roles grant: `FEATURE_<NAME>=false` "+
+		"(or `0`, `no`). Anything else, or unset, leaves it on. A disabled feature disappears from the UI, its endpoints "+
+		"answer 403 `feature_disabled` and the attempt is audited as `denied`. `GET /api/features` shows the current state; "+
+		"the startup log lists what is off.\n\n"))
 	var rows [][]string
 	for _, f := range api.AllFeatures {
 		rows = append(rows, []string{code("FEATURE_" + strings.ToUpper(f)), api.FeatureDocs[f]})
 	}
-	table(&b, []string{"Variable", "`false` turns off"}, rows)
+	table(&b, lang, []string{"Variable", "`false` turns off"}, rows)
 	return b.String(), nil
 }
 
@@ -136,31 +136,31 @@ func deploymentEnv(path string) (map[string]string, error) {
 
 // ── Application permissions ─────────────────────────────────────────────────
 
-func permissionsPage(root string) (string, error) {
+func permissionsPage(root, lang string) (string, error) {
 	endpoints, err := permissionEndpoints(filepath.Join(root, "backend/internal/api/openapi.yaml"))
 	if err != nil {
 		return "", err
 	}
 	var b strings.Builder
-	b.WriteString("Granted per role, per namespace, per cluster (or all clusters) under **Admin → Roles**. Admins hold all of them. " +
-		"A user's permission is checked on every request, in the namespace of the request.\n\n" +
-		"**Safe read-only** marks the grants of the API access mode of the same name and of the API key template: " +
-		"`list`, `get` and `logs`, except on ConfigMaps and Secrets, whose data can hold credentials.\n\n" +
-		"**Endpoints** come from the API description (`/api/openapi.json`); an endpoint that needs two permissions is " +
-		"listed under both. The Kubernetes rights behind each one are on [Kubernetes permissions](kubernetes-permissions.md).\n\n")
+	b.WriteString(t(lang, "Granted per role, per namespace, per cluster (or all clusters) under **Admin → Roles**. Admins hold all of them. "+
+		"A user's permission is checked on every request, in the namespace of the request.\n\n"+
+		"**Safe read-only** marks the grants of the API access mode of the same name and of the API key template: "+
+		"`list`, `get` and `logs`, except on ConfigMaps and Secrets, whose data can hold credentials.\n\n"+
+		"**Endpoints** come from the API description (`/api/openapi.json`); an endpoint that needs two permissions is "+
+		"listed under both. The Kubernetes rights behind each one are on [Kubernetes permissions](kubernetes-permissions.md).\n\n"))
 	for _, c := range rbac.Catalog {
-		fmt.Fprintf(&b, "## %s\n\n", rbac.ResourceDocs[c.Resource])
+		heading(&b, lang, rbac.ResourceDocs[c.Resource])
 		var rows [][]string
 		for _, a := range c.Actions {
 			safe := ""
 			if rbac.SafeRead(c.Resource, a) {
-				safe = "yes"
+				safe = t(lang, "yes")
 			}
 			eps := endpoints[c.Resource+":"+a]
 			eps = append(eps, endpoints["*:"+a]...)
 			rows = append(rows, []string{code(c.Resource + ":" + a), rbac.ActionDoc(c.Resource, a), safe, strings.Join(eps, "<br/>")})
 		}
-		table(&b, []string{"Permission", "Opens", "Safe read-only", "Endpoints"}, rows)
+		table(&b, lang, []string{"Permission", "Opens", "Safe read-only", "Endpoints"}, rows)
 	}
 	return b.String(), nil
 }
@@ -221,10 +221,10 @@ func without(list []string, s string) []string {
 
 // ── Metrics ─────────────────────────────────────────────────────────────────
 
-func metricsPage(string) (string, error) {
+func metricsPage(_, lang string) (string, error) {
 	var b strings.Builder
-	b.WriteString("`GET /metrics` serves these in the Prometheus text format, without sign-in: scrape it from inside the " +
-		"cluster and don't route it through your Ingress. Counters start at 0 when the pod starts.\n\n")
+	b.WriteString(t(lang, "`GET /metrics` serves these in the Prometheus text format, without sign-in: scrape it from inside the "+
+		"cluster and don't route it through your Ingress. Counters start at 0 when the pod starts.\n\n"))
 	var rows [][]string
 	for _, m := range api.Metrics {
 		labels := ""
@@ -233,7 +233,7 @@ func metricsPage(string) (string, error) {
 		}
 		rows = append(rows, []string{code(m.Name), m.Type, labels, m.Help})
 	}
-	table(&b, []string{"Metric", "Type", "Labels", "Meaning"}, rows)
+	table(&b, lang, []string{"Metric", "Type", "Labels", "Meaning"}, rows)
 	return b.String(), nil
 }
 
@@ -248,13 +248,13 @@ type rbacRule struct {
 	optional      bool // commented out in the file
 }
 
-func kubeRBACPage(root string) (string, error) {
+func kubeRBACPage(root, lang string) (string, error) {
 	var b strings.Builder
-	b.WriteString("OpenConsole talks to each cluster with the identity you give it under **Admin → Clusters**, normally the " +
-		"ServiceAccount of `deploy/rbac.yaml`. That ClusterRole is the ceiling: a user can never do more in a cluster than " +
-		"it allows, whatever their OpenConsole roles grant. Remove a rule if you will never grant the matching permission. " +
-		"For a console that can only look, apply `deploy/rbac-readonly.yaml` instead (same object names, so applying one " +
-		"replaces the other).\n\n")
+	b.WriteString(t(lang, "OpenConsole talks to each cluster with the identity you give it under **Admin → Clusters**, normally the "+
+		"ServiceAccount of `deploy/rbac.yaml`. That ClusterRole is the ceiling: a user can never do more in a cluster than "+
+		"it allows, whatever their OpenConsole roles grant. Remove a rule if you will never grant the matching permission. "+
+		"For a console that can only look, apply `deploy/rbac-readonly.yaml` instead (same object names, so applying one "+
+		"replaces the other).\n\n"))
 	for _, f := range []struct{ file, title string }{
 		{"deploy/rbac.yaml", "Full (`deploy/rbac.yaml`)"},
 		{"deploy/rbac-readonly.yaml", "Read only (`deploy/rbac-readonly.yaml`)"},
@@ -263,7 +263,7 @@ func kubeRBACPage(root string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("%s: %w", f.file, err)
 		}
-		fmt.Fprintf(&b, "## %s\n\n", f.title)
+		heading(&b, lang, f.title)
 		var rows [][]string
 		for _, r := range rules {
 			groups := make([]string, len(r.APIGroups))
@@ -275,15 +275,15 @@ func kubeRBACPage(root string) (string, error) {
 			}
 			res := codeList(r.Resources)
 			if len(r.ResourceNames) > 0 {
-				res += " (only " + codeList(r.ResourceNames) + ")"
+				res += t(lang, " (only ") + codeList(r.ResourceNames) + ")"
 			}
 			about := r.about
 			if r.optional {
-				about = "**Not granted** (commented out in the file). " + about
+				about = t(lang, "**Not granted** (commented out in the file). ") + about
 			}
 			rows = append(rows, []string{strings.Join(groups, ", "), res, codeList(r.Verbs), about})
 		}
-		table(&b, []string{"API group", "Resources", "Verbs", "Used for"}, rows)
+		table(&b, lang, []string{"API group", "Resources", "Verbs", "Used for"}, rows)
 	}
 	return b.String(), nil
 }
@@ -390,7 +390,7 @@ type shortcutGroup struct {
 	} `json:"rows"`
 }
 
-func shortcutsPage(root string) (string, error) {
+func shortcutsPage(root, lang string) (string, error) {
 	raw, err := os.ReadFile(filepath.Join(root, "frontend/src/shortcuts.json"))
 	if err != nil {
 		return "", err
@@ -400,24 +400,24 @@ func shortcutsPage(root string) (string, error) {
 		return "", err
 	}
 	var b strings.Builder
-	b.WriteString("The same list as **?** in the app. \"`g` then `o`\" means: press `g`, then `o` within a second; \"or\" " +
-		"means either key works. On a Turkish Q keyboard the shortcuts follow the key's position, so `ğ` `ü` `.` work as " +
-		"`[` `]` `/`. Shortcuts don't fire while you type in a text field.\n\n")
+	b.WriteString(t(lang, "The same list as **?** in the app. \"`g` then `o`\" means: press `g`, then `o` within a second; \"or\" "+
+		"means either key works. On a Turkish Q keyboard the shortcuts follow the key's position, so `ğ` `ü` `.` work as "+
+		"`[` `]` `/`. Shortcuts don't fire while you type in a text field.\n\n"))
 	for _, g := range groups {
-		fmt.Fprintf(&b, "## %s\n\n", g.Title["en"])
+		headingAs(&b, lang, g.Title[lang], g.Title["en"])
 		var rows [][]string
 		for _, r := range g.Rows {
-			sep := " then "
+			sep := t(lang, " then ")
 			if r.Join == "or" {
-				sep = " or "
+				sep = t(lang, " or ")
 			}
 			keys := make([]string, len(r.Keys))
 			for i, k := range r.Keys {
 				keys[i] = "<kbd>" + k + "</kbd>"
 			}
-			rows = append(rows, []string{strings.Join(keys, sep), r.Text["en"]})
+			rows = append(rows, []string{strings.Join(keys, sep), r.Text[lang]})
 		}
-		table(&b, []string{"Keys", "Does"}, rows)
+		table(&b, lang, []string{"Keys", "Does"}, rows)
 	}
 	return b.String(), nil
 }
