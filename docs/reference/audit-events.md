@@ -9,6 +9,8 @@ description: "Every audit action, its outcomes, fields and details, with their E
 
 Every audited action is one event. It is stored in the database (**Admin → Audit Logs**, CSV export) and, with `LOG_INCLUDE_AUDIT=true` (the default), written to stdout as one line, so the same fields can be filtered in the UI and in your log platform. The **ECS** names apply with `LOG_FORMAT=ecs`; `json` uses the plain names.
 
+Reads are audited too (`deployment.list`, `pod.get`, `pod.logs`), refused ones included. The lists the UI reloads on its own are not (they send `X-OpenConsole-Refresh: auto`); the HTTP request log still has every request. With an API key that header is ignored: every read is audited.
+
 ## Fields
 
 | Field | ECS | Meaning |
