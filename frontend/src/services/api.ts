@@ -138,14 +138,33 @@ const seeResponse = (response: Response, auto = false) => {
 // Another tab picked a cluster: the key other tabs watch (storage event).
 export const CLUSTER_PICK_KEY = 'clusterPick';
 
-// Reasons the server gives when the cluster failed a read (api/kube_errors.go),
-// shown as a sentence instead of the code.
-const CLUSTER_ERRORS = ['cluster_forbidden', 'cluster_timeout', 'cluster_unreachable', 'not_connected'];
-const errorText = (reason: string) => (CLUSTER_ERRORS.includes(reason) ? i18n.t(`clusterErrors.${reason}`) : reason);
+// Reason codes the server sends as {"error": "<code>"} (or "<code>: <detail>"),
+// shown as a sentence in the UI language; any other message is shown as sent.
+const ERROR_CODES = [
+  'forbidden',
+  'admin_only',
+  'feature_disabled',
+  'rate_limited',
+  'not_found',
+  'backup_download_disabled',
+  'kubeconfig_unsupported',
+  'too_many_sessions',
+  'api_key_not_allowed',
+  'api_access_policy',
+  'api_access_off',
+  'cluster_forbidden',
+  'cluster_timeout',
+  'cluster_unreachable',
+  'not_connected',
+];
+export const errorText = (reason: string) => {
+  const m = /^([a-z_]+)(?:: (.+))?$/s.exec(reason);
+  if (!m || !ERROR_CODES.includes(m[1])) return reason;
+  const sentence = i18n.t(`apiErrors.${m[1]}`);
+  return m[2] ? `${sentence} (${m[2]})` : sentence;
+};
+const networkError = () => new Error(i18n.t('apiErrors.network'));
 
-// The error a failed response stands for: the server's {"error": …} reason
-// (the parse used to throw inside its own try, so the raw JSON body came out),
-// else the body text, else the status text.
 const responseError = async (response: Response) => {
   const text = await response.text();
   let reason = '';
@@ -170,9 +189,8 @@ const apiRequest = async <T>(path: string, options: RequestInit = {}): Promise<T
         ...authHeaders()
       }
     });
-  } catch (error) {
-    const target = `${window.location.origin}${path}`;
-    throw new Error(`Network error while contacting the server: ${target}`);
+  } catch {
+    throw networkError();
   }
 
   seeResponse(response, new Headers(options.headers).get('X-OpenConsole-Refresh') === 'auto');
@@ -195,9 +213,8 @@ const formRequest = async <T>(path: string, formData: FormData): Promise<T> => {
       cache: 'no-store',
       headers: authHeaders()
     });
-  } catch (error) {
-    const target = `${window.location.origin}${path}`;
-    throw new Error(`Network error while contacting the server: ${target}`);
+  } catch {
+    throw networkError();
   }
 
   seeResponse(response);
@@ -233,13 +250,13 @@ const xhrRequest = async <T>(path: string, payload: unknown): Promise<T> => {
       } else {
         try {
           const parsed = JSON.parse(request.responseText) as { error?: string };
-          reject(new Error(parsed.error || request.statusText));
-        } catch (error) {
+          reject(new Error(errorText(parsed.error || request.statusText)));
+        } catch {
           reject(new Error(request.responseText || request.statusText));
         }
       }
     };
-    request.onerror = () => reject(new Error('Network error while contacting the server.'));
+    request.onerror = () => reject(networkError());
     request.send(JSON.stringify(payload));
   });
 };
@@ -314,6 +331,9 @@ export const getJobYaml = (namespace: string, name: string) =>
 
 export const listCronJobs = (namespace: string) =>
   apiRequest<{ items: Array<Record<string, unknown>> }>(`/api/namespaces/${namespace}/cronjobs`);
+
+export const getPodYaml = (namespace: string, name: string) =>
+  apiRequest<{ yaml: string }>(`/api/namespaces/${namespace}/pods/${name}/yaml`);
 
 export const getDeploymentYaml = (namespace: string, name: string) =>
   apiRequest<{ yaml: string }>(`/api/namespaces/${namespace}/deployments/${name}/yaml`);
@@ -630,7 +650,7 @@ export const createCluster = (payload: ClusterCreatePayload) =>
 
 export const updateClusterRow = (
   id: number,
-  payload: ClusterCreatePayload & { replaceSecrets?: boolean }
+  payload: ClusterCreatePayload & { replaceSecrets?: boolean; removeCaCert?: boolean }
 ) =>
   apiRequest<{ status: string }>(`/api/admin/clusters/${id}`, {
     method: 'PUT',

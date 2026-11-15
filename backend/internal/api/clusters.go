@@ -30,6 +30,9 @@ type clusterPayload struct {
 	// ReplaceSecrets=true on update means the client is sending new creds;
 	// false (default) preserves the existing encrypted blobs.
 	ReplaceSecrets bool `json:"replaceSecrets"`
+	// RemoveCACert on a token update drops the stored CA; without it an
+	// empty caCertBase64 keeps the CA the cluster already has.
+	RemoveCACert bool `json:"removeCaCert"`
 }
 
 func (p clusterPayload) toCreds() (models.KubeCredentials, error) {
@@ -173,6 +176,15 @@ func (s *Server) handleUpdateClusterByID(w http.ResponseWriter, r *http.Request)
 	if p.ReplaceSecrets && cErr != nil {
 		writeError(w, http.StatusBadRequest, cErr.Error())
 		return
+	}
+	if p.ReplaceSecrets && p.Method == "token" && len(creds.CACert) == 0 && !p.RemoveCACert {
+		// A new token, the same API server certificate: keep the stored CA.
+		old, err := s.store.GetCluster(r.Context(), id)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "cluster not found")
+			return
+		}
+		creds.CACert = old.Credentials.CACert
 	}
 	if p.ReplaceSecrets {
 		if err := kube.ValidateCredentials(creds); err != nil {

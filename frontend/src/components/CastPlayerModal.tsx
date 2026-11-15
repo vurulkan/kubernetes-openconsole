@@ -94,7 +94,7 @@ export const CastPlayerModal: React.FC<Props> = ({ recording, onClose }) => {
         idleTimeLimit: opts.skipIdle ? IDLE_LIMIT_SECONDS : undefined,
         fit: 'both',
         controls: true,
-        terminalFontFamily: '"Fira Code", ui-monospace, SFMono-Regular, Menlo, monospace',
+        terminalFontFamily: '"Fira Code Variable", ui-monospace, SFMono-Regular, Menlo, monospace',
       });
       player.addEventListener('playing', () => { playingRef.current = true; });
       player.addEventListener('play', () => { playingRef.current = true; });

@@ -221,13 +221,16 @@ const SavedViewsMenu: React.FC<Props> = ({ current, onRestore }) => {
     }
   };
 
-  const isCurrent = (v: ServerView) =>
-    (v.namespace || null) === current.namespace &&
-    v.tab === current.tab &&
-    v.search === current.search &&
-    v.viewMode === current.viewMode;
+  const isCurrent = useCallback(
+    (v: ServerView) =>
+      (v.namespace || null) === current.namespace &&
+      v.tab === current.tab &&
+      v.search === current.search &&
+      v.viewMode === current.viewMode,
+    [current],
+  );
 
-  const activeMatch = useMemo(() => views.find((v) => isCurrent(v))?.id, [views, current]);
+  const activeMatch = useMemo(() => views.find((v) => isCurrent(v))?.id, [views, isCurrent]);
 
   return (
     <>

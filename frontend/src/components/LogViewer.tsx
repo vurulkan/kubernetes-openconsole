@@ -177,7 +177,9 @@ const LogViewerBody: React.FC<Props> = ({ namespace, target, pod, onClose }) => 
       if (l.text.toLowerCase().includes(q)) out.push(i);
     });
     return out;
-  }, [q, version]); // version stands for the buffer contents
+    // The lines live in a ref; version changes with them and is the real dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, version]);
   const current = matches.length ? matches[Math.min(matchPos, matches.length - 1)] : -1;
 
   // Follow the tail while the user is at the bottom; keep the view still while they read above.

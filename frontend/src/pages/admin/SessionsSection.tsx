@@ -32,11 +32,11 @@ export const SessionsSection: React.FC<Props> = ({ currentUserId }) => {
       const { items } = await listSessions(activeOnly);
       setRows(items ?? []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load sessions');
+      setError((err as Error).message || t('sessions.loadFailed'));
     } finally {
       setLoading(false);
     }
-  }, [activeOnly]);
+  }, [activeOnly, t]);
 
   useEffect(() => {
     refresh();
@@ -56,7 +56,7 @@ export const SessionsSection: React.FC<Props> = ({ currentUserId }) => {
       setNotice(t('sessions.oneRevoked', { id: row.id }));
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to revoke');
+      setError((err as Error).message || t('sessions.revokeFailed'));
     }
   };
 
@@ -73,7 +73,7 @@ export const SessionsSection: React.FC<Props> = ({ currentUserId }) => {
       setNotice(t('sessions.allRevoked', { name: username }));
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to revoke');
+      setError((err as Error).message || t('sessions.revokeFailed'));
     }
   };
 

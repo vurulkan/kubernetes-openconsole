@@ -1,14 +1,16 @@
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { Spinner } from './components/ui';
 import LoginPage from './pages/LoginPage';
 import ChangePasswordPage from './pages/ChangePasswordPage';
-import DashboardPage from './pages/DashboardPage';
-import AdminPage from './pages/AdminPage';
-import OverviewPage from './pages/OverviewPage';
-import NodesPage from './pages/NodesPage';
-import ApiKeysPage from './pages/ApiKeysPage';
-import ApiKeyFormPage from './pages/apikeys/ApiKeyFormPage';
+
+// Each screen is its own chunk, loaded when first opened.
+const DashboardPage = lazy(() => import('./pages/DashboardPage'));
+const AdminPage = lazy(() => import('./pages/AdminPage'));
+const OverviewPage = lazy(() => import('./pages/OverviewPage'));
+const NodesPage = lazy(() => import('./pages/NodesPage'));
+const ApiKeysPage = lazy(() => import('./pages/ApiKeysPage'));
+const ApiKeyFormPage = lazy(() => import('./pages/apikeys/ApiKeyFormPage'));
 import CommandPalette from './components/CommandPalette';
 import ShortcutsHelp from './components/ShortcutsHelp';
 import { ConfirmProvider } from './components/ConfirmDialog';
@@ -87,16 +89,16 @@ const App: React.FC = () => {
       .catch(() => setNamespaces([]));
   }, [user]);
 
-  if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center">
-        <Spinner size="lg" />
-      </div>
-    );
-  }
+  const pageLoading = (
+    <div className="flex min-h-screen items-center justify-center">
+      <Spinner size="lg" />
+    </div>
+  );
+  if (loading) return pageLoading;
 
   return (
     <ConfirmProvider>
+      <Suspense fallback={pageLoading}>
       <Routes>
         <Route path="/login" element={<LoginPage onLogin={refreshUser} />} />
         <Route
@@ -122,6 +124,7 @@ const App: React.FC = () => {
         <Route path="/account/api-keys" element={user ? <ApiKeysPage user={user} /> : <Navigate to="/login" />} />
         <Route path="/account/api-keys/:id" element={user ? <ApiKeyFormPage user={user} /> : <Navigate to="/login" />} />
       </Routes>
+      </Suspense>
       {user && <CommandPalette user={user} namespaces={namespaces} />}
       <ShortcutsHelp />
     </ConfirmProvider>

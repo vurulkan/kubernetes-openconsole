@@ -7,6 +7,8 @@ import { useTranslation } from 'react-i18next';
 import { Button, NativeSelect, Spinner } from './ui';
 import { useTheme } from './ThemeProvider';
 import { wsUrl } from '../services/api';
+import { useDialogFocus, focusableIn } from '../hooks/useDialogFocus';
+import { modalScopeDepth, popModalScope, pushModalScope } from '../hooks/useScopedShortcuts';
 
 type Props = {
   open: boolean;
@@ -38,6 +40,17 @@ const darkTheme = {
   selectionBackground: 'rgba(99,102,241,0.35)',
 };
 
+// Closes a session socket without letting its late events (onclose's
+// "Session closed (1005)") land on the session that replaced it.
+const closeSocket = (socket: WebSocket | null) => {
+  if (!socket) return;
+  socket.onopen = null;
+  socket.onmessage = null;
+  socket.onerror = null;
+  socket.onclose = null;
+  socket.close();
+};
+
 const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containers = [], container: initialContainer }) => {
   const { t } = useTranslation();
   const terminalRef = useRef<HTMLDivElement | null>(null);
@@ -45,7 +58,11 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
   const fitRef = useRef<FitAddon | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const connectSeq = useRef(0);
-  const containerSetRef = useRef<string>('');
+  // The container + shell of the current session; changing either reconnects.
+  const sessionRef = useRef<string>('');
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
+  useDialogFocus(dialogRef, open);
 
   const [status, setStatus] = useState<'idle' | 'connecting' | 'open' | 'closed' | 'error'>('idle');
   const [container, setContainer] = useState<string>(initialContainer ?? containers[0] ?? '');
@@ -64,19 +81,30 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
 
   const theme = effective === 'dark' ? darkTheme : lightTheme;
 
+  const sendResize = useCallback(() => {
+    const socket = socketRef.current;
+    const term = termRef.current;
+    if (!socket || !term) return;
+    if (socket.readyState !== WebSocket.OPEN) return;
+    // Fall back to a sane terminal size when xterm hasn't computed one yet.
+    // A 0×0 PTY makes shells like bash emit nothing until a valid SIGWINCH
+    // arrives, which was the "Connected but blank" symptom.
+    const cols = Math.max(term.cols || 0, 80);
+    const rows = Math.max(term.rows || 0, 24);
+    socket.send(JSON.stringify({ type: 'resize', cols, rows }));
+  }, []);
+
   const connect = useCallback(async () => {
     if (!terminalRef.current) return;
-    if (socketRef.current) {
-      socketRef.current.close();
-      socketRef.current = null;
-    }
+    closeSocket(socketRef.current);
+    socketRef.current = null;
     setNote(null);
     setRecordingId(null);
     setStatus('connecting');
 
     if (!termRef.current) {
       const term = new Terminal({
-        fontFamily: '"Fira Code", ui-monospace, SFMono-Regular, Menlo, monospace',
+        fontFamily: '"Fira Code Variable", ui-monospace, SFMono-Regular, Menlo, monospace',
         fontSize: 13,
         cursorBlink: true,
         theme,
@@ -85,6 +113,18 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
       });
       const fit = new FitAddon();
       term.loadAddon(fit);
+      // Ctrl+] (the same physical key on every layout: Ctrl+Ü on Turkish Q)
+      // leaves the terminal for the toolbar, where Esc closes the dialog.
+      // Every other key, Tab and Esc included, belongs to the shell.
+      term.attachCustomKeyEventHandler((ev) => {
+        if (!(ev.ctrlKey && ev.code === 'BracketRight')) return true;
+        if (ev.type === 'keydown') {
+          ev.preventDefault();
+          const toolbar = toolbarRef.current;
+          if (toolbar) focusableIn(toolbar)[0]?.focus();
+        }
+        return false;
+      });
       term.open(terminalRef.current);
       // Fit after a paint tick so the container has reflown to its final size.
       // Calling fit() synchronously after open() often computes 0×0 and bash
@@ -122,7 +162,7 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
     const socket = new WebSocket(url);
     socket.binaryType = 'arraybuffer';
     socketRef.current = socket;
-    containerSetRef.current = container;
+    sessionRef.current = `${container}\n${shell}`;
 
     socket.onopen = () => {
       setStatus('open');
@@ -185,33 +225,29 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
         setNote(t('podExec.sessionClosed', { code: event.code }));
       }
     };
-  }, [namespace, pod, container, shell, theme, t]);
+  }, [namespace, pod, container, shell, theme, t, sendResize]);
 
-  const sendResize = useCallback(() => {
-    const socket = socketRef.current;
-    const term = termRef.current;
-    if (!socket || !term) return;
-    if (socket.readyState !== WebSocket.OPEN) return;
-    // Fall back to a sane terminal size when xterm hasn't computed one yet.
-    // A 0×0 PTY makes shells like bash emit nothing until a valid SIGWINCH
-    // arrives, which was the "Connected but blank" symptom.
-    const cols = Math.max(term.cols || 0, 80);
-    const rows = Math.max(term.rows || 0, 24);
-    socket.send(JSON.stringify({ type: 'resize', cols, rows }));
-  }, []);
 
-  // ESC closes
+  // Esc closes, unless the key went to the shell (vim, less, …). Page
+  // shortcuts pause while the dialog is open.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     if (!open) return;
+    pushModalScope();
+    const depth = modalScopeDepth();
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        onClose();
-      }
+      if (e.key !== 'Escape' || modalScopeDepth() !== depth) return;
+      if (e.target instanceof Node && terminalRef.current?.contains(e.target)) return;
+      e.preventDefault();
+      onCloseRef.current();
     };
     document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [open, onClose]);
+    return () => {
+      document.removeEventListener('keydown', handler);
+      popModalScope();
+    };
+  }, [open]);
 
   // Open: initialize + connect. We wait two animation frames so the modal
   // DOM is painted and the terminal container has a non-zero size before
@@ -233,16 +269,15 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
       cancelled = true;
       cancelAnimationFrame(raf);
     };
+    // Connects once per open; a container or shell change reconnects below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // When container/shell changes while modal is open, reconnect
+  // A different container or shell while the dialog is open: reconnect.
   useEffect(() => {
-    if (!open || status === 'idle') return;
-    if (containerSetRef.current === container) return;
-    connect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [container]);
+    if (!open || !sessionRef.current || sessionRef.current === `${container}\n${shell}`) return;
+    void connect();
+  }, [open, container, shell, connect]);
 
   // Wire xterm data → WS
   useEffect(() => {
@@ -279,7 +314,7 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
   useEffect(
     () => () => {
       connectSeq.current++;
-      socketRef.current?.close();
+      closeSocket(socketRef.current);
       termRef.current?.dispose();
     },
     [],
@@ -289,8 +324,9 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
   useEffect(() => {
     if (open) return;
     connectSeq.current++;
-    socketRef.current?.close();
+    closeSocket(socketRef.current);
     socketRef.current = null;
+    sessionRef.current = '';
     termRef.current?.dispose();
     termRef.current = null;
     fitRef.current = null;
@@ -307,7 +343,7 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
     switch (status) {
       case 'open':
         return (
-          <span className="inline-flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-300">
+          <span className="inline-flex items-center gap-1.5 text-xs text-emerald-700 dark:text-emerald-300">
             <span className="h-1.5 w-1.5 animate-live rounded-full bg-emerald-500" />
             {t('podExec.connected')}
           </span>
@@ -336,6 +372,8 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
         onClick={status === 'open' ? undefined : onClose}
       />
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-label={t('podExec.title', { pod })}
@@ -352,9 +390,10 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
             </span>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
+          <div ref={toolbarRef} className="flex flex-wrap items-center gap-3">
             {containers.length > 1 && (
               <NativeSelect
+                aria-label={t('podExec.container')}
                 value={container}
                 onChange={(e) => setContainer(e.target.value)}
                 className="h-8 py-1 text-xs"
@@ -367,6 +406,7 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
               </NativeSelect>
             )}
             <NativeSelect
+              aria-label={t('podExec.shell')}
               value={shell}
               onChange={(e) => setShell(e.target.value)}
               className="h-8 py-1 text-xs"
@@ -388,8 +428,10 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
               {t('podExec.reconnect')}
             </Button>
             <button
+              type="button"
               onClick={onClose}
-              className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+              data-dialog-close
+              className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/60 dark:hover:bg-slate-800 dark:hover:text-slate-100"
               aria-label={t('actions.close')}
             >
               <X size={18} />
@@ -405,10 +447,10 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
             <CircleDot size={13} className="shrink-0 animate-pulse text-rose-600 dark:text-rose-400" />
             <span>
               <strong className="font-semibold">{t('podExec.recordingTitle')}</strong>{' '}
-              {t('podExec.recordingBody', { idle: idleText })}
+              {t('podExec.recordingBody', { idle: idleText })} {t('podExec.keyboardHint')}
             </span>
             {recordingId && (
-              <span className="font-mono text-[10px] opacity-70" title={t('podExec.recordingId')}>
+              <span className="font-mono text-[10px]" title={t('podExec.recordingId')}>
                 {recordingId.slice(0, 8)}
               </span>
             )}
@@ -418,7 +460,9 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
           </div>
         ) : (
           <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-amber-50 px-5 py-2 text-[11px] text-amber-800 dark:border-slate-800 dark:bg-amber-500/10 dark:text-amber-200">
-            {t('podExec.auditBanner', { idle: idleText })}
+            <span>
+              {t('podExec.auditBanner', { idle: idleText })} {t('podExec.keyboardHint')}
+            </span>
             {note && (
               <span className="ml-auto font-medium text-rose-600 dark:text-rose-300">{note}</span>
             )}

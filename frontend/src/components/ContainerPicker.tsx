@@ -48,6 +48,9 @@ export const ContainerPicker: React.FC<{
     menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not([disabled])')?.focus();
   }, []);
 
+  // Read through a ref: a new onClose from the parent doesn't re-register the listeners.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   const close = () => {
     onClose();
     anchor.focus();
@@ -55,12 +58,13 @@ export const ContainerPicker: React.FC<{
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
-      if (!menuRef.current?.contains(e.target as Node) && !anchor.contains(e.target as Node)) onClose();
+      if (!menuRef.current?.contains(e.target as Node) && !anchor.contains(e.target as Node)) onCloseRef.current();
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       e.stopPropagation();
-      close();
+      onCloseRef.current();
+      anchor.focus();
     };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey, true);
@@ -68,7 +72,6 @@ export const ContainerPicker: React.FC<{
       document.removeEventListener('mousedown', onDown);
       document.removeEventListener('keydown', onKey, true);
     };
-    // close / onClose are stable for the menu's short life
   }, [anchor]);
 
   return createPortal(

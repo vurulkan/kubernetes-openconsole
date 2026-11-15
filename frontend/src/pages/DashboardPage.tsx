@@ -1,9 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   Boxes,
   Calendar,
-  FileCode2,
   FileText,
   Gauge,
   Globe,
@@ -11,30 +10,23 @@ import {
   HardDrive,
   KeyRound,
   LayoutGrid,
-  Link2,
   List as ListIcon,
   ListChecks,
   Minus,
   Plus,
   RefreshCw,
-  RotateCcw,
   Scaling,
   Search as SearchIcon,
-  Terminal,
 } from 'lucide-react';
 import Layout from '../components/Layout';
 import LiveEventsPanel from '../components/LiveEventsPanel';
-import PodExecModal from '../components/PodExecModal';
 import { ContainerPicker } from '../components/ContainerPicker';
 import { LogViewer, type LogTarget } from '../components/LogViewer';
 import SecretModal from '../components/SecretModal';
-import { ContainerSquares, PodRestarts, PodStatusBadge, STATUS_DOT } from '../components/PodStatusBadge';
-import { containerStates, podController, podOwner, podStatus } from '../utils/podStatus';
+import { podOwner, podStatus } from '../utils/podStatus';
 import { PodDrawer } from './dashboard/PodDrawer';
-import { KIND, WorkloadDrawer } from './dashboard/WorkloadDrawer';
+import { WorkloadDrawer } from './dashboard/WorkloadDrawer';
 import { usePodMetrics } from '../hooks/usePodMetrics';
-import { UsageBar } from '../components/Usage';
-import { ownerUsage, podResources, scaleResources } from '../utils/resources';
 import YamlEditModal, { YamlEditTarget } from '../components/YamlEditModal';
 import { useTheme } from '../components/ThemeProvider';
 import SavedViewsMenu from '../components/SavedViewsMenu';
@@ -42,9 +34,9 @@ import { useTranslation } from 'react-i18next';
 import { Alert, Badge, Button, Input, Modal, Spinner } from '../components/ui';
 import { useScopedShortcuts } from '../hooks/useScopedShortcuts';
 import { EVENTS_PANEL_EVENT_NAME } from '../hooks/useGlobalShortcuts';
-import { formatAge } from '../utils/age';
 import { searchText } from '../utils/searchText';
-import { ResourceListView } from './dashboard/ResourceListView';
+import { ResourceListView, type ResourceViewProps } from './dashboard/ResourceListView';
+import { ResourceCardsView } from './dashboard/ResourceCardsView';
 import {
   User,
   getMe,
@@ -67,6 +59,7 @@ import {
   getHPAYaml,
   scaleStatefulSet,
   getDeploymentYaml,
+  getPodYaml,
   getServiceYaml,
   getConfigMapYaml,
   getIngressYaml,
@@ -81,6 +74,9 @@ import {
   type WorkloadKind,
 } from '../services/api';
 import { useNavigate } from 'react-router-dom';
+
+// xterm is loaded with the first shell, not with the page.
+const PodExecModal = lazy(() => import('../components/PodExecModal'));
 
 const resourceOrder = [
   'pods',
@@ -173,6 +169,8 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   const canScaleDeployments = (allowedResources.deployments ?? []).includes('scale');
   const canScaleStatefulSets = (allowedResources.statefulsets ?? []).includes('scale');
   const canExecPods = (allowedResources.pods ?? []).includes('exec');
+  // Pod, workload and job logs all need pods:logs; without it no Logs button.
+  const canPodLogs = (allowedResources.pods ?? []).includes('logs');
   const canRevealSecrets = (allowedResources.secrets ?? []).includes('reveal');
   const canEditSecrets = (allowedResources.secrets ?? []).includes('edit');
   // Secret whose keys modal is open (null = closed).
@@ -212,7 +210,6 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
     }
     return m;
   }, [workloadPods]);
-  const usageOf = (name: string) => (metrics?.available ? metrics.items.find((p) => p.name === name) : undefined);
   const openDetail = (item: Record<string, unknown>) => {
     const name = (item.metadata as { name?: string })?.name;
     if (name && (activeTab === 'pods' || isWorkloadTab)) setDetail({ kind: activeTab as 'pods' | WorkloadKind, name });
@@ -341,7 +338,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
           : result.namespaces[0] ?? null;
       setSelectedNamespace(defaultNamespace);
     } catch (err) {
-      setError((err as Error).message || 'Failed to load namespaces.');
+      setError((err as Error).message || t('dashboard.loadFailed'));
       setNamespaces([]);
       setSelectedNamespace(null);
     } finally {
@@ -349,8 +346,10 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
     }
   };
 
+  // Once on mount; the namespace list doesn't follow later renders.
   useEffect(() => {
     void loadNamespaces();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Persist the current namespace + resource tab across refreshes. Hydration
@@ -411,15 +410,22 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
       } catch (err) {
         setAllowedResources({});
         setActiveTab('');
-        setError((err as Error).message || 'Failed to load permissions.');
+        setError((err as Error).message || t('dashboard.loadFailed'));
       }
     };
     void loadPermissions();
-  }, [selectedNamespace]);
+  }, [selectedNamespace, t]);
 
-  // auto: the periodic refresh, which the server doesn't audit.
+  // auto: the periodic refresh, which the server doesn't audit. Only the
+  // latest load may write: a slow answer for the previous namespace or tab
+  // never replaces the current one. A failed auto refresh keeps the list
+  // (and shows the error); the next good answer clears the error.
+  const loadSeq = useRef(0);
   const loadResources = useCallback(async (auto = false) => {
+    // Numbered first: even a load that has nothing to fetch retires the one in flight.
+    const seq = ++loadSeq.current;
     if (!selectedNamespace || !activeTab) return;
+    const current = () => seq === loadSeq.current;
     setLoading(true);
     try {
       let result: { items: Array<Record<string, unknown>> } | null = null;
@@ -434,6 +440,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
       else if (activeTab === 'ingresses') result = await listIngresses(selectedNamespace);
       else if (activeTab === 'cronjobs') result = await listCronJobs(selectedNamespace);
       else if (activeTab === 'jobs') result = await listJobs(selectedNamespace);
+      if (!current()) return;
 
       // Pods tab: hide pods owned by a Job. Job-created pods clutter the Pods
       // list (CronJob runs, migration helpers, one-shots). They're now visible
@@ -441,8 +448,8 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
       let items = result?.items ?? [];
       if (activeTab === 'deployments' || activeTab === 'statefulsets' || activeTab === 'daemonsets') {
         listPods(selectedNamespace, true)
-          .then((r) => setWorkloadPods(r.items ?? []))
-          .catch(() => setWorkloadPods([]));
+          .then((r) => current() && setWorkloadPods(r.items ?? []))
+          .catch(() => current() && setWorkloadPods([]));
       }
       if (activeTab === 'pods') {
         items = items.filter((p) => {
@@ -451,12 +458,15 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
         });
       }
       setItems(items);
+      setError(null);
     } catch (err) {
-      setItems([]);
-      setError((err as Error).message || 'Failed to load resources.');
+      if (!current()) return;
+      if (!auto) setItems([]);
+      setError((err as Error).message || t('dashboard.loadFailed'));
+    } finally {
+      if (current()) setLoading(false);
     }
-    setLoading(false);
-  }, [activeTab, selectedNamespace]);
+  }, [activeTab, selectedNamespace, t]);
 
   useEffect(() => {
     void loadResources();
@@ -516,10 +526,16 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
 
   useEffect(() => {
     if (!selectedNamespace || (activeTab !== 'pods' && activeTab !== 'deployments')) return;
-    const interval = setInterval(() => {
-      void loadResources(true);
-    }, 10000);
-    return () => clearInterval(interval);
+    // Not while the tab is in the background; at once when it comes back.
+    const tick = () => {
+      if (document.visibilityState === 'visible') void loadResources(true);
+    };
+    const interval = setInterval(tick, 10000);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', tick);
+    };
   }, [activeTab, loadResources, selectedNamespace]);
 
   const closeModal = () => {
@@ -555,6 +571,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
 
   const openYamlModal = (resource: string, namespace: string, name: string) => {
     const fetchByResource: Record<string, (ns: string, n: string) => Promise<{ yaml: string }>> = {
+      pods: getPodYaml,
       deployments: getDeploymentYaml,
       daemonsets: getDaemonSetYaml,
       statefulsets: getStatefulSetYaml,
@@ -567,6 +584,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
       jobs: getJobYaml,
     };
     const label: Record<string, string> = {
+      pods: 'Pod',
       deployments: 'Deployment',
       daemonsets: 'DaemonSet',
       statefulsets: 'StatefulSet',
@@ -710,8 +728,44 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
+  // What the list and the card view both show and do.
+  const viewProps: ResourceViewProps = {
+    activeTab,
+    items: filteredItems,
+    selectedNamespace: selectedNamespace ?? '',
+    searchQuery,
+    loading,
+    canExecPods,
+    canRestartDeployments,
+    canScaleDeployments,
+    canScaleStatefulSets,
+    openYamlModal,
+    openEventsModal,
+    openLogModal: canPodLogs ? openLogModal : undefined,
+    onOpen: openDetail,
+    metrics,
+    failingByOwner,
+    openConfigMapDataModal,
+    openSecretModal: (name) => setSecretTarget(name),
+    canEditSecrets,
+    openDeploymentLogs: canPodLogs ? openDeploymentLogs : undefined,
+    openJobLogs: canPodLogs ? openJobLogs : undefined,
+    onExec: openShell,
+    onRestart: (name) => setRestartTarget(name),
+    onScale: (name, current) => {
+      setScaleTarget({ name, current });
+      setScaleReplicas(current);
+      setActionError(null);
+    },
+    onScaleStatefulSet: (name, current) => {
+      setScaleTarget({ name, current, kind: 'statefulsets' });
+      setScaleReplicas(current);
+      setActionError(null);
+    },
+  };
+
   return (
-    <Layout user={user} panel={namespacePanel} panelTitle="Namespaces" liveEvents={{ open: eventsOpen, connected: eventsLive }}>
+    <Layout user={user} panel={namespacePanel} panelTitle={t('nav.namespaces')} liveEvents={{ open: eventsOpen, connected: eventsLive }}>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400">
@@ -893,590 +947,8 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
             </p>
           )}
         {/* Items — card or list view */}
-        {viewMode === 'list' && (
-          <ResourceListView
-            activeTab={activeTab}
-            items={filteredItems}
-            selectedNamespace={selectedNamespace ?? ''}
-            searchQuery={searchQuery}
-            loading={loading}
-            canExecPods={canExecPods}
-            canRestartDeployments={canRestartDeployments}
-            canScaleDeployments={canScaleDeployments}
-            canScaleStatefulSets={canScaleStatefulSets}
-            openYamlModal={openYamlModal}
-            openEventsModal={openEventsModal}
-            openLogModal={openLogModal}
-            onOpen={openDetail}
-            metrics={metrics}
-            failingByOwner={failingByOwner}
-            openConfigMapDataModal={openConfigMapDataModal}
-            openSecretModal={(name) => setSecretTarget(name)}
-            canEditSecrets={canEditSecrets}
-            openDeploymentLogs={openDeploymentLogs}
-            openJobLogs={openJobLogs}
-            onExec={openShell}
-            onRestart={(name) => setRestartTarget(name)}
-            onScale={(name, current) => {
-              setScaleTarget({ name, current });
-              setScaleReplicas(current);
-              setActionError(null);
-            }}
-            onScaleStatefulSet={(name, current) => {
-              setScaleTarget({ name, current, kind: 'statefulsets' });
-              setScaleReplicas(current);
-              setActionError(null);
-            }}
-          />
-        )}
-        <div
-          className={`grid grid-cols-1 gap-3 p-5 sm:grid-cols-2 xl:grid-cols-3 ${
-            viewMode === 'card' ? '' : 'hidden'
-          }`}
-        >
-          {filteredItems.length === 0 && !loading && (
-            <div className="col-span-full">
-              <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60 px-6 py-10 text-center">
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">
-                  <SearchIcon size={16} />
-                </div>
-                <p className="text-sm font-medium text-slate-600 dark:text-slate-300">
-                  {searchQuery ? t('dashboard.emptyFiltered') : t('dashboard.empty')}
-                </p>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  {searchQuery ? t('dashboard.emptyHintSearch') : t('dashboard.emptyHint')}
-                </p>
-              </div>
-            </div>
-          )}
-
-          {filteredItems.map((item, index) => {
-            const name = (item.metadata as { name?: string })?.name ?? 'Unnamed';
-            const pod = activeTab === 'pods' ? podStatus(item) : null;
-
-            const desiredReplicas = (item.spec as { replicas?: number })?.replicas ?? 0;
-            const readyReplicas = (item.status as { readyReplicas?: number })?.readyReplicas ?? 0;
-            const allReplicasReady = desiredReplicas > 0 && readyReplicas >= desiredReplicas;
-
-            const cronSchedule = (item.spec as { schedule?: string })?.schedule ?? 'N/A';
-            const lastSchedule =
-              (item.status as { lastScheduleTime?: string })?.lastScheduleTime ?? 'Never';
-            const isSuspended = (item.spec as { suspend?: boolean })?.suspend ?? false;
-
-            const ingressRules = (
-              item.spec as {
-                rules?: Array<{
-                  host?: string;
-                  http?: { paths?: Array<{ path?: string }> };
-                }>;
-              }
-            )?.rules ?? [];
-            const ingressHosts = ingressRules
-              .map((r) => r.host)
-              .filter(Boolean) as string[];
-            const ingressPaths = ingressRules
-              .flatMap((r) => r.http?.paths ?? [])
-              .map((p) => p.path)
-              .filter(Boolean) as string[];
-
-            // Compute status indicator
-            let dotClass = '';
-            let statusLabel: React.ReactNode = null;
-            if (pod) {
-              // A healthy pod that has restarted keeps its green dot with an amber ring.
-              dotClass =
-                pod.tone === 'ok' && pod.restarts > 0
-                  ? 'status-dot bg-emerald-500 ring-1 ring-amber-400/50 ring-offset-2 ring-offset-white dark:ring-offset-slate-900'
-                  : STATUS_DOT[pod.tone];
-              const containers = containerStates(item);
-              statusLabel = (
-                <span className="inline-flex items-center gap-2">
-                  {containers.length > 1 && <ContainerSquares containers={containers} />}
-                  <PodStatusBadge namespace={selectedNamespace ?? ''} podName={name} status={pod} />
-                </span>
-              );
-            } else if (activeTab === 'deployments') {
-              if (desiredReplicas === 0) {
-                dotClass = 'status-dot status-dot-idle';
-                statusLabel = <Badge variant="default">{t('dashboard.status.scaledToZero')}</Badge>;
-              } else if (allReplicasReady) {
-                dotClass = 'status-dot status-dot-success';
-                statusLabel = <Badge variant="success">{t('dashboard.status.available')}</Badge>;
-              } else {
-                dotClass = 'status-dot status-dot-warning';
-                statusLabel = <Badge variant="warning">{t('dashboard.status.progressing')}</Badge>;
-              }
-            } else if (activeTab === 'daemonsets') {
-              const dsStatus = (item.status as {
-                desiredNumberScheduled?: number;
-                numberReady?: number;
-              }) ?? {};
-              const desired = dsStatus.desiredNumberScheduled ?? 0;
-              const ready = dsStatus.numberReady ?? 0;
-              if (desired === 0) {
-                dotClass = 'status-dot status-dot-idle';
-                statusLabel = <Badge variant="default">{t('dashboard.status.noNodes')}</Badge>;
-              } else if (ready >= desired) {
-                dotClass = 'status-dot status-dot-success';
-                statusLabel = <Badge variant="success">{t('dashboard.status.ready', { ready, desired })}</Badge>;
-              } else {
-                dotClass = 'status-dot status-dot-warning';
-                statusLabel = <Badge variant="warning">{t('dashboard.status.ready', { ready, desired })}</Badge>;
-              }
-            } else if (activeTab === 'statefulsets') {
-              const ssStatus = (item.status as { replicas?: number; readyReplicas?: number }) ?? {};
-              const ssDesired = (item.spec as { replicas?: number })?.replicas ?? ssStatus.replicas ?? 0;
-              const ssReady = ssStatus.readyReplicas ?? 0;
-              if (ssDesired === 0) {
-                dotClass = 'status-dot status-dot-idle';
-                statusLabel = <Badge variant="default">{t('dashboard.status.scaledToZero')}</Badge>;
-              } else if (ssReady >= ssDesired) {
-                dotClass = 'status-dot status-dot-success';
-                statusLabel = <Badge variant="success">{t('dashboard.status.availableCount', { ready: ssReady, desired: ssDesired })}</Badge>;
-              } else {
-                dotClass = 'status-dot status-dot-warning';
-                statusLabel = <Badge variant="warning">{t('dashboard.status.progressingCount', { ready: ssReady, desired: ssDesired })}</Badge>;
-              }
-            } else if (activeTab === 'hpas') {
-              const hpaStatus = (item.status as {
-                currentReplicas?: number;
-                desiredReplicas?: number;
-              }) ?? {};
-              const hpaMin = (item.spec as { minReplicas?: number })?.minReplicas;
-              const hpaMax = (item.spec as { maxReplicas?: number })?.maxReplicas ?? 0;
-              dotClass = 'status-dot status-dot-success';
-              statusLabel = (
-                <Badge variant="info">
-                  {hpaStatus.currentReplicas ?? 0}/{hpaStatus.desiredReplicas ?? 0}
-                  {' · '}
-                  {hpaMin ?? 1}–{hpaMax}
-                </Badge>
-              );
-            } else if (activeTab === 'cronjobs') {
-              dotClass = isSuspended ? 'status-dot status-dot-warning' : 'status-dot status-dot-success';
-              statusLabel = isSuspended ? (
-                <Badge variant="warning">{t('dashboard.status.suspended')}</Badge>
-              ) : (
-                <Badge variant="success">{t('dashboard.status.active')}</Badge>
-              );
-            } else if (activeTab === 'jobs') {
-              const jobStatus = (item.status as {
-                succeeded?: number;
-                failed?: number;
-                active?: number;
-                completionTime?: string;
-              }) ?? {};
-              const succeeded = jobStatus.succeeded ?? 0;
-              const failed = jobStatus.failed ?? 0;
-              const activeCount = jobStatus.active ?? 0;
-              if (failed > 0) {
-                dotClass = 'status-dot status-dot-error';
-                statusLabel = <Badge variant="error">{t('dashboard.status.failedN', { count: failed })}</Badge>;
-              } else if (activeCount > 0) {
-                dotClass = 'status-dot status-dot-warning';
-                statusLabel = <Badge variant="warning">{t('dashboard.status.runningN', { count: activeCount })}</Badge>;
-              } else if (succeeded > 0) {
-                dotClass = 'status-dot status-dot-success';
-                statusLabel = <Badge variant="success">{t('dashboard.status.succeeded')}</Badge>;
-              } else {
-                dotClass = 'status-dot status-dot-idle';
-                statusLabel = <Badge variant="default">{t('dashboard.status.pending')}</Badge>;
-              }
-            }
-
-            // A workload whose pods are failing says so, whatever its rollout status.
-            const failingPods = isWorkloadTab ? failingByOwner.get(`${KIND[activeTab as WorkloadKind]}/${name}`) ?? 0 : 0;
-            if (failingPods > 0) {
-              dotClass = STATUS_DOT.error;
-              statusLabel = (
-                <span className="inline-flex items-center gap-1 whitespace-nowrap">
-                  {statusLabel}
-                  <Badge variant="error">{t('dashboard.detail.podsFailing', { count: failingPods })}</Badge>
-                </span>
-              );
-            }
-            const showDot = ['pods', 'deployments', 'daemonsets', 'statefulsets', 'hpas', 'cronjobs', 'jobs'].includes(activeTab);
-            const createdAt = (item.metadata as { creationTimestamp?: string })?.creationTimestamp;
-
-            return (
-              <div
-                key={index}
-                className="group relative flex flex-col gap-3 rounded-xl border border-slate-200 dark:border-slate-800/80 bg-white dark:bg-slate-900 p-4 shadow-card transition-all duration-150 hover:-translate-y-[1px] hover:border-brand-200 dark:border-brand-500/30 hover:shadow-elevated"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex min-w-0 flex-1 items-center gap-2">
-                    {showDot && <span className={`shrink-0 ${dotClass}`} />}
-                    {activeTab === 'pods' || isWorkloadTab ? (
-                      <button
-                        type="button"
-                        onClick={() => openDetail(item)}
-                        className="truncate rounded font-mono text-[13px] font-semibold text-slate-900 underline-offset-2 hover:text-brand-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/60 dark:text-slate-100 dark:hover:text-brand-300"
-                        title={name}
-                      >
-                        {name}
-                      </button>
-                    ) : (
-                      <span
-                        className="truncate font-mono text-[13px] font-semibold text-slate-900 dark:text-slate-100"
-                        title={name}
-                      >
-                        {name}
-                      </span>
-                    )}
-                  </div>
-                  <div className="shrink-0 whitespace-nowrap">{statusLabel}</div>
-                </div>
-
-                <div className="flex flex-col gap-1 text-[11px] text-slate-500 dark:text-slate-400">
-                  <div className="flex items-center gap-1.5">
-                    <Calendar size={11} className="text-slate-500 dark:text-slate-400" />
-                    <span>{formatAge(createdAt)}</span>
-                  </div>
-
-                  {pod && (
-                    <div className="flex items-center gap-1.5">
-                      <RefreshCw size={11} className="text-slate-500 dark:text-slate-400" />
-                      <span>{t('dashboard.columns.restarts')}:</span>
-                      <PodRestarts status={pod} />
-                    </div>
-                  )}
-                  {pod && podController(item) && (() => {
-                    const c = podController(item)!;
-                    return (
-                      <div className="flex items-center gap-1.5">
-                        <Link2 size={11} className="text-slate-500 dark:text-slate-400" />
-                        <span>{t('dashboard.columns.controlledBy')}:</span>
-                        <span className="font-mono text-slate-700 dark:text-slate-200" title={`${c.kind} ${c.name}`}>
-                          {c.kind}
-                        </span>
-                      </div>
-                    );
-                  })()}
-                  {metrics?.available && (activeTab === 'pods' || isWorkloadTab) && (() => {
-                    const owner = isWorkloadTab ? `${KIND[activeTab as WorkloadKind]}/${name}` : '';
-                    const used = activeTab === 'pods' ? usageOf(name) : ownerUsage(metrics.items, owner);
-                    const budget =
-                      activeTab === 'pods'
-                        ? podResources((item.spec as any)?.containers)
-                        : scaleResources(
-                            podResources((item.spec as any)?.template?.spec?.containers),
-                            ownerUsage(metrics.items, owner).pods,
-                          );
-                    if (!used || (isWorkloadTab && !(used as { pods: number }).pods)) return null;
-                    return (
-                      <div className="grid grid-cols-2 gap-3 pt-0.5">
-                        <UsageBar kind="cpu" used={used.cpu} limit={budget.cpu.limit} request={budget.cpu.request} />
-                        <UsageBar kind="mem" used={used.memory} limit={budget.mem.limit} request={budget.mem.request} />
-                      </div>
-                    );
-                  })()}
-                  {activeTab === 'deployments' && (
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                      <span className="rounded-md bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-slate-700 dark:text-slate-200">
-                        desired {desiredReplicas}
-                      </span>
-                      <span className="rounded-md bg-emerald-50 px-1.5 py-0.5 font-mono text-[10px] text-emerald-700 ring-1 ring-inset ring-emerald-200">
-                        ready {readyReplicas}
-                      </span>
-                      <span className="rounded-md bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-slate-700 dark:text-slate-200">
-                        available {(item.status as { availableReplicas?: number })?.availableReplicas ?? 0}
-                      </span>
-                    </div>
-                  )}
-                  {activeTab === 'ingresses' && (
-                    <>
-                      <div className="truncate">
-                        <span className="text-slate-500 dark:text-slate-400">Hosts:</span>{' '}
-                        <span className="font-mono text-slate-700 dark:text-slate-200">
-                          {ingressHosts.length > 0 ? ingressHosts.join(', ') : 'N/A'}
-                        </span>
-                      </div>
-                      <div className="truncate">
-                        <span className="text-slate-500 dark:text-slate-400">Paths:</span>{' '}
-                        <span className="font-mono text-slate-700 dark:text-slate-200">
-                          {ingressPaths.length > 0 ? ingressPaths.join(', ') : 'N/A'}
-                        </span>
-                      </div>
-                    </>
-                  )}
-                  {activeTab === 'secrets' && (
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                      <span className="truncate rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-700 dark:bg-slate-800 dark:text-slate-200">
-                        {String(item.type ?? '')}
-                      </span>
-                      <span>{t('secrets.keyCount', { count: ((item.keys as unknown[]) ?? []).length })}</span>
-                    </div>
-                  )}
-                  {activeTab === 'cronjobs' && (
-                    <>
-                      <div>
-                        <span className="text-slate-500 dark:text-slate-400">Schedule:</span>{' '}
-                        <span className="font-mono text-slate-700 dark:text-slate-200">{cronSchedule}</span>
-                      </div>
-                      <div>
-                        <span className="text-slate-500 dark:text-slate-400">Last run:</span>{' '}
-                        <span className="font-mono text-slate-700 dark:text-slate-200">{lastSchedule}</span>
-                      </div>
-                    </>
-                  )}
-                  {activeTab === 'jobs' && (() => {
-                    const spec = (item.spec as { completions?: number; parallelism?: number; backoffLimit?: number }) ?? {};
-                    const st = (item.status as {
-                      succeeded?: number; failed?: number; active?: number;
-                      startTime?: string; completionTime?: string;
-                    }) ?? {};
-                    return (
-                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                        <span className="rounded-md bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-slate-700 dark:text-slate-200">
-                          completions {st.succeeded ?? 0}/{spec.completions ?? 1}
-                        </span>
-                        {(st.active ?? 0) > 0 && (
-                          <span className="rounded-md bg-amber-50 px-1.5 py-0.5 font-mono text-[10px] text-amber-800 ring-1 ring-inset ring-amber-200">
-                            active {st.active}
-                          </span>
-                        )}
-                        {(st.failed ?? 0) > 0 && (
-                          <span className="rounded-md bg-rose-50 px-1.5 py-0.5 font-mono text-[10px] text-rose-700 ring-1 ring-inset ring-rose-200">
-                            failed {st.failed}
-                          </span>
-                        )}
-                        {st.completionTime && (
-                          <span className="text-slate-500 dark:text-slate-400">
-                            done {st.completionTime}
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })()}
-                </div>
-
-                <div className="mt-auto flex flex-wrap gap-2 pt-1">
-                  {activeTab === 'pods' && (
-                    <>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => openLogModal(selectedNamespace ?? '', name)}
-                      >
-                        <Terminal size={13} />
-                        {t('dashboard.actions.logs')}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => openEventsModal('pods', selectedNamespace ?? '', name)}
-                      >
-                        <Activity size={13} />
-                        {t('dashboard.actions.events')}
-                      </Button>
-                      {canExecPods && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={(e) => openShell(item, e.currentTarget)}
-                        >
-                          <Terminal size={13} />
-                          {t('dashboard.actions.shell')}
-                        </Button>
-                      )}
-                    </>
-                  )}
-                  {activeTab === 'deployments' && (
-                    <>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => openYamlModal('deployments', selectedNamespace ?? '', name)}
-                      >
-                        <FileCode2 size={13} />
-                        {t('dashboard.actions.yaml')}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => openDeploymentLogs(selectedNamespace ?? '', name)}
-                      >
-                        <Terminal size={13} />
-                        {t('dashboard.actions.logs')}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() =>
-                          openEventsModal('deployments', selectedNamespace ?? '', name)
-                        }
-                      >
-                        <Activity size={13} />
-                        {t('dashboard.actions.events')}
-                      </Button>
-                      {canScaleDeployments && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            setScaleTarget({ name, current: desiredReplicas });
-                            setScaleReplicas(desiredReplicas);
-                            setActionError(null);
-                          }}
-                        >
-                          <Scaling size={13} />
-                          {t('dashboard.actions.scale')}
-                        </Button>
-                      )}
-                      {canRestartDeployments && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={actionBusy === `restart:${name}`}
-                          onClick={() => setRestartTarget(name)}
-                        >
-                          <RotateCcw size={13} />
-                          {actionBusy === `restart:${name}` ? t('dashboard.actions.restarting') : t('dashboard.actions.restart')}
-                        </Button>
-                      )}
-                    </>
-                  )}
-                  {activeTab === 'daemonsets' && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => openYamlModal('daemonsets', selectedNamespace ?? '', name)}
-                    >
-                      <FileCode2 size={13} />
-                      {t('dashboard.actions.yaml')}
-                    </Button>
-                  )}
-                  {activeTab === 'statefulsets' && (
-                    <>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => openYamlModal('statefulsets', selectedNamespace ?? '', name)}
-                      >
-                        <FileCode2 size={13} />
-                        {t('dashboard.actions.yaml')}
-                      </Button>
-                      {canScaleStatefulSets && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            const current = ((item.spec as { replicas?: number })?.replicas) ?? 0;
-                            setScaleTarget({ name, current, kind: 'statefulsets' });
-                            setScaleReplicas(current);
-                            setActionError(null);
-                          }}
-                        >
-                          <Scaling size={13} />
-                          {t('dashboard.actions.scale')}
-                        </Button>
-                      )}
-                    </>
-                  )}
-                  {activeTab === 'hpas' && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => openYamlModal('hpas', selectedNamespace ?? '', name)}
-                    >
-                      <FileCode2 size={13} />
-                      {t('dashboard.actions.yaml')}
-                    </Button>
-                  )}
-                  {activeTab === 'services' && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => openYamlModal('services', selectedNamespace ?? '', name)}
-                    >
-                      <FileCode2 size={13} />
-                      {t('dashboard.actions.yaml')}
-                    </Button>
-                  )}
-                  {activeTab === 'ingresses' && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => openYamlModal('ingresses', selectedNamespace ?? '', name)}
-                    >
-                      <FileCode2 size={13} />
-                      {t('dashboard.actions.yaml')}
-                    </Button>
-                  )}
-                  {activeTab === 'configmaps' && (
-                    <>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => openConfigMapDataModal(selectedNamespace ?? '', name)}
-                      >
-                        <FileText size={13} />
-                        {t('dashboard.actions.data')}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => openYamlModal('configmaps', selectedNamespace ?? '', name)}
-                      >
-                        <FileCode2 size={13} />
-                        {t('dashboard.actions.yaml')}
-                      </Button>
-                    </>
-                  )}
-                  {activeTab === 'secrets' && (
-                    <>
-                      <Button variant="outline" size="sm" onClick={() => setSecretTarget(name)}>
-                        <KeyRound size={13} />
-                        {t('secrets.keys')}
-                      </Button>
-                      {/* The YAML carries every value, so it is gated on edit, not get. */}
-                      {canEditSecrets && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => openYamlModal('secrets', selectedNamespace ?? '', name)}
-                        >
-                          <FileCode2 size={13} />
-                          {t('dashboard.actions.yaml')}
-                        </Button>
-                      )}
-                    </>
-                  )}
-                  {activeTab === 'cronjobs' && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => openYamlModal('cronjobs', selectedNamespace ?? '', name)}
-                    >
-                      <FileCode2 size={13} />
-                      {t('dashboard.actions.yaml')}
-                    </Button>
-                  )}
-                  {activeTab === 'jobs' && (
-                    <>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => openYamlModal('jobs', selectedNamespace ?? '', name)}
-                      >
-                        <FileCode2 size={13} />
-                        {t('dashboard.actions.yaml')}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => openJobLogs(selectedNamespace ?? '', name)}
-                      >
-                        <Terminal size={13} />
-                        {t('dashboard.actions.logs')}
-                      </Button>
-                    </>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+        {viewMode === 'list' && <ResourceListView {...viewProps} />}
+        {viewMode === 'card' && <ResourceCardsView {...viewProps} actionBusy={actionBusy} />}
       </div>
 
       {/* ── Modal ─────────────────────────────────────────────────── */}
@@ -1507,10 +979,10 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
           <>
             <Button variant="outline" size="sm" onClick={refreshModal}>
               <RefreshCw size={14} />
-              Refresh
+              {t('actions.refresh')}
             </Button>
             <Button variant="primary" size="sm" onClick={closeModal}>
-              Close
+              {t('actions.close')}
             </Button>
           </>
         }
@@ -1526,7 +998,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
               className="flex-1 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-4 font-mono text-xs leading-5 text-slate-100 shadow-inner"
               style={{ whiteSpace: 'pre' }}
             >
-              {modalContent || 'No data'}
+              {modalContent || t('common.noData')}
             </pre>
           </div>
         )}
@@ -1551,7 +1023,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
           namespace={selectedNamespace ?? ''}
           canExec={canExecPods}
           onClose={() => setDetail(null)}
-          onLogs={(name, previous) => openLogModal(selectedNamespace ?? '', name, previous)}
+          onLogs={canPodLogs ? (name, previous) => openLogModal(selectedNamespace ?? '', name, previous) : undefined}
           onShell={openShell}
           onYaml={(name) => openYamlModal('pods', selectedNamespace ?? '', name)}
           metrics={metrics}
@@ -1573,7 +1045,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
           metrics={metrics}
           onClose={() => setDetail(null)}
           onOpenPod={(pod) => setDetail({ kind: 'pods', name: pod.metadata?.name, obj: pod })}
-          onLogs={(name) => openDeploymentLogs(selectedNamespace ?? '', name)}
+          onLogs={canPodLogs ? (name) => openDeploymentLogs(selectedNamespace ?? '', name) : undefined}
           onYaml={(name) => openYamlModal(detail.kind, selectedNamespace ?? '', name)}
           onRestart={(name) => setRestartTarget(name)}
           onScale={(name, current) => {
@@ -1616,7 +1088,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                     setRestartTarget(null);
                     await loadResources();
                   } catch (err) {
-                    setActionError((err as Error).message || 'Restart failed.');
+                    setActionError((err as Error).message || t('dashboard.restartFailed'));
                   } finally {
                     setActionBusy(null);
                   }
@@ -1655,15 +1127,19 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
           }}
         />
       )}
-      <PodExecModal
-        key={execTarget ? `${execTarget.name}/${execTarget.container}` : ''}
-        open={execTarget !== null}
-        onClose={() => setExecTarget(null)}
-        namespace={selectedNamespace ?? ''}
-        pod={execTarget?.name ?? ''}
-        containers={execTarget?.containers ?? []}
-        container={execTarget?.container}
-      />
+      {execTarget && (
+        <Suspense fallback={null}>
+          <PodExecModal
+            key={`${execTarget.name}/${execTarget.container}`}
+            open
+            onClose={() => setExecTarget(null)}
+            namespace={selectedNamespace ?? ''}
+            pod={execTarget.name}
+            containers={execTarget.containers}
+            container={execTarget.container}
+          />
+        </Suspense>
+      )}
 
       {/* ── Scale modal ───────────────────────────────────────────── */}
       {scaleTarget && (
@@ -1680,7 +1156,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                 onClick={() => setScaleTarget(null)}
                 disabled={scaleBusy}
               >
-                Cancel
+                {t('actions.cancel')}
               </Button>
               <Button
                 variant="primary"
@@ -1702,13 +1178,13 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                     setScaleTarget(null);
                     await loadResources();
                   } catch (err) {
-                    setActionError((err as Error).message || 'Scale failed.');
+                    setActionError((err as Error).message || t('dashboard.scaleFailed'));
                   } finally {
                     setScaleBusy(false);
                   }
                 }}
               >
-                {scaleBusy ? 'Applying…' : 'Apply'}
+                {scaleBusy ? t('dashboard.scaleModal.applying') : t('dashboard.scaleModal.apply')}
               </Button>
             </>
           }
@@ -1717,7 +1193,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
             <div className="flex items-center justify-between gap-4 rounded-lg bg-slate-50 dark:bg-slate-800/40 px-3 py-2">
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                  Current
+                  {t('dashboard.columns.current')}
                 </p>
                 <p className="font-mono text-lg font-semibold text-slate-900 dark:text-slate-100">
                   {scaleTarget.current}
@@ -1726,7 +1202,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
               <span className="text-slate-400">→</span>
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-brand-600 dark:text-brand-300">
-                  Target
+                  {t('dashboard.columns.target')}
                 </p>
                 <div className="mt-0.5 flex items-center gap-1.5">
                   <Button

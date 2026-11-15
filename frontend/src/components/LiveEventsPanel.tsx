@@ -146,7 +146,7 @@ const LiveEventsPanel: React.FC<Props> = ({ namespace, open, onClose, initialFil
   return (
     <aside
       className="fixed right-0 top-14 bottom-0 z-40 flex w-full sm:w-96 flex-col border-l border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900"
-      aria-label="Live events"
+      aria-label={t('dashboard.events.panelLabel')}
     >
       <header className="flex items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-slate-800">
         <div className="flex items-center gap-2">
@@ -168,7 +168,7 @@ const LiveEventsPanel: React.FC<Props> = ({ namespace, open, onClose, initialFil
           type="button"
           onClick={onClose}
           className="rounded-md p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-          aria-label="Close"
+          aria-label={t('actions.close')}
         >
           <X size={16} />
         </button>

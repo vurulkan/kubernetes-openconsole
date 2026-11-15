@@ -1,4 +1,6 @@
-import React, { Suspense, lazy } from 'react';
+import React, { Suspense, lazy, useEffect, useRef } from 'react';
+import type * as Monaco from 'monaco-editor';
+import { useTranslation } from 'react-i18next';
 
 // Monaco is the heaviest frontend dependency we have; lazy-loading it keeps
 // Dashboard first-paint untouched for the (common) read-only path. The chunk
@@ -25,11 +27,15 @@ const commonEditorOptions = {
   contextmenu: false,
 };
 
-const Fallback = (
-  <div className="flex h-full items-center justify-center text-xs text-slate-500 dark:text-slate-400">
-    Loading editor…
-  </div>
-);
+const Loading: React.FC = () => {
+  const { t } = useTranslation();
+  return (
+    <div className="flex h-full items-center justify-center text-xs text-slate-500 dark:text-slate-400">
+      {t('yamlEditor.loadingEditor')}
+    </div>
+  );
+};
+const Fallback = <Loading />;
 
 export const YamlEditor: React.FC<YamlEditorProps> = ({
   value,
@@ -68,27 +74,46 @@ export const YamlDiff: React.FC<DiffProps> = ({
   onModifiedChange,
   height = '100%',
   theme = 'vs',
-}) => (
-  <Suspense fallback={Fallback}>
-    <DiffEditor
-      language="yaml"
-      original={original}
-      modified={modified}
-      height={height}
-      theme={theme}
-      options={{
-        ...commonEditorOptions,
-        renderSideBySide: true,
-        originalEditable: false,
-        readOnly: !onModifiedChange,
-      }}
-      onMount={(editor) => {
-        if (!onModifiedChange) return;
-        const modifiedEditor = editor.getModifiedEditor();
-        modifiedEditor.onDidChangeModelContent(() => {
-          onModifiedChange(modifiedEditor.getValue());
-        });
-      }}
-    />
-  </Suspense>
-);
+}) => {
+  // The wrapper disposes the models while the diff editor still holds them
+  // ("TextModel got disposed before DiffEditorWidget model got reset"): it
+  // keeps them here, and the unmount detaches them first, then disposes.
+  const editorRef = useRef<Monaco.editor.IStandaloneDiffEditor | null>(null);
+  useEffect(
+    () => () => {
+      const editor = editorRef.current;
+      const models = editor?.getModel();
+      editor?.setModel(null);
+      models?.original.dispose();
+      models?.modified.dispose();
+    },
+    [],
+  );
+  return (
+    <Suspense fallback={Fallback}>
+      <DiffEditor
+        language="yaml"
+        original={original}
+        modified={modified}
+        height={height}
+        theme={theme}
+        keepCurrentOriginalModel
+        keepCurrentModifiedModel
+        options={{
+          ...commonEditorOptions,
+          renderSideBySide: true,
+          originalEditable: false,
+          readOnly: !onModifiedChange,
+        }}
+        onMount={(editor) => {
+          editorRef.current = editor;
+          if (!onModifiedChange) return;
+          const modifiedEditor = editor.getModifiedEditor();
+          modifiedEditor.onDidChangeModelContent(() => {
+            onModifiedChange(modifiedEditor.getValue());
+          });
+        }}
+      />
+    </Suspense>
+  );
+};

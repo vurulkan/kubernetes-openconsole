@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { Monitor, Moon, Sun } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 type ThemeMode = 'light' | 'dark' | 'system';
 type ThemeEffective = 'light' | 'dark';
@@ -87,18 +88,19 @@ export const useTheme = (): ThemeCtx => {
 };
 
 const OPTIONS: Array<{ value: ThemeMode; label: string; Icon: React.ComponentType<{ size?: number | string }> }> = [
-  { value: 'light', label: 'Light', Icon: Sun },
-  { value: 'dark', label: 'Dark', Icon: Moon },
-  { value: 'system', label: 'System', Icon: Monitor },
+  { value: 'light', label: 'nav.themeLight', Icon: Sun },
+  { value: 'dark', label: 'nav.themeDark', Icon: Moon },
+  { value: 'system', label: 'nav.themeSystem', Icon: Monitor },
 ];
 
 export const ThemeToggle: React.FC<{ className?: string }> = ({ className = '' }) => {
   const { mode, setMode } = useTheme();
+  const { t } = useTranslation();
   return (
     <div
       className={`inline-flex items-center gap-0.5 rounded-lg border border-slate-200 bg-white/80 p-0.5 backdrop-blur-sm dark:border-slate-800 dark:bg-slate-900/70 ${className}`}
       role="group"
-      aria-label="Theme"
+      aria-label={t('nav.theme')}
     >
       {OPTIONS.map(({ value, label, Icon }) => {
         const active = mode === value;
@@ -108,7 +110,8 @@ export const ThemeToggle: React.FC<{ className?: string }> = ({ className = '' }
             type="button"
             onClick={() => setMode(value)}
             aria-pressed={active}
-            title={label}
+            title={t(label)}
+            aria-label={t(label)}
             className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
               active
                 ? 'bg-brand-50 text-brand-700 ring-1 ring-inset ring-brand-200 dark:bg-brand-500/15 dark:text-brand-200 dark:ring-brand-500/30'

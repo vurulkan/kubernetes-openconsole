@@ -45,3 +45,14 @@ describe('i18n dictionaries', () => {
     expect(missing).toEqual([]);
   });
 });
+
+describe('page language', () => {
+  it('follows the UI language (screen readers pick the voice from it)', async () => {
+    const before = i18n.language;
+    await i18n.changeLanguage('tr');
+    expect(document.documentElement.lang).toBe('tr');
+    await i18n.changeLanguage('en');
+    expect(document.documentElement.lang).toBe('en');
+    await i18n.changeLanguage(before);
+  });
+});

@@ -14,13 +14,13 @@ const LOCALE_LABELS: Record<SupportedLocale, string> = {
  * languages today. If a third one lands this becomes a dropdown.
  */
 const LocaleSwitcher: React.FC<{ className?: string }> = ({ className = '' }) => {
-  const { i18n } = useTranslation();
+  const { i18n, t } = useTranslation();
   const current = (i18n.language.slice(0, 2) as SupportedLocale);
   return (
     <div
       className={`inline-flex items-center gap-0.5 rounded-md border border-slate-200 bg-white/60 p-0.5 dark:border-slate-700 dark:bg-slate-900/60 ${className}`}
       role="group"
-      aria-label="Language"
+      aria-label={t('nav.locale')}
     >
       <Languages size={12} className="ml-1 text-slate-500 dark:text-slate-400" />
       {SUPPORTED_LOCALES.map((l) => {

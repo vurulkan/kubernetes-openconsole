@@ -18,7 +18,8 @@ type Props = {
   namespace: string;
   canExec: boolean;
   onClose: () => void;
-  onLogs: (name: string, previousContainer?: string) => void;
+  /** Undefined without pods:logs: no Logs buttons. */
+  onLogs?: (name: string, previousContainer?: string) => void;
   onShell: (pod: Item, anchor: HTMLElement) => void;
   onYaml: (name: string) => void;
   /** Opens the owning Deployment's / StatefulSet's / DaemonSet's drawer. */
@@ -93,7 +94,7 @@ export const PodDrawer: React.FC<Props> = ({ pod, namespace, canExec, onClose, o
             <FileCode2 size={13} />
             {t('dashboard.actions.yaml')}
           </Button>
-          {status.lastTermination && (
+          {onLogs && status.lastTermination && (
             <Button variant="outline" size="sm" onClick={() => onLogs(name, status.lastTermination!.container)}>
               <History size={13} />
               {t('dashboard.detail.previousLogs')}
@@ -105,10 +106,12 @@ export const PodDrawer: React.FC<Props> = ({ pod, namespace, canExec, onClose, o
               {t('dashboard.actions.shell')}
             </Button>
           )}
-          <Button variant="primary" size="sm" onClick={() => onLogs(name)}>
-            <Terminal size={13} />
-            {t('dashboard.actions.logs')}
-          </Button>
+          {onLogs && (
+            <Button variant="primary" size="sm" onClick={() => onLogs(name)}>
+              <Terminal size={13} />
+              {t('dashboard.actions.logs')}
+            </Button>
+          )}
         </>
       }
     >

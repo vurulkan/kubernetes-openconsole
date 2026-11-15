@@ -36,7 +36,8 @@ type Props = {
   canScale: boolean;
   onClose: () => void;
   onOpenPod: (pod: Item) => void;
-  onLogs: (name: string) => void;
+  /** Undefined without pods:logs: no Logs button. */
+  onLogs?: (name: string) => void;
   onYaml: (name: string) => void;
   onRestart: (name: string) => void;
   onScale: (name: string, current: number) => void;
@@ -124,7 +125,7 @@ export const WorkloadDrawer: React.FC<Props> = ({
     return () => {
       live = false;
     };
-  }, [namespace, name, kind, workload]);
+  }, [namespace, name, kind, owner, workload]);
 
   if (!workload) return null;
   const spec = workload.spec ?? {};
@@ -162,7 +163,7 @@ export const WorkloadDrawer: React.FC<Props> = ({
               {t('dashboard.actions.restart')}
             </Button>
           )}
-          {kind === 'deployments' && (
+          {kind === 'deployments' && onLogs && (
             <Button variant="primary" size="sm" onClick={() => onLogs(name)}>
               <Terminal size={13} />
               {t('dashboard.actions.logs')}

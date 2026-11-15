@@ -51,6 +51,7 @@ Uygulamadaki **?** listesinin aynısı. "`g` sonra `o`": `g`'ye, bir saniye içi
 | <kbd>↵</kbd> | Kayıtlı Görünümler açıkken: odaktaki görünümü aç |
 | <kbd>1…9</kbd> | Kayıtlı Görünümler açıkken: o sıradaki görünümü aç |
 | <kbd>Esc</kbd> | Kayıtlı Görünümler menüsünü kapat |
+| <kbd>Ctrl</kbd> sonra <kbd>]</kbd> | Shell: terminalden çık, ardından Esc kapatır (Türkçe Q klavyede Ctrl+Ü) |
 
 ## Cluster seçici {#cluster-switcher}
 

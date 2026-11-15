@@ -79,9 +79,27 @@ describe('error messages', () => {
   const fail = (body: string, status = 403) =>
     vi.stubGlobal('fetch', vi.fn(async () => new Response(body, { status, headers: { 'Content-Type': 'application/json' } })));
 
-  it('shows the reason, not the JSON body', async () => {
+  it('says a reason code in words, not the JSON body', async () => {
     fail('{"error":"forbidden"}');
-    await expect(getMe()).rejects.toThrow(/^forbidden$/);
+    await expect(getMe()).rejects.toThrow(/^You don't have permission to do this\.$/);
+    fail('{"error":"admin_only"}');
+    await expect(getMe()).rejects.toThrow(/^Only administrators can do this\.$/);
+    fail('{"error":"rate_limited"}', 429);
+    await expect(getMe()).rejects.toThrow(/Too many requests/);
+  });
+
+  it('keeps the detail after a code and passes other messages through', async () => {
+    fail('{"error":"kubeconfig_unsupported: user \\"a\\" uses exec"}', 400);
+    await expect(getMe()).rejects.toThrow(/runs a program.*\(user "a" uses exec\)$/);
+    fail('{"error":"invalid body"}', 400);
+    await expect(getMe()).rejects.toThrow(/^invalid body$/);
+    fail('upstream broke', 500);
+    await expect(getMe()).rejects.toThrow(/^upstream broke$/);
+  });
+
+  it('says a network failure in words', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
+    await expect(getMe()).rejects.toThrow(/server cannot be reached/);
   });
 
   it('says in words when the cluster refused a read', async () => {

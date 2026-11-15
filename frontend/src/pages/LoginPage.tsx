@@ -133,7 +133,7 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
             <div className="mb-6 flex justify-center overflow-hidden">
               <img
                 src={logoUrl}
-                alt="Organization logo"
+                alt={t('admin.customization.logo')}
                 onError={() => setLogoUrl(null)}
                 className="max-h-16 w-full max-w-full object-contain"
               />

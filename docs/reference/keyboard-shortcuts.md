@@ -51,6 +51,7 @@ The same list as **?** in the app. "`g` then `o`" means: press `g`, then `o` wit
 | <kbd>↵</kbd> | Saved Views open: restore the focused view |
 | <kbd>1…9</kbd> | Saved Views open: restore the view with that number |
 | <kbd>Esc</kbd> | Close Saved Views |
+| <kbd>Ctrl</kbd> then <kbd>]</kbd> | Shell: leave the terminal, then Esc closes it (Ctrl+Ü on a Turkish Q keyboard) |
 
 ## Cluster switcher
 
