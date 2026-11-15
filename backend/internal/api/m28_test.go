@@ -51,3 +51,17 @@ func TestClusterTokenEditKeepsStoredCA(t *testing.T) {
 		t.Fatal("a refused edit changed the stored CA")
 	}
 }
+
+// The fonts ship with the UI: the policy allows no font CDN.
+func TestCSPAllowsNoFontCDN(t *testing.T) {
+	e := newTestEnv(t)
+	resp, err := http.Get(e.http.URL + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	csp := resp.Header.Get("Content-Security-Policy")
+	if csp == "" || strings.Contains(csp, "fonts.g") || !strings.Contains(csp, "font-src 'self' data:") {
+		t.Fatalf("CSP: %q", csp)
+	}
+}

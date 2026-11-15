@@ -104,7 +104,7 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
 
     if (!termRef.current) {
       const term = new Terminal({
-        fontFamily: '"Fira Code", ui-monospace, SFMono-Regular, Menlo, monospace',
+        fontFamily: '"Fira Code Variable", ui-monospace, SFMono-Regular, Menlo, monospace',
         fontSize: 13,
         cursorBlink: true,
         theme,
@@ -343,7 +343,7 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
     switch (status) {
       case 'open':
         return (
-          <span className="inline-flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-300">
+          <span className="inline-flex items-center gap-1.5 text-xs text-emerald-700 dark:text-emerald-300">
             <span className="h-1.5 w-1.5 animate-live rounded-full bg-emerald-500" />
             {t('podExec.connected')}
           </span>
@@ -450,7 +450,7 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
               {t('podExec.recordingBody', { idle: idleText })} {t('podExec.keyboardHint')}
             </span>
             {recordingId && (
-              <span className="font-mono text-[10px] opacity-70" title={t('podExec.recordingId')}>
+              <span className="font-mono text-[10px]" title={t('podExec.recordingId')}>
                 {recordingId.slice(0, 8)}
               </span>
             )}

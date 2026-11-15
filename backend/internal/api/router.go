@@ -1088,8 +1088,8 @@ func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Security-Policy",
 		"default-src 'self'; "+
 			"script-src 'self' 'nonce-"+nonce+"'; "+
-			"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "+
-			"font-src 'self' https://fonts.gstatic.com data:; "+
+			"style-src 'self' 'unsafe-inline'; "+
+			"font-src 'self' data:; "+
 			"img-src 'self' data: blob:; "+
 			"connect-src 'self' ws: wss:; "+
 			"frame-ancestors 'none'; "+
