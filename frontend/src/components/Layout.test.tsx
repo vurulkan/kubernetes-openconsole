@@ -36,7 +36,7 @@ const renderLayout = async (user: Partial<User>, features: Record<string, boolea
 describe('Layout account menu', () => {
   it('opens from the avatar, moves with the arrow keys, closes on Esc and goes to API keys', async () => {
     await renderLayout({});
-    const button = screen.getByRole('button', { name: 'Account menu of bob' });
+    const button = screen.getByRole('button', { name: 'bob' });
     fireEvent.click(button);
     const menu = screen.getByRole('menu', { name: 'Account menu of bob' });
     expect(within(menu).getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['API keys', 'Change password']);
@@ -55,7 +55,7 @@ describe('Layout account menu', () => {
 
   it('leaves out the password for directory users and API keys when the operator turned them off', async () => {
     await renderLayout({ authSource: 'ldap' }, { api_keys: false });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Account menu of bob' })).toBeDisabled());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'bob' })).toBeDisabled());
     expect(screen.queryByRole('button', { name: 'API keys' })).not.toBeInTheDocument(); // drawer item
   });
 });

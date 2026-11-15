@@ -175,12 +175,12 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, liveEvents, children
             type="button"
             aria-haspopup="menu"
             aria-expanded={userMenu !== null}
-            aria-label={t('nav.accountMenu', { name: user.username })}
             disabled={accountItems.length === 0}
             onClick={(e) => setUserMenu(userMenu ? null : e.currentTarget)}
             className="hidden cursor-pointer items-center gap-2 rounded-lg py-1 pl-1 pr-2 transition-colors hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 disabled:cursor-default disabled:hover:bg-transparent dark:hover:bg-slate-800 sm:flex"
           >
-            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-50 dark:bg-brand-500/15 text-xs font-semibold text-brand-700 dark:text-brand-200 ring-1 ring-inset ring-brand-200 dark:ring-brand-500/30">
+            {/* Named by the visible text (WCAG 2.5.3); aria-haspopup says it opens a menu. */}
+            <span aria-hidden="true" className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-50 dark:bg-brand-500/15 text-xs font-semibold text-brand-700 dark:text-brand-200 ring-1 ring-inset ring-brand-200 dark:ring-brand-500/30">
               {(user.username ?? '?').slice(0, 1).toUpperCase()}
             </span>
             <span className="flex flex-col text-left leading-tight">

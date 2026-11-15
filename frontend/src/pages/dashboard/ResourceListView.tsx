@@ -98,6 +98,7 @@ export const ResourceListView: React.FC<ResourceViewProps> = ({
   const { t } = useTranslation();
   // Logs buttons exist only with pods:logs (the handlers are undefined without it).
   const canLogs = Boolean(openLogModal);
+  const opensDrawer = ['pods', 'deployments', 'statefulsets', 'daemonsets'].includes(activeTab);
   // Column assembly per-tab. Name always left; actions always right; age is
   // the last data column before actions so it's where operators expect it.
   const usage = React.useMemo(
@@ -150,11 +151,24 @@ export const ResourceListView: React.FC<ResourceViewProps> = ({
       key: 'name',
       header: t('dashboard.columns.name'),
       sortValue: (it) => nameOf(it).toLowerCase(),
-      cell: (it) => (
-        <span className="truncate font-mono text-[12.5px] font-medium text-slate-900 dark:text-slate-100">
-          {nameOf(it)}
-        </span>
-      ),
+      // Rows with a detail drawer: the name is a button, so the keyboard opens it too.
+      cell: (it) =>
+        opensDrawer ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpen(it);
+            }}
+            className="truncate rounded font-mono text-[12.5px] font-medium text-slate-900 underline-offset-2 hover:text-brand-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/60 dark:text-slate-100 dark:hover:text-brand-300"
+          >
+            {nameOf(it)}
+          </button>
+        ) : (
+          <span className="truncate font-mono text-[12.5px] font-medium text-slate-900 dark:text-slate-100">
+            {nameOf(it)}
+          </span>
+        ),
     };
     const ageCol: Column<Item> = {
       key: 'age',
@@ -894,7 +908,7 @@ export const ResourceListView: React.FC<ResourceViewProps> = ({
         rows={items}
         columns={withFailing}
         rowKey={(it) => nameOf(it) || JSON.stringify((it.metadata as any)?.uid ?? Math.random())}
-        onRowClick={['pods', 'deployments', 'statefulsets', 'daemonsets'].includes(activeTab) ? onOpen : undefined}
+        onRowClick={opensDrawer ? onOpen : undefined}
         sortStorageKey={`dashboard:${activeTab}`}
         columnsStorageKey={`dashboard:${activeTab}`}
         emptyMessage={

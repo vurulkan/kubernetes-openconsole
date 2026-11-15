@@ -1,6 +1,6 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 vi.mock('../components/Layout', () => ({ default: ({ children }: { children: React.ReactNode }) => <main>{children}</main> }));
@@ -58,6 +58,30 @@ describe('DashboardPage views', () => {
     await screen.findAllByText('web-2');
     expect(screen.getAllByText('web-1')).toHaveLength(1);
     expect(screen.queryByRole('table')).toBeNull();
+  });
+});
+
+describe('DashboardPage keyboard', () => {
+  it('opens a pod from the list with the keyboard: its name is a button', async () => {
+    mockFetch([['GET /api/namespaces/shop/pods', () => ({ items: [pod('web-1')] })], ...base]);
+    renderPage();
+    // A button is in the Tab order and Enter clicks it.
+    expect(await screen.findByRole('button', { name: 'web-1' })).toBeInTheDocument();
+  });
+
+  it("opens the pod's YAML from its drawer", async () => {
+    const calls = mockFetch([
+      ['GET /api/namespaces/shop/pods/web-1/yaml', () => ({ yaml: 'kind: Pod' })],
+      ['GET /api/namespaces/shop/pods/web-1/', () => ({ items: [], points: [] })],
+      ['/metrics/', () => ({ source: 'memory', points: [], available: false, items: [] })],
+      ['GET /api/namespaces/shop/pods', () => ({ items: [pod('web-1')] })],
+      ...base,
+    ]);
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'web-1' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'YAML' }));
+    expect(await screen.findByRole('dialog', { name: /Pod/ })).toBeInTheDocument();
+    await vi.waitFor(() => expect(calls.some((c) => c.url === '/api/namespaces/shop/pods/web-1/yaml')).toBe(true));
   });
 });
 

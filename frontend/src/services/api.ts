@@ -332,6 +332,9 @@ export const getJobYaml = (namespace: string, name: string) =>
 export const listCronJobs = (namespace: string) =>
   apiRequest<{ items: Array<Record<string, unknown>> }>(`/api/namespaces/${namespace}/cronjobs`);
 
+export const getPodYaml = (namespace: string, name: string) =>
+  apiRequest<{ yaml: string }>(`/api/namespaces/${namespace}/pods/${name}/yaml`);
+
 export const getDeploymentYaml = (namespace: string, name: string) =>
   apiRequest<{ yaml: string }>(`/api/namespaces/${namespace}/deployments/${name}/yaml`);
 

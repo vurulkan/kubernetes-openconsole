@@ -59,6 +59,7 @@ import {
   getHPAYaml,
   scaleStatefulSet,
   getDeploymentYaml,
+  getPodYaml,
   getServiceYaml,
   getConfigMapYaml,
   getIngressYaml,
@@ -570,6 +571,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
 
   const openYamlModal = (resource: string, namespace: string, name: string) => {
     const fetchByResource: Record<string, (ns: string, n: string) => Promise<{ yaml: string }>> = {
+      pods: getPodYaml,
       deployments: getDeploymentYaml,
       daemonsets: getDaemonSetYaml,
       statefulsets: getStatefulSetYaml,
@@ -582,6 +584,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
       jobs: getJobYaml,
     };
     const label: Record<string, string> = {
+      pods: 'Pod',
       deployments: 'Deployment',
       daemonsets: 'DaemonSet',
       statefulsets: 'StatefulSet',
