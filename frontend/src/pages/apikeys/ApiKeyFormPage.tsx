@@ -116,14 +116,15 @@ const ApiKeyFormPage: React.FC<{ user: User }> = ({ user }) => {
   const clusterId = allClusters ? 0 : ceiling?.clusters.find((c) => c.name === clusterName)?.id;
   const clusters = clusterId === undefined ? [] : [clusterId];
   // The namespaces the chosen clusters offer, and the pairs the selection reaches (all of them while none is picked).
-  const nsOptions = useMemo(
-    () => [...new Set(ceiling ? scopePairs(ceiling, clusters, true, []).map((n) => n.namespace) : [])].sort(),
-    [ceiling, clusterId],
-  );
+  const nsOptions = useMemo(() => {
+    const ids = clusterId === undefined ? [] : [clusterId];
+    return [...new Set(ceiling ? scopePairs(ceiling, ids, true, []).map((n) => n.namespace) : [])].sort();
+  }, [ceiling, clusterId]);
   const pairs = useMemo(() => {
     if (!ceiling) return [];
+    const ids = clusterId === undefined ? [] : [clusterId];
     const picked = allNamespaces || namespaces.length > 0;
-    return scopePairs(ceiling, clusters, !picked || allNamespaces, namespaces);
+    return scopePairs(ceiling, ids, !picked || allNamespaces, namespaces);
   }, [ceiling, clusterId, allNamespaces, namespaces]);
   const available = useMemo(() => new Set(pairs.flatMap((p) => p.grants)), [pairs]);
   // On edit, cells the admin's policy blocks stay if the key had them (inactive until the policy opens).
@@ -133,6 +134,7 @@ const ApiKeyFormPage: React.FC<{ user: User }> = ({ user }) => {
   );
 
   // A grant the selection no longer reaches is dropped (and listed, so the change isn't silent).
+  // Cells outside the selection can't be switched on, so after one pass nothing is lost.
   useEffect(() => {
     if (!ceiling) return;
     const lost = fromMatrix(matrix).filter((g) => !available.has(g) && !kept.has(g));
@@ -144,7 +146,7 @@ const ApiKeyFormPage: React.FC<{ user: User }> = ({ user }) => {
       m[r] = { ...m[r], [a]: false };
     });
     setMatrix(m);
-  }, [available, kept, ceiling]);
+  }, [available, kept, ceiling, matrix]);
 
 
   const applyTemplate = (tpl: KeyTemplate) => {

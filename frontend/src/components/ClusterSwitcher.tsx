@@ -111,6 +111,8 @@ export const ClusterSwitcher: React.FC<Props> = () => {
     return () => window.removeEventListener(CLUSTER_SWITCHER_EVENT_NAME, handler as EventListener);
   }, [clusters]);
 
+  // The key handler below always calls the latest choose (it closes over this render's state).
+  const chooseRef = useRef<(id: number) => Promise<void>>(async () => {});
   // In-menu keyboard navigation: digits pick a cluster by index (1..9),
   // arrows move, Enter commits the focused row, Esc closes. Only wired while
   // the menu is open so none of these keys leak into page-level shortcuts.
@@ -136,7 +138,7 @@ export const ClusterSwitcher: React.FC<Props> = () => {
       if (e.key === 'Enter') {
         e.preventDefault();
         const target = clusters[focusedIdx];
-        if (target && !target.selected) void choose(target.id);
+        if (target && !target.selected) void chooseRef.current(target.id);
         else setOpen(false);
         return;
       }
@@ -148,7 +150,7 @@ export const ClusterSwitcher: React.FC<Props> = () => {
           e.preventDefault();
           const target = clusters[idx];
           setFocusedIdx(idx);
-          if (!target.selected) void choose(target.id);
+          if (!target.selected) void chooseRef.current(target.id);
           else setOpen(false);
         }
       }
@@ -176,6 +178,7 @@ export const ClusterSwitcher: React.FC<Props> = () => {
       setBusy(null);
     }
   };
+  chooseRef.current = choose;
 
   if (clusters.length === 0) {
     return (

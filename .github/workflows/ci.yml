@@ -38,6 +38,8 @@ jobs:
         run: npm audit --omit=dev --audit-level=high || echo "::warning title=npm audit::high or critical advisories in runtime dependencies, see the step log"
       # vite build does not type-check; this does.
       - run: npx tsc --noEmit -p .
+      # React hooks rules (eslint.config.js).
+      - run: npm run lint
       # Unit + component tests, i18n parity, axe accessibility checks.
       - run: npm test
       - run: npm run build

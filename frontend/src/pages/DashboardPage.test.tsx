@@ -77,6 +77,23 @@ describe('DashboardPage permissions', () => {
     renderPage();
     expect(await screen.findByRole('button', { name: 'Logs' })).toBeInTheDocument();
   });
+
+  it('shows Logs after switching to a namespace that grants pods:logs', async () => {
+    mockFetch([
+      ['GET /api/namespaces/blog/permissions', () => ({ resources: { pods: ['list', 'logs'] } })],
+      ['GET /api/namespaces/shop/pods', () => ({ items: [pod('web-1')] })],
+      ['GET /api/namespaces/blog/pods', () => ({ items: [pod('web-1')] })],
+      ...base,
+    ]);
+    renderPage();
+    await screen.findByText('web-1');
+    expect(screen.queryByRole('button', { name: 'Logs' })).toBeNull();
+    await act(async () => {
+      window.location.hash = 'ns:blog';
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    });
+    expect(await screen.findByRole('button', { name: 'Logs' })).toBeInTheDocument();
+  });
 });
 
 describe('DashboardPage loading', () => {

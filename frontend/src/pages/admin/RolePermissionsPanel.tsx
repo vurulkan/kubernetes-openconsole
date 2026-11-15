@@ -111,7 +111,7 @@ export const RolePermissionsPanel: React.FC<Props> = ({
     } finally {
       setLoading(false);
     }
-  }, [onError]);
+  }, [onError, t]);
 
   useEffect(() => {
     if (selectedRoleId) void refresh(selectedRoleId);

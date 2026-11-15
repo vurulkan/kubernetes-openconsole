@@ -95,7 +95,7 @@ export const YamlEditModal: React.FC<Props> = ({ target, onClose, onApplied, the
     } finally {
       setLoading(false);
     }
-  }, [target]);
+  }, [target, t]);
 
   const handleDryRun = useCallback(async () => {
     if (!target) return;

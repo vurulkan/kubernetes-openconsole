@@ -269,6 +269,7 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
       cancelled = true;
       cancelAnimationFrame(raf);
     };
+    // Connects once per open; a container or shell change reconnects below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 

@@ -125,7 +125,7 @@ export const WorkloadDrawer: React.FC<Props> = ({
     return () => {
       live = false;
     };
-  }, [namespace, name, kind, workload]);
+  }, [namespace, name, kind, owner, workload]);
 
   if (!workload) return null;
   const spec = workload.spec ?? {};

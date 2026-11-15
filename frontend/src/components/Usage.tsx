@@ -191,15 +191,17 @@ export const UsageHistoryPanel: React.FC<{
   const [range, setRange] = useState('1h');
   const [data, setData] = useState<UsageHistory | null>(null);
   const [failed, setFailed] = useState(false);
+  // load is a new closure on every render; range and reloadKey say when to refetch.
+  const loadRef = useRef(load);
+  loadRef.current = load;
   useEffect(() => {
     let live = true;
-    load(range)
+    loadRef.current(range)
       .then((d) => live && (setData(d), setFailed(false)))
       .catch(() => live && setFailed(true));
     return () => {
       live = false;
     };
-    // load is a new closure on every render; range and reloadKey say when to refetch.
   }, [range, reloadKey]);
   const cpu = useMemo(() => (data?.points ?? []).map((p) => ({ t: p.t, v: p.cpu })), [data]);
   const mem = useMemo(() => (data?.points ?? []).map((p) => ({ t: p.t, v: p.memory })), [data]);

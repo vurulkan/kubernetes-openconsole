@@ -31,15 +31,15 @@ reference pages into `docs/reference/` (see "Generated reference" below).
 `frontend/` (React 18, TypeScript, Vite, Tailwind, react-i18next, Monaco, xterm.js).
 | Path | What |
 |---|---|
-| `src/pages/DashboardPage.tsx` | workloads screen (cards + table, tabs per kind); `pages/dashboard/ResourceListView.tsx` table columns; `PodDrawer` / `WorkloadDrawer` (Deployment, StatefulSet, DaemonSet; + `DetailParts`, `RestartHistory`) detail views |
+| `src/pages/DashboardPage.tsx` | workloads screen (cards + table, tabs per kind; only the view in use renders, a stale or failed load never replaces the current list); `pages/dashboard/ResourceListView.tsx` table columns, `ResourceCardsView.tsx` cards (same `ResourceViewProps`; a Logs handler is undefined without `pods:logs`); `PodDrawer` / `WorkloadDrawer` (Deployment, StatefulSet, DaemonSet; + `DetailParts`, `RestartHistory`) detail views |
 | `src/pages/OverviewPage.tsx` | admin overview (`/overview`, admins land here); charts in `pages/overview/Charts.tsx`, line chart = `components/Usage` `LineChart`. A page without a Layout `panel` gets the full width |
 | `src/pages/NodesPage.tsx` | admin node list (`/nodes`, `?node=<name>` opens the drawer); `pages/nodes/NodeDrawer.tsx` detail, `NodeParts.tsx` status badges, meter, search |
-| `src/pages/AdminPage.tsx` | admin shell + audit, clusters, LDAP, Azure; `pages/admin/*` users, groups, roles, sessions, recordings, `PrometheusSettings`, `ApiKeysSection` (every user's keys), `ApiAccessParts` (role / user API access, preview) |
+| `src/pages/AdminPage.tsx` | admin shell + clusters, LDAP, Azure; `pages/admin/*` `AuditSection` (its own debounced load; filters kept by AdminPage), users, groups, roles, sessions, recordings, `PrometheusSettings`, `ApiKeysSection` (every user's keys), `ApiAccessParts` (role / user API access, preview) |
 | `src/pages/ApiKeysPage.tsx` | the user's API keys (`/account/api-keys`, from the header account menu; `?tab=docs` = Documentation); `pages/apikeys/ApiKeyFormPage.tsx` create / edit, `ApiKeyParts.tsx` templates, expiry, secret box, `CopyRow`, `curlLine`; `ApiDocs.tsx` the Documentation tab, drawn from `/api/openapi.json` (greys out what the key ceiling doesn't reach) |
 | `src/components` | `ui.tsx` (Button, Badge, `Segmented`, …), `PermissionMatrix` (resource × action toggles + catalog, Role Permissions and API keys), `MenuPopover` (keyboard menu: DataTable columns, account menu, row ⋯), `DataTable` (sort + `sortStorageKey`, column picker `columnsStorageKey`, `keyboardNav`), `Drawer`, `ConfirmDialog`, `Combobox`, modals, `CommandPalette`, `LiveEventsPanel`, `LogViewer` (+ `utils/logStream.ts`: reconnect / resume), `ContainerPicker` (shell: which container), `PodStatusBadge` (+ `PodRestarts`, `ContainerSquares`), `Usage` (meter + SVG line charts) |
-| `src/hooks` | global / scoped keyboard shortcuts, modal scopes |
+| `src/hooks` | global / scoped keyboard shortcuts, modal scopes (`isTypingTarget`: inputs, Monaco, xterm), `useDialogFocus` (every modal dialog: focus in, Tab trapped, back to the opener) |
 | `src/services/api.ts` | every API call; `wsUrl()` = WebSocket URL with a single-use ticket (never the JWT); every request names the tab's cluster (`tabClusterId`, learned from the first response); `utils/session.ts` inactivity timeout in the browser |
-| `src/i18n.ts` | EN + TR dictionaries (one file) |
+| `src/i18n.ts` | EN + TR dictionaries (one file; TR says "siz" and "parola"); sets `<html lang>`. `services/api.ts` `errorText`: reason codes → `apiErrors.*` |
 | `src/shortcuts.json` | rows of the `?` cheat sheet with EN + TR text (`ShortcutsHelp`); docgen makes the docs page from it |
 | `src/utils` | `formatAge`, `formatBytes`, `formatDuration`, Kubernetes quantities (`parseCpu` / `parseMem` / `formatCpu` / `formatMem`); `podStatus.ts` = kubectl STATUS logic, last container termination, exit code hints, `podOwner` ("Deployment/web"), `podController` (direct controller), `containerStates` (per-container look for the Containers squares); use it, don't re-derive pod health or ownership; `resources.ts` requests / limits sums; `searchText.ts` what the Dashboard search matches per tab (add a column → add its text there); `openDashboard.ts` opens a Dashboard view or a pod drawer from another page |
 
@@ -57,7 +57,7 @@ Toolchain (go, node, npm, docker, kubectl, k3d) is in `/opt/homebrew/bin`, which
 ```bash
 # same as CI; run before every commit
 cd backend  && go vet ./... && go build ./... && go test -race ./...
-cd frontend && npm ci && npx tsc --noEmit -p . && npm test && npm run build
+cd frontend && npm ci && npx tsc --noEmit -p . && npm run lint && npm test && npm run build
 
 # local dev: backend on :8080 (DB in backend/data/), Vite on :5173 proxies /api and /ws
 cd backend  && go run ./cmd/server
@@ -94,7 +94,8 @@ Screenshots: Playwright's `chromium.launch` dies on this Mac; start Chrome yours
   A new verb → `audit.Verbs` + `VerbDocs`. Keep `Verb` / `ResourceType` / `Outcome` constants (or helper parameters
   called with constants): docgen reads the actions from the code and fails on what it can't follow.
   Never write secret values, YAML bodies, passwords or tokens into audit or logs.
-- **UI text** → key in both EN and TR in `i18n.ts` (the parity test fails otherwise).
+- **UI text** → key in both EN and TR in `i18n.ts` (the parity test fails otherwise; `i18nLiterals.test.ts` fails on English left in JSX). A new
+  server reason code the UI can show → `ERROR_CODES` in `services/api.ts` + `apiErrors.*`.
 - **an env var / feature flag** → `config.Vars` (or `api.AllFeatures` + `api.FeatureDocs`) + `deploy/deployment.yaml` comment.
 - **a metric** → `api.Metrics` (help text lives there only). **A permission** → `rbac.Catalog` + `rbac.ActionDocs` if
   the generic text doesn't fit. **A keyboard shortcut** → `frontend/src/shortcuts.json` (EN + TR text) + the binding.
@@ -107,7 +108,8 @@ Screenshots: Playwright's `chromium.launch` dies on this Mac; start Chrome yours
 - **a DB column / table** → migration in `internal/db` (idempotent `CREATE` / `ALTER`, or a new entry at the end of
   `steps` for a one-time change such as a table rebuild; never edit a shipped step; store tests upgrade an old schema).
   A new encrypted column → `store.encryptedColumns`.
-- **any UI** → light + dark theme, TR + EN, keyboard reachable, axe clean (frontend tests run axe).
+- **any UI** → light + dark theme, TR + EN, keyboard reachable, axe clean (frontend tests run axe); a dialog uses `Modal` / `Drawer` or
+  `useDialogFocus`; a screen is lazy-loaded in `App.tsx`; hooks pass `npm run lint` (`eslint.config.js`: rules-of-hooks + exhaustive-deps).
 - **anything a user or operator notices** → the docs site (below); the README only if a highlight or the quick start
   changes.
 

@@ -96,6 +96,8 @@ export const ResourceListView: React.FC<ResourceViewProps> = ({
   onScaleStatefulSet,
 }) => {
   const { t } = useTranslation();
+  // Logs buttons exist only with pods:logs (the handlers are undefined without it).
+  const canLogs = Boolean(openLogModal);
   // Column assembly per-tab. Name always left; actions always right; age is
   // the last data column before actions so it's where operators expect it.
   const usage = React.useMemo(
@@ -845,6 +847,7 @@ export const ResourceListView: React.FC<ResourceViewProps> = ({
     }
 
     return [nameCol, ageCol];
+    // The handlers are new closures on every render; the columns change with the data and permissions below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     activeTab,
@@ -854,6 +857,7 @@ export const ResourceListView: React.FC<ResourceViewProps> = ({
     canScaleDeployments,
     canScaleStatefulSets,
     canEditSecrets,
+    canLogs,
     t,
     metrics,
   ]);

@@ -36,7 +36,7 @@ export const SessionsSection: React.FC<Props> = ({ currentUserId }) => {
     } finally {
       setLoading(false);
     }
-  }, [activeOnly]);
+  }, [activeOnly, t]);
 
   useEffect(() => {
     refresh();

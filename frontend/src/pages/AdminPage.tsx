@@ -621,8 +621,10 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     }
   };
 
+  // Once on mount; every admin action calls refresh() itself after it.
   useEffect(() => {
     void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleCreateUser = async () => {

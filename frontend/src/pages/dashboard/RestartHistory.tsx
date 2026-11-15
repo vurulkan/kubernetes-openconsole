@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button, Spinner } from '../../components/ui';
 import type { ContainerTermination } from '../../services/api';
@@ -23,15 +23,17 @@ export const RestartHistory: React.FC<{
   const [items, setItems] = useState<ContainerTermination[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [all, setAll] = useState(false);
+  // load is a new closure on every render; reloadKey says when to refetch.
+  const loadRef = useRef(load);
+  loadRef.current = load;
   useEffect(() => {
     let live = true;
-    load()
+    loadRef.current()
       .then((r) => live && (setItems(r.items), setFailed(false)))
       .catch(() => live && setFailed(true));
     return () => {
       live = false;
     };
-    // load is a new closure on every render; reloadKey says when to refetch.
   }, [reloadKey]);
 
   if (failed) return <Empty>{t('dashboard.restarts.failed')}</Empty>;

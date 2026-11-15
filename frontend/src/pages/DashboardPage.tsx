@@ -345,8 +345,10 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
     }
   };
 
+  // Once on mount; the namespace list doesn't follow later renders.
   useEffect(() => {
     void loadNamespaces();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Persist the current namespace + resource tab across refreshes. Hydration
@@ -411,7 +413,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
       }
     };
     void loadPermissions();
-  }, [selectedNamespace]);
+  }, [selectedNamespace, t]);
 
   // auto: the periodic refresh, which the server doesn't audit. Only the
   // latest load may write: a slow answer for the previous namespace or tab

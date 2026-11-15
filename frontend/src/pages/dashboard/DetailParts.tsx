@@ -1,5 +1,5 @@
 // Building blocks shared by the pod and deployment detail drawers.
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { CheckCircle2, CircleDashed, XCircle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Spinner } from '../../components/ui';
@@ -79,15 +79,17 @@ export const Events: React.FC<{ load: () => Promise<{ items: Array<Record<string
   const { t } = useTranslation();
   const [events, setEvents] = useState<KubeEvent[] | null>(null);
   const [failed, setFailed] = useState(false);
+  // load is a new closure on every render; version says when to refetch.
+  const loadRef = useRef(load);
+  loadRef.current = load;
   useEffect(() => {
     let live = true;
-    load()
+    loadRef.current()
       .then((r) => live && (setEvents(r.items as KubeEvent[]), setFailed(false)))
       .catch(() => live && setFailed(true));
     return () => {
       live = false;
     };
-    // load is a new closure on every render; version says when to refetch.
   }, [version]);
   if (failed) return <Empty>{t('dashboard.detail.eventsFailed')}</Empty>;
   if (!events) return <Spinner size="sm" />;
