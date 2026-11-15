@@ -433,6 +433,15 @@ func TestAPIKeysUpgradeAndCRUD(t *testing.T) {
 	if err := st.UpdateAPIKey(ctx, *got); err != nil {
 		t.Fatal(err)
 	}
+	if err := st.RegenerateAPIKey(ctx, id, "oc_zzzzzz", "h3", nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = st.GetAPIKeyByHash(ctx, "h3"); got == nil || got.ExpiresAt != nil {
+		t.Fatalf("regenerated key = %+v", got)
+	}
+	if _, err := st.GetAPIKeyByHash(ctx, "h1"); err != sql.ErrNoRows {
+		t.Fatalf("old secret still found: %v", err)
+	}
 	if err := st.RevokeAPIKey(ctx, id); err != nil {
 		t.Fatal(err)
 	}
@@ -440,14 +449,12 @@ func TestAPIKeysUpgradeAndCRUD(t *testing.T) {
 	if got.Name != "agent-2" || !got.AllNamespaces || len(got.Namespaces) != 0 || strings.Join(got.Grants, ",") != "pods:logs" || got.RevokedAt == nil {
 		t.Fatalf("updated key = %+v", got)
 	}
-	if err := st.RegenerateAPIKey(ctx, id, "oc_zzzzzz", "h3", nil); err != nil {
-		t.Fatal(err)
+	// A revoked key stays revoked.
+	if err := st.RegenerateAPIKey(ctx, id, "oc_yyyyyy", "h4", nil); err != store.ErrAPIKeyRevoked {
+		t.Fatalf("regenerate revoked = %v, want ErrAPIKeyRevoked", err)
 	}
-	if got, _ = st.GetAPIKeyByHash(ctx, "h3"); got == nil || got.RevokedAt != nil || got.ExpiresAt != nil {
-		t.Fatalf("regenerated key = %+v", got)
-	}
-	if _, err := st.GetAPIKeyByHash(ctx, "h1"); err != sql.ErrNoRows {
-		t.Fatalf("old secret still found: %v", err)
+	if got, _ = st.GetAPIKeyByHash(ctx, "h3"); got == nil || got.RevokedAt == nil {
+		t.Fatalf("revoked key after regenerate = %+v", got)
 	}
 	if err := st.DeleteUser(ctx, uid); err != nil {
 		t.Fatal(err)

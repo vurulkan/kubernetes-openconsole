@@ -50,6 +50,7 @@ func goodClaims(username string) jwt.MapClaims {
 		"aud":                testClientID,
 		"exp":                time.Now().Add(time.Hour).Unix(),
 		"preferred_username": username,
+		"oid":                "oid-" + username,
 	}
 }
 
@@ -98,6 +99,10 @@ func TestAzureADEndToEnd(t *testing.T) {
 			c["iss"] = "https://evil.example/" + testTenant + "/v2.0"
 		case "preexisting":
 			c["preferred_username"] = "bob@example.com"
+		case "other-oid":
+			c["oid"] = "someone-else" // a re-created or renamed Entra user under jane's name
+		case "no-oid":
+			delete(c, "oid")
 		}
 		return c
 	})
@@ -126,19 +131,30 @@ func TestAzureADEndToEnd(t *testing.T) {
 		}
 	}
 
-	// A pre-created local account is reused (keeping its groups) and tagged.
+	// The account belongs to the Entra object that first signed in to it.
+	if code, _ := e.azureLogin("other-oid", false); code != http.StatusForbidden {
+		t.Fatalf("other oid = %d, want 403", code)
+	}
+	e.waitAudit("user.login.failed", "azure_oid_mismatch")
+	if code, _ := e.azureLogin("no-oid", false); code != http.StatusForbidden {
+		t.Fatalf("no oid = %d, want 403", code)
+	}
+	if code, _ := e.azureLogin("ok", false); code != http.StatusOK {
+		t.Fatalf("jane again = %d", code)
+	}
+
+	// A local account with the same name is never taken over.
 	bobID, _ := e.user("bob@example.com", false)
-	e.grant(bobID, [4]any{0, "team-a", "pods", "list"})
-	if code, _ := e.azureLogin("preexisting", false); code != http.StatusOK {
-		t.Fatalf("preexisting = %d", code)
+	if code, _ := e.azureLogin("preexisting", false); code != http.StatusForbidden {
+		t.Fatalf("preexisting local = %d, want 403", code)
 	}
-	bob, _ := e.store.GetUserByID(context.Background(), bobID)
-	groups, _ := e.store.GetUserGroups(context.Background(), bobID)
-	if bob.AuthSource != models.AuthSourceAzure || len(groups) != 1 {
-		t.Fatalf("bob = %+v groups=%v", bob, groups)
+	e.waitAudit("user.login.failed", "not_azure_account")
+	if bob, _ := e.store.GetUserByID(context.Background(), bobID); bob.AuthSource != models.AuthSourceLocal {
+		t.Fatalf("bob = %+v", bob)
 	}
-	// And can no longer be given a local password.
-	e.expect("POST", "/api/admin/users/"+itoa(int64(bobID))+"/reset-password", admin, map[string]string{"password": "New-passw0rd"}, http.StatusConflict)
+	// Azure AD accounts can't be given a local password.
+	janeID := u.ID
+	e.expect("POST", "/api/admin/users/"+itoa(int64(janeID))+"/reset-password", admin, map[string]string{"password": "New-passw0rd"}, http.StatusConflict)
 }
 
 // TestAzurePreCreatedByEmail: an account an admin pre-created under the
@@ -157,9 +173,11 @@ func TestAzurePreCreatedByEmail(t *testing.T) {
 			c["email"] = "Jane.Doe@corp.com" // other case than the pre-created name
 		case "mallory":
 			c["preferred_username"] = "mallory@corp.onmicrosoft.com"
+			c["oid"] = "oid-mallory"
 			c["email"] = "jane.doe@corp.com" // same e-mail, after Jane claimed it
 		case "local":
 			c["preferred_username"] = "eve@corp.onmicrosoft.com"
+			c["oid"] = "oid-eve"
 			c["email"] = "ops@corp.com" // matches a local account
 		}
 		return c

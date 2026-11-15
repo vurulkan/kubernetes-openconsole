@@ -431,7 +431,7 @@ func (s *Store) ListUserGroups(ctx context.Context, userID int) ([]int, error) {
 }
 
 func (s *Store) GetLDAPConfig(ctx context.Context) (models.LDAPConfig, error) {
-	row := s.conn.QueryRowContext(ctx, `SELECT enabled, url, host, port, use_ssl, start_tls, ssl_skip_verify, timeout_seconds, bind_dn, bind_password_enc, user_base_dn, user_base_dns, user_filter, username_attribute, auto_provision, auto_provision_groups FROM ldap_config WHERE id = 1`)
+	row := s.conn.QueryRowContext(ctx, `SELECT enabled, url, host, port, use_ssl, start_tls, ssl_skip_verify, timeout_seconds, bind_dn, bind_password_enc, user_base_dn, user_base_dns, user_filter, username_attribute, auto_provision, auto_provision_groups, ca_cert FROM ldap_config WHERE id = 1`)
 	var enabled, autoProvision int
 	var autoGroups string
 	var useSSL int
@@ -457,6 +457,7 @@ func (s *Store) GetLDAPConfig(ctx context.Context) (models.LDAPConfig, error) {
 		&cfg.UsernameAttribute,
 		&autoProvision,
 		&autoGroups,
+		&cfg.CACert,
 	); err != nil {
 		return cfg, err
 	}
@@ -525,7 +526,7 @@ func (s *Store) UpdateLDAPConfig(ctx context.Context, cfg models.LDAPConfig) err
 		UPDATE ldap_config
 		SET enabled = ?, url = ?, host = ?, port = ?, use_ssl = ?, start_tls = ?, ssl_skip_verify = ?, timeout_seconds = ?,
 		    bind_dn = ?, bind_password_enc = ?, user_base_dn = ?, user_base_dns = ?, user_filter = ?, username_attribute = ?,
-		    auto_provision = ?, auto_provision_groups = ?
+		    auto_provision = ?, auto_provision_groups = ?, ca_cert = ?
 		WHERE id = 1`,
 		enabled,
 		cfg.URL,
@@ -543,6 +544,7 @@ func (s *Store) UpdateLDAPConfig(ctx context.Context, cfg models.LDAPConfig) err
 		cfg.UsernameAttribute,
 		autoProvision,
 		strings.Join(groupParts, ","),
+		cfg.CACert,
 	)
 	return err
 }
@@ -1014,6 +1016,23 @@ func (s *Store) FindUnclaimedAzureAccount(ctx context.Context, name string) (*mo
 		return nil, err
 	}
 	return s.GetUserByID(ctx, id)
+}
+
+// GetUserAzureOID is the Entra object id an Azure AD account is bound to ("" = none yet).
+func (s *Store) GetUserAzureOID(ctx context.Context, userID int) (string, error) {
+	var oid string
+	err := s.conn.QueryRowContext(ctx, `SELECT azure_oid FROM users WHERE id = ?`, userID).Scan(&oid)
+	return oid, err
+}
+
+// BindUserAzureOID binds an Azure AD account to an Entra object id if it has
+// none yet, in one write (two first sign-ins can't both win), and returns the
+// id the account is bound to afterwards.
+func (s *Store) BindUserAzureOID(ctx context.Context, userID int, oid string) (string, error) {
+	if _, err := s.conn.ExecContext(ctx, `UPDATE users SET azure_oid = ? WHERE id = ? AND azure_oid = ''`, oid, userID); err != nil {
+		return "", err
+	}
+	return s.GetUserAzureOID(ctx, userID)
 }
 
 // SetUserAuthSource records where a user signs in (local / ldap / azure).

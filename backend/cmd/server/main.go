@@ -62,6 +62,10 @@ func main() {
 		slog.String("log_level", cfg.LogLevel),
 	)
 
+	if err := api.SetTrustedProxies(cfg.TrustedProxies); err != nil {
+		fatal("config error", err)
+	}
+
 	database, err := db.Open(cfg.DataPath)
 	if err != nil {
 		fatal("db error", err)

@@ -41,6 +41,8 @@ export type LDAPConfig = {
   useSsl: boolean;
   startTls: boolean;
   sslSkipVerify: boolean;
+  /** PEM CA the server certificate (ldaps / StartTLS) is checked against; empty = system CAs. */
+  caCert?: string;
   timeoutSeconds: number;
   bindDn: string;
   bindPassword: string;

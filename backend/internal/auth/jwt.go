@@ -38,7 +38,7 @@ func GenerateToken(secret []byte, userID int, username, jti string, ttl time.Dur
 func ParseToken(secret []byte, raw string) (*Claims, error) {
 	parsed, err := jwt.ParseWithClaims(raw, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 		return secret, nil
-	})
+	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}))
 	if err != nil {
 		return nil, err
 	}

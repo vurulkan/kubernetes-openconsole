@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"strings"
 	"testing"
 
 	"k8s-dashboard/backend/internal/testutil/ldapfake"
@@ -72,5 +73,41 @@ func TestLDAPSearchAndTestConnection(t *testing.T) {
 	cfg.BindPassword = "bad"
 	if err := TestConnection(cfg); err == nil {
 		t.Fatal("test connection should fail with a bad bind password")
+	}
+}
+
+// StartTLS checks the server's certificate against the host name in the URL
+// and the configured CA; it no longer needs "skip verify" to work at all.
+func TestLDAPStartTLSVerifiesCertificate(t *testing.T) {
+	srv := ldapfake.StartTLS(t, ldapfake.Directory())
+	cfg := fakeLDAPConfig(srv.URL(), "(sAMAccountName=%s)")
+	cfg.StartTLS = true
+
+	// Unknown CA: refused.
+	if err := LDAPAuthenticate(cfg, "jo", ldapfake.JoPwd); err == nil || !strings.Contains(err.Error(), "certificate") {
+		t.Fatalf("unknown CA: %v", err)
+	}
+	// The CA configured: the certificate is checked and the bind works.
+	cfg.CACert = srv.CAPEM
+	if err := LDAPAuthenticate(cfg, "jo", ldapfake.JoPwd); err != nil {
+		t.Fatalf("with CA: %v", err)
+	}
+	if err := TestConnection(cfg); err != nil {
+		t.Fatalf("test connection with CA: %v", err)
+	}
+	// Host name not on the certificate: refused even with the CA.
+	bad := cfg
+	bad.URL = strings.Replace(srv.URL(), "127.0.0.1", "127.0.0.2", 1)
+	if err := LDAPAuthenticate(bad, "jo", ldapfake.JoPwd); err == nil {
+		t.Fatal("wrong host name accepted")
+	}
+	// Skip verify still works without a CA (the operator's explicit choice).
+	cfg.CACert, cfg.SkipVerify = "", true
+	if err := LDAPAuthenticate(cfg, "jo", ldapfake.JoPwd); err != nil {
+		t.Fatalf("skip verify: %v", err)
+	}
+	cfg.CACert = "not a certificate"
+	if err := LDAPAuthenticate(cfg, "jo", ldapfake.JoPwd); err == nil {
+		t.Fatal("garbage CA accepted")
 	}
 }

@@ -55,6 +55,7 @@ type AzureIdentity struct {
 	Username string
 	Email    string
 	UPN      string
+	OID      string // Entra object id: the same person across renames
 }
 
 func AzureExchangeCode(ctx context.Context, cfg AzureADConfig, code string) (AzureIdentity, error) {
@@ -133,7 +134,8 @@ func AzureExchangeCode(ctx context.Context, cfg AzureADConfig, code string) (Azu
 	if username == "" {
 		return AzureIdentity{}, fmt.Errorf("no suitable username claim found")
 	}
-	return AzureIdentity{Username: username, Email: strings.TrimSpace(email), UPN: strings.TrimSpace(upn)}, nil
+	oid, _ := claims["oid"].(string)
+	return AzureIdentity{Username: username, Email: strings.TrimSpace(email), UPN: strings.TrimSpace(upn), OID: strings.TrimSpace(oid)}, nil
 }
 
 func TestAzureConnection(ctx context.Context, cfg AzureADConfig) error {

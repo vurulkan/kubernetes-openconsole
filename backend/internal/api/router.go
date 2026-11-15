@@ -4,9 +4,9 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	"crypto/x509"
 	"database/sql"
 	"encoding/base64"
-	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -161,6 +161,34 @@ func (s *Server) Router() http.Handler {
 	)
 }
 
+// Request body limits: maxBody for every request, more for a YAML apply (an
+// object may be up to etcd's 1.5 MiB, JSON-escaped) and the logo upload.
+const (
+	maxBody      = 1 << 20
+	maxApplyBody = 4 << 20
+)
+
+// limitBody answers 413 to a request that declares a body over its limit and
+// caps the rest, so no handler (sign-in included, before any login) reads an
+// unbounded body; a capped read fails the handler's decode.
+func limitBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		limit := int64(maxBody)
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/apply"):
+			limit = maxApplyBody
+		case r.URL.Path == "/api/admin/customization/logo":
+			limit = maxLogoSize + maxBody
+		}
+		if r.ContentLength > limit {
+			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, limit)
+		next.ServeHTTP(w, r)
+	})
+}
+
 // routes is every route; openapi_test.go walks it against openapi.yaml.
 func (s *Server) routes() *chi.Mux {
 	r := chi.NewRouter()
@@ -169,6 +197,7 @@ func (s *Server) routes() *chi.Mux {
 	r.Use(requestIDMiddleware)
 	r.Use(recoverMiddleware)
 	r.Use(requestLogger)
+	r.Use(limitBody)
 
 	// Liveness: just confirms the process is accepting requests.
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -481,23 +510,6 @@ func newRequestID() string {
 	return base64.RawURLEncoding.EncodeToString(buf[:])
 }
 
-func clientIP(r *http.Request) string {
-	if v := r.Header.Get("X-Forwarded-For"); v != "" {
-		if idx := strings.Index(v, ","); idx > 0 {
-			return strings.TrimSpace(v[:idx])
-		}
-		return strings.TrimSpace(v)
-	}
-	if v := r.Header.Get("X-Real-Ip"); v != "" {
-		return v
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}
-
 // quietPaths are logged at debug level when they succeed.
 var quietPaths = map[string]bool{"/healthz": true, "/livez": true, "/readyz": true, "/metrics": true}
 
@@ -624,13 +636,13 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Username string `json:"username"`
 		Password string `json:"password"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil || len(request.Username) > maxUsernameLen {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	gateKey := clientIP(r) + "|" + strings.ToLower(strings.TrimSpace(request.Username))
-	if ok, retry := LoginGate().check(gateKey); !ok {
+	gateKeys := loginGateKeys(clientIP(r), request.Username)
+	if ok, retry := LoginGate().check(gateKeys); !ok {
 		w.Header().Set("Retry-After", strconv.Itoa(retry))
 		s.recordLoginAudit(r, request.Username, audit.Locked, "too_many_failures", nil)
 		w.WriteHeader(http.StatusTooManyRequests)
@@ -648,7 +660,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil || !user.IsActive {
-		LoginGate().recordFailure(gateKey)
+		LoginGate().recordFailure(gateKeys)
 		s.recordLoginAudit(r, request.Username, audit.Failed, "unknown_user", nil)
 		w.WriteHeader(http.StatusUnauthorized)
 		return
@@ -656,9 +668,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// The account's source decides how the password is checked. Directory
 	// and Azure AD accounts never accept a local password, even if one was
-	// stored before 2.13 (an old reset), so they can't bypass the directory.
-	// Local accounts fall back to LDAP: users imported before 2.13 are still
-	// tagged local until their first directory sign-in tags them.
+	// stored before 2.13 (an old reset), so they can't bypass the directory;
+	// a local account never accepts a directory password, so a directory
+	// entry with the same name can't take it over (built-in admin included).
 	method := ""
 	failReason := "bad_password"
 	if directoryChecked {
@@ -674,15 +686,12 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		default:
 			if auth.ComparePassword(user.PasswordHash, request.Password) == nil {
 				method = models.AuthSourceLocal
-			} else if s.ldapAuthenticate(r.Context(), request.Username, request.Password) {
-				method = models.AuthSourceLDAP
-				_ = s.store.SetUserAuthSource(r.Context(), user.ID, models.AuthSourceLDAP)
 			}
 		}
 	}
 
 	if method == "" {
-		LoginGate().recordFailure(gateKey)
+		LoginGate().recordFailure(gateKeys)
 		s.recordLoginAudit(r, request.Username, audit.Failed, failReason, audit.D{"account_source": user.AuthSource})
 		// Same answer for every failure, so the response doesn't reveal
 		// whether an account exists or where it signs in.
@@ -692,7 +701,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	_ = s.store.MarkLogin(r.Context(), user.ID)
 	s.recordLoginAudit(r, user.Username, audit.Success, "", audit.D{"login_method": method})
-	LoginGate().recordSuccess(gateKey)
+	LoginGate().recordSuccess(gateKeys)
 	s.issueTokenForUser(w, r, user)
 }
 
@@ -709,22 +718,7 @@ func (s *Server) ldapAutoProvision(r *http.Request, typed, password string) (*mo
 	if err != nil || !cfg.Enabled || !cfg.AutoProvision || strings.TrimSpace(typed) == "" {
 		return nil, false
 	}
-	name, err := auth.LDAPAuthenticateUser(auth.LDAPConfig{
-		Enabled:           cfg.Enabled,
-		URL:               cfg.URL,
-		Host:              cfg.Host,
-		Port:              cfg.Port,
-		UseSSL:            cfg.UseSSL,
-		StartTLS:          cfg.StartTLS,
-		SkipVerify:        cfg.SkipVerify,
-		TimeoutSeconds:    cfg.TimeoutSeconds,
-		BindDN:            cfg.BindDN,
-		BindPassword:      cfg.BindPassword,
-		UserBaseDN:        cfg.UserBaseDN,
-		UserBaseDNs:       cfg.UserBaseDNs,
-		UserFilter:        cfg.UserFilter,
-		UsernameAttribute: cfg.UsernameAttribute,
-	}, typed, password)
+	name, err := auth.LDAPAuthenticateUser(ldapAuthConfig(cfg), typed, password)
 	if err != nil {
 		return nil, false
 	}
@@ -791,12 +785,9 @@ func (s *Server) existingGroupIDs(ctx context.Context, ids []int) []int {
 
 // ldapAuthenticate binds as the user against the configured directory; false
 // when LDAP is off, unconfigured or the credentials are wrong.
-func (s *Server) ldapAuthenticate(ctx context.Context, username, password string) bool {
-	cfg, err := s.store.GetLDAPConfig(ctx)
-	if err != nil || !cfg.Enabled {
-		return false
-	}
-	return auth.LDAPAuthenticate(auth.LDAPConfig{
+// ldapAuthConfig is the stored LDAP settings as the auth package takes them.
+func ldapAuthConfig(cfg models.LDAPConfig) auth.LDAPConfig {
+	return auth.LDAPConfig{
 		Enabled:           cfg.Enabled,
 		URL:               cfg.URL,
 		Host:              cfg.Host,
@@ -804,6 +795,7 @@ func (s *Server) ldapAuthenticate(ctx context.Context, username, password string
 		UseSSL:            cfg.UseSSL,
 		StartTLS:          cfg.StartTLS,
 		SkipVerify:        cfg.SkipVerify,
+		CACert:            cfg.CACert,
 		TimeoutSeconds:    cfg.TimeoutSeconds,
 		BindDN:            cfg.BindDN,
 		BindPassword:      cfg.BindPassword,
@@ -811,7 +803,15 @@ func (s *Server) ldapAuthenticate(ctx context.Context, username, password string
 		UserBaseDNs:       cfg.UserBaseDNs,
 		UserFilter:        cfg.UserFilter,
 		UsernameAttribute: cfg.UsernameAttribute,
-	}, username, password) == nil
+	}
+}
+
+func (s *Server) ldapAuthenticate(ctx context.Context, username, password string) bool {
+	cfg, err := s.store.GetLDAPConfig(ctx)
+	if err != nil || !cfg.Enabled {
+		return false
+	}
+	return auth.LDAPAuthenticate(ldapAuthConfig(cfg), username, password) == nil
 }
 
 func (s *Server) issueTokenForUser(w http.ResponseWriter, r *http.Request, user *models.User) {
@@ -902,6 +902,18 @@ func (s *Server) handleAzureStart(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, url, http.StatusFound)
 }
 
+// checkAzureOwner binds user to the Entra object oid on its first Azure AD
+// sign-in and returns "" when oid may use the account, else the audit reason.
+func (s *Server) checkAzureOwner(r *http.Request, user *models.User, oid string) string {
+	if user.AuthSource != models.AuthSourceAzure {
+		return "not_azure_account"
+	}
+	if bound, err := s.store.BindUserAzureOID(r.Context(), user.ID, oid); err != nil || bound != oid {
+		return "azure_oid_mismatch"
+	}
+	return ""
+}
+
 func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 	stateCookie, err := r.Cookie("azure_oauth_state")
 	if err != nil {
@@ -946,6 +958,13 @@ func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	username := identity.Username
+	// Accounts are bound to the Entra object id; without one, nobody is
+	// signed in (and no account is created).
+	if identity.OID == "" {
+		s.recordLoginAudit(r, username, audit.Failed, "azure_no_oid", audit.D{"login_method": models.AuthSourceAzure})
+		writeError(w, http.StatusForbidden, "this account can't sign in with this Microsoft account")
+		return
+	}
 	linkedBy := ""
 	user, err := s.store.GetUserByUsername(r.Context(), username)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -980,6 +999,7 @@ func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to create user")
 			return
 		}
+		_ = s.store.SetUserAuthSource(r.Context(), userID, models.AuthSourceAzure)
 		user, err = s.store.GetUserByID(r.Context(), userID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to load user")
@@ -990,10 +1010,15 @@ func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "user is disabled")
 		return
 	}
-	// Signed in through Azure AD: the stored password is random and must
-	// never become resettable.
-	if user.AuthSource != models.AuthSourceAzure {
-		_ = s.store.SetUserAuthSource(r.Context(), user.ID, models.AuthSourceAzure)
+	// Only an Azure AD account signs in here: a local or LDAP account with the
+	// same name is never taken over. The account belongs to the Entra object
+	// (oid) that first signs in to it; another object with the same name
+	// (a renamed or re-created user) is refused.
+	if reason := s.checkAzureOwner(r, user, identity.OID); reason != "" {
+		s.recordLoginAudit(r, username, audit.Failed, reason,
+			audit.D{"login_method": models.AuthSourceAzure, "account_source": user.AuthSource})
+		writeError(w, http.StatusForbidden, "this account can't sign in with this Microsoft account")
+		return
 	}
 	_ = s.store.MarkLogin(r.Context(), user.ID)
 
@@ -1530,6 +1555,21 @@ func (s *Server) handleWorkloadEvents(resource string) http.HandlerFunc {
 	}
 }
 
+// maxUsernameLen bounds a user name, also the one a failed sign-in writes
+// into the audit.
+const maxUsernameLen = 256
+
+// checkUsername returns why name can't be a user name, or "".
+func checkUsername(name string) string {
+	switch {
+	case name == "":
+		return "username is required"
+	case len(name) > maxUsernameLen:
+		return "username is too long"
+	}
+	return ""
+}
+
 func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 	users, err := s.store.ListUsers(r.Context())
 	if err != nil {
@@ -1554,8 +1594,8 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	request.Username = strings.TrimSpace(request.Username)
-	if request.Username == "" {
-		writeError(w, http.StatusBadRequest, "username is required")
+	if msg := checkUsername(request.Username); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
 	source := strings.ToLower(strings.TrimSpace(request.Source))
@@ -1628,6 +1668,13 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+	// The UI always sends the name; a script that leaves it out must not
+	// blank it (the account could no longer sign in).
+	request.Username = strings.TrimSpace(request.Username)
+	if msg := checkUsername(request.Username); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
+		return
+	}
 	user, err := s.store.GetUserByID(r.Context(), id)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
@@ -1660,6 +1707,10 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.UpdateUser(r.Context(), *user); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
+	}
+	// A disabled account loses its sessions now, not when the token expires.
+	if before.IsActive && !user.IsActive {
+		_ = s.store.RevokeAllForUser(r.Context(), user.ID)
 	}
 	changed := []string{}
 	if before.Username != user.Username {
@@ -2054,6 +2105,11 @@ func (s *Server) handleUpdateLDAP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+	request.CACert = strings.TrimSpace(request.CACert)
+	if request.CACert != "" && !x509.NewCertPool().AppendCertsFromPEM([]byte(request.CACert)) {
+		writeError(w, http.StatusBadRequest, "ldap CA certificate: no PEM certificate found")
+		return
+	}
 	if err := s.store.UpdateLDAPConfig(r.Context(), request); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -2082,22 +2138,7 @@ func (s *Server) handleTestLDAP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load ldap config")
 		return
 	}
-	if err := auth.TestConnection(auth.LDAPConfig{
-		Enabled:           cfg.Enabled,
-		URL:               cfg.URL,
-		Host:              cfg.Host,
-		Port:              cfg.Port,
-		UseSSL:            cfg.UseSSL,
-		StartTLS:          cfg.StartTLS,
-		SkipVerify:        cfg.SkipVerify,
-		TimeoutSeconds:    cfg.TimeoutSeconds,
-		BindDN:            cfg.BindDN,
-		BindPassword:      cfg.BindPassword,
-		UserBaseDN:        cfg.UserBaseDN,
-		UserBaseDNs:       cfg.UserBaseDNs,
-		UserFilter:        cfg.UserFilter,
-		UsernameAttribute: cfg.UsernameAttribute,
-	}); err != nil {
+	if err := auth.TestConnection(ldapAuthConfig(cfg)); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -2142,22 +2183,7 @@ func (s *Server) handleSearchLDAPUsers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load ldap config")
 		return
 	}
-	users, err := auth.SearchUsers(auth.LDAPConfig{
-		Enabled:           cfg.Enabled,
-		URL:               cfg.URL,
-		Host:              cfg.Host,
-		Port:              cfg.Port,
-		UseSSL:            cfg.UseSSL,
-		StartTLS:          cfg.StartTLS,
-		SkipVerify:        cfg.SkipVerify,
-		TimeoutSeconds:    cfg.TimeoutSeconds,
-		BindDN:            cfg.BindDN,
-		BindPassword:      cfg.BindPassword,
-		UserBaseDN:        cfg.UserBaseDN,
-		UserBaseDNs:       cfg.UserBaseDNs,
-		UserFilter:        cfg.UserFilter,
-		UsernameAttribute: cfg.UsernameAttribute,
-	}, request.Query)
+	users, err := auth.SearchUsers(ldapAuthConfig(cfg), request.Query)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -2435,7 +2461,7 @@ func (s *Server) handleAuditLogsExport(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/csv")
 	w.Header().Set("Content-Disposition", "attachment; filename=audit-logs.csv")
-	writer := csv.NewWriter(w)
+	writer := newCSVWriter(w)
 	_ = writer.Write([]string{"timestamp", "user", "action", "verb", "outcome", "reason", "cluster", "namespace",
 		"resource_type", "resource_name", "details", "source_ip", "user_agent", "auth_source", "request_id", "api_key_name"})
 	for _, entry := range logs {
@@ -2653,12 +2679,16 @@ func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, resou
 	return namespace, true
 }
 
+// can is the permission check of handlers that don't go through
+// requirePermission (sockets, reveal, apply, actions). Like userForRequest and
+// engineForRequest, it refuses a disabled account and a non-admin who must
+// still change the password, so neither can keep using a session it holds.
 func (s *Server) can(ctx context.Context, userID int, namespace, resource, action string) bool {
 	if !featureAllows(resource, action) {
 		return false
 	}
 	user, err := s.store.GetUserByID(ctx, userID)
-	if err != nil {
+	if err != nil || !user.IsActive || (user.MustChangePassword && !user.IsAdmin) {
 		return false
 	}
 	engine, err := s.accessFor(ctx, user)

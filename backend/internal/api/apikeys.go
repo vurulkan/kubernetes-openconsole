@@ -725,7 +725,13 @@ func (s *Server) handleRegenerateAPIKey(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "could not generate a key")
 		return
 	}
-	if err := s.store.RegenerateAPIKey(r.Context(), k.ID, prefix, hash, req.ExpiresAt); err != nil {
+	// Revoked (by its owner or an admin) is final: regenerating would bring
+	// back a key the admin took away. Expired keys can be regenerated.
+	if err := s.store.RegenerateAPIKey(r.Context(), k.ID, prefix, hash, req.ExpiresAt); errors.Is(err, store.ErrAPIKeyRevoked) {
+		s.auditAPIKey(r, audit.VerbRegenerate, audit.Failed, "revoked", k.Name, audit.D{"id": k.ID})
+		writeError(w, http.StatusConflict, "a revoked key can't be regenerated; create a new one")
+		return
+	} else if err != nil {
 		s.auditAPIKey(r, audit.VerbRegenerate, audit.Failed, failReason(err), k.Name, failDetails(err, audit.D{"id": k.ID}))
 		writeError(w, http.StatusInternalServerError, "could not save the key")
 		return

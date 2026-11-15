@@ -63,12 +63,22 @@ func (s *Store) UpdateAPIKey(ctx context.Context, k models.APIKey) error {
 	return tx.Commit()
 }
 
-// RegenerateAPIKey replaces the secret and the expiry; a revoked key becomes usable again.
+// RegenerateAPIKey replaces the secret and the expiry of a key that isn't
+// revoked (a revoked key stays revoked: ErrAPIKeyRevoked).
 func (s *Store) RegenerateAPIKey(ctx context.Context, id int, prefix, hash string, expiresAt *time.Time) error {
-	_, err := s.conn.ExecContext(ctx, `UPDATE api_keys SET prefix = ?, hash = ?, expires_at = ?, revoked_at = NULL, updated_at = ?
-		WHERE id = ?`, prefix, hash, utcOrNil(expiresAt), time.Now().UTC(), id)
-	return err
+	res, err := s.conn.ExecContext(ctx, `UPDATE api_keys SET prefix = ?, hash = ?, expires_at = ?, updated_at = ?
+		WHERE id = ? AND revoked_at IS NULL`, prefix, hash, utcOrNil(expiresAt), time.Now().UTC(), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrAPIKeyRevoked
+	}
+	return nil
 }
+
+// ErrAPIKeyRevoked: the key was revoked (or deleted) and can't be regenerated.
+var ErrAPIKeyRevoked = errors.New("api key revoked")
 
 func (s *Store) RevokeAPIKey(ctx context.Context, id int) error {
 	now := time.Now().UTC()

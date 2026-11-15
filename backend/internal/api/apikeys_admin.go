@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/csv"
 	"encoding/json"
 	"net/http"
 	"slices"
@@ -108,7 +107,7 @@ func (s *Server) handleExportAPIKeys(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", "attachment; filename=api-keys.csv")
-	cw := csv.NewWriter(w)
+	cw := newCSVWriter(w)
 	_ = cw.Write([]string{"owner", "name", "prefix", "status", "outside_expiry_policy", "admin_scope", "scope",
 		"created_at", "last_used_at", "last_used_ip", "expires_at", "revoked_at"})
 	for _, k := range items {

@@ -19,8 +19,10 @@ metadata:
   namespace: kubernetes-openconsole
 ---
 # Long-lived token for the "Token" method in Admin → Clusters. Kubernetes
-# fills in data.token and data.ca.crt. Rotate by deleting and re-applying
-# this Secret, then updating the cluster in the UI.
+# fills in data.token and data.ca.crt. To rotate, delete the ServiceAccount
+# (the Secret goes with it) and re-apply this file, then update the cluster in
+# the UI. Re-creating only the Secret gives the same token back: it is derived
+# from the ServiceAccount's name and uid and the Secret's name.
 apiVersion: v1
 kind: Secret
 metadata:

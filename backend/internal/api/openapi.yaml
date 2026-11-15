@@ -279,8 +279,11 @@ paths:
     post:
       tags: [Account]
       summary: New secret and expiry for an API key (web)
+      description: An expired key can be regenerated; a revoked one (by its owner or an admin) can't.
       x-openconsole-api-key: false
-      responses: {"200": {$ref: '#/components/responses/ok'}}
+      responses:
+        "200": {$ref: '#/components/responses/ok'}
+        "409": {$ref: '#/components/responses/error'}
   /api/me/api-keys/{id}/revoke:
     parameters: [{$ref: '#/components/parameters/id'}]
     post:
@@ -906,7 +909,17 @@ paths:
     post: {tags: [Admin], x-openconsole-admin: true, summary: Check cluster credentials without saving, responses: {"200": {$ref: '#/components/responses/ok'}}}
   /api/admin/clusters:
     get: {tags: [Admin], x-openconsole-admin: true, summary: List clusters, responses: {"200": {$ref: '#/components/responses/list'}}}
-    post: {tags: [Admin], x-openconsole-admin: true, summary: Add a cluster, responses: {"200": {$ref: '#/components/responses/ok'}}}
+    post:
+      tags: [Admin]
+      x-openconsole-admin: true
+      summary: Add a cluster
+      description: >-
+        A kubeconfig may only carry inline credentials (token, client-certificate-data / client-key-data,
+        certificate-authority-data); one with exec, auth-provider or a file path is refused with 400
+        `kubeconfig_unsupported: …`.
+      responses:
+        "200": {$ref: '#/components/responses/ok'}
+        "400": {$ref: '#/components/responses/error'}
   /api/admin/clusters/{id}:
     parameters: [{$ref: '#/components/parameters/id'}]
     put: {tags: [Admin], x-openconsole-admin: true, summary: Update a cluster, responses: {"200": {$ref: '#/components/responses/ok'}}}

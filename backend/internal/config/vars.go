@@ -38,6 +38,7 @@ var Vars = []Var{
 	{"OTEL_SERVICE_NAME", "Tracing (OpenTelemetry)", "openconsole", "`service.name` of the traces."},
 
 	{"PASSWORD_MIN_LENGTH", "Security and limits", "8", "Minimum length of local passwords (create, change, admin reset). Passwords are also capped at 72 bytes (bcrypt)."},
+	{"TRUSTED_PROXIES", "Security and limits", "", "Comma-separated CIDRs (or addresses) of the proxies in front of the console, e.g. the ingress controller's pod network. Only a connection from one of them may set the client address with `X-Forwarded-For` / `X-Real-Ip`; the address used is the first one from the right that isn't a trusted proxy. Empty = no header is believed and the client is the connection's source. It is the address in the audit, the sessions list and the sign-in lock. An invalid entry stops the server at start."},
 	{"EXEC_IDLE_TIMEOUT", "Security and limits", "5m", "A pod shell with no input for this long is closed. Go duration (`90s`, `10m`, `1h`); minimum `30s`."},
 	{"MAX_EXEC_SESSIONS_PER_USER", "Security and limits", "3", "Open pod shells per user; one more is refused with 429 and audited as `pod.exec` / `rate_limited`. `0` = unlimited."},
 

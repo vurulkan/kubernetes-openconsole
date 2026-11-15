@@ -13,8 +13,13 @@ import (
 // permissions and audits; the ticket only proves who is calling.
 func (s *Server) handleWSTicket(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.FromContext(r.Context())
-	if !ok {
+	user, active := s.userForRequest(r)
+	if !ok || !active {
 		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	if user.MustChangePassword && !user.IsAdmin {
+		writeError(w, http.StatusForbidden, reasonForbidden)
 		return
 	}
 	var body struct {
