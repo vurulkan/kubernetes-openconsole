@@ -154,13 +154,15 @@ func TestClientIPTrustsOnlyConfiguredProxies(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, c := range []struct{ remote, xff, want string }{
-		{"10.1.2.3:80", "198.51.100.4", "198.51.100.4"},              // through the ingress
-		{"10.1.2.3:80", "6.6.6.6, 198.51.100.4", "198.51.100.4"},     // client-written entry ignored
-		{"10.1.2.3:80", "198.51.100.4, 192.168.1.5", "198.51.100.4"}, // two proxies
-		{"203.0.113.9:80", "198.51.100.4", "203.0.113.9"},            // not from a proxy
-		{"10.1.2.3:80", "", "10.1.2.3"},                              // proxy, no header
-		{"10.1.2.3:80", "garbage", "10.1.2.3"},                       // unparsable
-		{"[::ffff:10.1.2.3]:80", "198.51.100.4", "198.51.100.4"},     // IPv4-mapped
+		{"10.1.2.3:80", "198.51.100.4", "198.51.100.4"},                // through the ingress
+		{"10.1.2.3:80", "6.6.6.6, 198.51.100.4", "198.51.100.4"},       // client-written entry ignored
+		{"10.1.2.3:80", "198.51.100.4, 192.168.1.5", "198.51.100.4"},   // two proxies
+		{"203.0.113.9:80", "198.51.100.4", "203.0.113.9"},              // not from a proxy
+		{"10.1.2.3:80", "", "10.1.2.3"},                                // proxy, no header
+		{"10.1.2.3:80", "garbage", "10.1.2.3"},                         // unparsable
+		{"[::ffff:10.1.2.3]:80", "198.51.100.4", "198.51.100.4"},       // IPv4-mapped
+		{"10.1.2.3:80", "6.6.6.6, 198.51.100.4:51234", "198.51.100.4"}, // Application Gateway adds the port
+		{"10.1.2.3:80", "[2001:db8::7]:443", "2001:db8::7"},            // IPv6 with a port
 	} {
 		if got := clientIP(req(c.remote, c.xff)); got != c.want {
 			t.Errorf("remote %s xff %q = %s, want %s", c.remote, c.xff, got, c.want)

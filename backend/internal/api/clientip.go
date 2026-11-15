@@ -69,19 +69,32 @@ func clientIP(r *http.Request) string {
 	}
 	client := remote
 	for i := len(hops) - 1; i >= 0; i-- {
-		a, err := netip.ParseAddr(strings.TrimSpace(hops[i]))
-		if err != nil {
+		a, ok := parseHop(hops[i])
+		if !ok {
 			break
 		}
-		client = a.Unmap()
+		client = a
 		if !isTrustedProxy(client) {
 			return client.String()
 		}
 	}
 	if len(hops) == 0 {
-		if a, err := netip.ParseAddr(strings.TrimSpace(r.Header.Get("X-Real-Ip"))); err == nil {
-			return a.Unmap().String()
+		if a, ok := parseHop(r.Header.Get("X-Real-Ip")); ok {
+			return a.String()
 		}
 	}
 	return client.String()
+}
+
+// parseHop reads one forwarded address: "1.2.3.4", "2001:db8::1", or with a
+// port as Azure Application Gateway writes it ("1.2.3.4:5678", "[2001:db8::1]:80").
+func parseHop(v string) (netip.Addr, bool) {
+	v = strings.TrimSpace(v)
+	if a, err := netip.ParseAddr(v); err == nil {
+		return a.Unmap(), true
+	}
+	if ap, err := netip.ParseAddrPort(v); err == nil {
+		return ap.Addr().Unmap(), true
+	}
+	return netip.Addr{}, false
 }
