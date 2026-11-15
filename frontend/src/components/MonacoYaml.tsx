@@ -3,8 +3,8 @@ import React, { Suspense, lazy } from 'react';
 // Monaco is the heaviest frontend dependency we have; lazy-loading it keeps
 // Dashboard first-paint untouched for the (common) read-only path. The chunk
 // only comes down the wire when the user actually opens the YAML modal.
-const Editor = lazy(() => import('@monaco-editor/react').then((m) => ({ default: m.Editor })));
-const DiffEditor = lazy(() => import('@monaco-editor/react').then((m) => ({ default: m.DiffEditor })));
+const Editor = lazy(() => import('./monacoSetup').then((m) => ({ default: m.Editor })));
+const DiffEditor = lazy(() => import('./monacoSetup').then((m) => ({ default: m.DiffEditor })));
 
 type YamlEditorProps = {
   value: string;

@@ -125,7 +125,7 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 			audit.D{"max_sessions": maxExecSessionsPerUser})
 		msg := "too many open shells (limit " + strconv.Itoa(maxExecSessionsPerUser) + " per user); close one first"
 		if websocket.IsWebSocketUpgrade(r) {
-			upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+			upgrader := websocket.Upgrader{CheckOrigin: wsOriginOK}
 			if conn, err := upgrader.Upgrade(w, r, nil); err == nil {
 				writeExecSessionInfo(conn)
 				_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"error","code":"too_many_sessions","limit":`+
@@ -197,7 +197,7 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	upgrader := websocket.Upgrader{CheckOrigin: wsOriginOK}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		slog.Warn("exec ws upgrade failed", slog.Any("error", err), slog.String("request_id", requestID))

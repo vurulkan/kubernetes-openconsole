@@ -32,6 +32,11 @@ type Config struct {
 	// TrustedProxies (TRUSTED_PROXIES): CIDRs whose X-Forwarded-For is believed.
 	TrustedProxies string
 
+	// AllowedOrigins (ALLOWED_ORIGINS) / WSOriginCheck (WS_ORIGIN_CHECK):
+	// cross-site browser access, see api/origins.go.
+	AllowedOrigins string
+	WSOriginCheck  string
+
 	// Pod shell limits.
 	ExecIdleTimeout        time.Duration
 	MaxExecSessionsPerUser int
@@ -96,6 +101,8 @@ func Load() Config {
 		PasswordMinLength: envIntMin("PASSWORD_MIN_LENGTH", 8, 1),
 
 		TrustedProxies:         os.Getenv("TRUSTED_PROXIES"),
+		AllowedOrigins:         os.Getenv("ALLOWED_ORIGINS"),
+		WSOriginCheck:          os.Getenv("WS_ORIGIN_CHECK"),
 		ExecIdleTimeout:        envDurationMin("EXEC_IDLE_TIMEOUT", 5*time.Minute, 30*time.Second),
 		MaxExecSessionsPerUser: envIntMin("MAX_EXEC_SESSIONS_PER_USER", 3, 0),
 		RestartHistoryDays:     envIntMin("RESTART_HISTORY_RETENTION_DAYS", 30, 1),

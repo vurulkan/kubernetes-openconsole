@@ -133,6 +133,16 @@ spec:
             - name: TRUSTED_PROXIES
               value: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"
             # The ones below are commented out and show their defaults.
+            # ALLOWED_ORIGINS: other sites whose pages may call the API from a
+            # browser (CORS), comma-separated, e.g. https://tools.example.com.
+            # The console's own UI needs nothing here. Default: none.
+            # - name: ALLOWED_ORIGINS
+            #   value: ""
+            # WS_ORIGIN_CHECK: a WebSocket (shell, logs, live events) opened
+            # from another site's page: warn = allow + log ws.origin_mismatch,
+            # enforce = refuse (403). Default warn.
+            # - name: WS_ORIGIN_CHECK
+            #   value: enforce
             # PASSWORD_MIN_LENGTH: minimum length of local passwords. Default 8.
             # - name: PASSWORD_MIN_LENGTH
             #   value: "12"
@@ -236,12 +246,16 @@ spec:
             failureThreshold: 3
           securityContext:
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false
+            # The image is distroless (no shell); the server writes only to
+            # /data and /tmp (large uploads), both mounted below.
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: tmp
+              mountPath: /tmp
             # Optional: separate volume for session recordings. Uncomment
             # together with the "recordings" volume below, the second PVC in
             # pvc.yaml, and SESSION_RECORDING_DIR=/recordings above.
@@ -251,6 +265,9 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: kubernetes-openconsole-data
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
         # - name: recordings
         #   persistentVolumeClaim:
         #     claimName: kubernetes-openconsole-recordings

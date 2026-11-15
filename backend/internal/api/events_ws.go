@@ -42,7 +42,7 @@ func (s *Server) handleEventsWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	upgrader := websocket.Upgrader{CheckOrigin: wsOriginOK}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
