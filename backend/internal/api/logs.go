@@ -116,7 +116,7 @@ func wsFail(w http.ResponseWriter, r *http.Request, status int, reason string) {
 	_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 }
 
-var logUpgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+var logUpgrader = websocket.Upgrader{CheckOrigin: wsOriginOK}
 
 // logSocket serializes writes from the per-stream goroutines.
 type logSocket struct {

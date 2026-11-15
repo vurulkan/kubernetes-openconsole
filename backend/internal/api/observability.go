@@ -22,20 +22,18 @@ func securityHeaders(next http.Handler) http.Handler {
 		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		h.Set("Permissions-Policy", "geolocation=(), camera=(), microphone=(), payment=(), interest-cohort=()")
 		if h.Get("Content-Security-Policy") == "" {
-			// Monaco editor (YAML edit modal, 2.6.0+) loads its chunks from
-			// jsdelivr by default. If an operator deploys in an air-gapped
-			// network, point @monaco-editor/react.loader.config() at a
-			// self-hosted path and tighten this CSP back to 'self'.
-			// 'wasm-unsafe-eval' lets the bundled asciinema-player compile its
-			// WebAssembly terminal (recording playback, 2.11.0+); it does not
-			// allow JS eval.
+			// Everything is served from the image ('self'): the Monaco
+			// editor is bundled (frontend/src/components/monacoSetup.ts), so
+			// it also works air-gapped. 'wasm-unsafe-eval' lets the bundled
+			// asciinema-player compile its WebAssembly terminal (recording
+			// playback, 2.11.0+); it does not allow JS eval.
 			h.Set("Content-Security-Policy",
 				"default-src 'self'; "+
-					"script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; "+
-					"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; "+
+					"script-src 'self' 'wasm-unsafe-eval'; "+
+					"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "+
 					"font-src 'self' https://fonts.gstatic.com data:; "+
 					"img-src 'self' data: blob:; "+
-					"connect-src 'self' ws: wss: https://cdn.jsdelivr.net; "+
+					"connect-src 'self' ws: wss:; "+
 					"worker-src 'self' blob:; "+
 					"frame-ancestors 'none'; "+
 					"base-uri 'self'; "+

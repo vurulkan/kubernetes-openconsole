@@ -65,6 +65,9 @@ func main() {
 	if err := api.SetTrustedProxies(cfg.TrustedProxies); err != nil {
 		fatal("config error", err)
 	}
+	if err := api.SetOrigins(cfg.AllowedOrigins, cfg.WSOriginCheck); err != nil {
+		fatal("config error", err)
+	}
 
 	database, err := db.Open(cfg.DataPath)
 	if err != nil {
