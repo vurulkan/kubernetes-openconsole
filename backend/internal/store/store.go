@@ -1025,10 +1025,14 @@ func (s *Store) GetUserAzureOID(ctx context.Context, userID int) (string, error)
 	return oid, err
 }
 
-// SetUserAzureOID binds an Azure AD account to an Entra object id.
-func (s *Store) SetUserAzureOID(ctx context.Context, userID int, oid string) error {
-	_, err := s.conn.ExecContext(ctx, `UPDATE users SET azure_oid = ? WHERE id = ?`, oid, userID)
-	return err
+// BindUserAzureOID binds an Azure AD account to an Entra object id if it has
+// none yet, in one write (two first sign-ins can't both win), and returns the
+// id the account is bound to afterwards.
+func (s *Store) BindUserAzureOID(ctx context.Context, userID int, oid string) (string, error) {
+	if _, err := s.conn.ExecContext(ctx, `UPDATE users SET azure_oid = ? WHERE id = ? AND azure_oid = ''`, oid, userID); err != nil {
+		return "", err
+	}
+	return s.GetUserAzureOID(ctx, userID)
 }
 
 // SetUserAuthSource records where a user signs in (local / ldap / azure).

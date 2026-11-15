@@ -908,15 +908,7 @@ func (s *Server) checkAzureOwner(r *http.Request, user *models.User, oid string)
 	if user.AuthSource != models.AuthSourceAzure {
 		return "not_azure_account"
 	}
-	bound, err := s.store.GetUserAzureOID(r.Context(), user.ID)
-	switch {
-	case err != nil:
-		return "azure_oid_mismatch"
-	case bound == "":
-		if s.store.SetUserAzureOID(r.Context(), user.ID, oid) != nil {
-			return "azure_oid_mismatch"
-		}
-	case bound != oid:
+	if bound, err := s.store.BindUserAzureOID(r.Context(), user.ID, oid); err != nil || bound != oid {
 		return "azure_oid_mismatch"
 	}
 	return ""
