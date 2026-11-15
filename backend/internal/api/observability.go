@@ -49,62 +49,101 @@ func securityHeaders(next http.Handler) http.Handler {
 
 type loginAttempt struct {
 	fails    int
+	last     time.Time // last failure
 	lockedAt time.Time
 }
 
+// loginGate counts failed sign-ins under two keys: the client address + user
+// name, and the user name alone with a higher limit, so a client that keeps
+// changing its address (or sits behind a shared one) still runs into a lock.
 type loginGate struct {
-	mu       sync.Mutex
-	byIPUser map[string]*loginAttempt
+	mu        sync.Mutex
+	attempts  map[string]*loginAttempt
+	lastSweep time.Time
 }
 
-var loginGateSingleton = &loginGate{byIPUser: map[string]*loginAttempt{}}
+var loginGateSingleton = &loginGate{attempts: map[string]*loginAttempt{}}
 
 // Thresholds. Picked small enough to deter credential stuffing but large
-// enough to not frustrate a typo-prone human.
+// enough to not frustrate a typo-prone human. Failures older than the window
+// are forgotten.
 const (
-	loginFailsBeforeLock = 5
-	loginLockWindow      = 5 * time.Minute
+	loginFailsBeforeLock     = 5  // per address + user
+	loginUserFailsBeforeLock = 20 // per user, any address
+	loginLockWindow          = 5 * time.Minute
 )
 
-// checkLogin returns (allowed, retryAfterSeconds). It should be called BEFORE
+type gateKey struct {
+	key   string
+	limit int
+}
+
+// loginGateKeys are the counters a sign-in by username from ip touches.
+func loginGateKeys(ip, username string) []gateKey {
+	u := strings.ToLower(strings.TrimSpace(username))
+	return []gateKey{{"ip|" + ip + "|" + u, loginFailsBeforeLock}, {"user|" + u, loginUserFailsBeforeLock}}
+}
+
+// check returns (allowed, retryAfterSeconds). It should be called BEFORE
 // the credential check.
-func (g *loginGate) check(ipUser string) (bool, int) {
+func (g *loginGate) check(keys []gateKey) (bool, int) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	a, ok := g.byIPUser[ipUser]
-	if !ok {
-		return true, 0
+	retry := 0
+	for _, k := range keys {
+		a, ok := g.attempts[k.key]
+		if !ok || a.fails < k.limit {
+			continue
+		}
+		remain := loginLockWindow - time.Since(a.lockedAt)
+		if remain <= 0 {
+			delete(g.attempts, k.key)
+			continue
+		}
+		retry = max(retry, int(remain.Seconds())+1)
 	}
-	if a.fails < loginFailsBeforeLock {
-		return true, 0
-	}
-	// Locked: check if window elapsed.
-	remain := loginLockWindow - time.Since(a.lockedAt)
-	if remain <= 0 {
-		delete(g.byIPUser, ipUser)
-		return true, 0
-	}
-	return false, int(remain.Seconds()) + 1
+	return retry == 0, retry
 }
 
-func (g *loginGate) recordFailure(ipUser string) {
+func (g *loginGate) recordFailure(keys []gateKey) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	a, ok := g.byIPUser[ipUser]
-	if !ok {
-		a = &loginAttempt{}
-		g.byIPUser[ipUser] = a
-	}
-	a.fails++
-	if a.fails == loginFailsBeforeLock {
-		a.lockedAt = time.Now()
+	now := time.Now()
+	g.sweep(now)
+	for _, k := range keys {
+		a, ok := g.attempts[k.key]
+		if !ok || now.Sub(a.last) > loginLockWindow {
+			a = &loginAttempt{}
+			g.attempts[k.key] = a
+		}
+		a.fails++
+		a.last = now
+		if a.fails == k.limit {
+			a.lockedAt = now
+		}
 	}
 }
 
-func (g *loginGate) recordSuccess(ipUser string) {
+// sweep drops counters with no failure for a lock window (a lock ends by
+// then too), at most once a minute, so names nobody retries don't pile up.
+func (g *loginGate) sweep(now time.Time) {
+	if now.Sub(g.lastSweep) < time.Minute {
+		return
+	}
+	g.lastSweep = now
+	for k, a := range g.attempts {
+		if now.Sub(a.last) > loginLockWindow {
+			delete(g.attempts, k)
+		}
+	}
+}
+
+func (g *loginGate) recordSuccess(keys []gateKey) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	delete(g.byIPUser, ipUser)
+	for _, k := range keys {
+		delete(g.attempts, k.key)
+	}
 }
 
 // LoginGate exposes the singleton for handler use.

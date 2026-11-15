@@ -11,6 +11,7 @@ import {
   MultiSelectOption,
   NativeSelect,
   Spinner,
+  TextArea,
 } from '../components/ui';
 import { UsersSection } from './admin/UsersSection';
 import LdapImportPanel from '../components/LdapImportPanel';
@@ -263,6 +264,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     useSsl: false,
     startTls: false,
     sslSkipVerify: false,
+    caCert: '',
     timeoutSeconds: 10,
     bindDn: '',
     bindPassword: '',
@@ -572,6 +574,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
         useSsl: ldapResult.value.useSsl ?? false,
         startTls: ldapResult.value.startTls ?? false,
         sslSkipVerify: ldapResult.value.sslSkipVerify ?? false,
+        caCert: ldapResult.value.caCert ?? '',
         timeoutSeconds: ldapResult.value.timeoutSeconds ?? 10,
         bindDn: ldapResult.value.bindDn ?? '',
         bindPassword: '',
@@ -1441,6 +1444,14 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                     onChange={(v) => setLdapConfig({ ...ldapConfig, sslSkipVerify: v })}
                     label={tr("admin.ldap.skipVerify")}
                   />
+                  <div className="sm:col-span-2 lg:col-span-3">
+                    <TextArea
+                      label={tr("admin.ldap.caCert")}
+                      value={ldapConfig.caCert}
+                      placeholder="-----BEGIN CERTIFICATE-----"
+                      onChange={(v) => setLdapConfig({ ...ldapConfig, caCert: v })}
+                    />
+                  </div>
                   <Input
                     label={tr("admin.ldap.timeout")}
                     type="number"

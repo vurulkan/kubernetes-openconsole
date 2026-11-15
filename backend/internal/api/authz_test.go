@@ -682,6 +682,6 @@ func resetGlobalLimiters() {
 	deployActionsLimitersMu.Unlock()
 	g := LoginGate()
 	g.mu.Lock()
-	g.byIPUser = map[string]*loginAttempt{}
+	g.attempts = map[string]*loginAttempt{}
 	g.mu.Unlock()
 }

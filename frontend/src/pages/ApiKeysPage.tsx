@@ -254,7 +254,8 @@ const ApiKeysPage: React.FC<{ user: User }> = ({ user }) => {
             ...(isLive(menu.key)
               ? [{ id: 'edit', icon: Pencil, label: t('actions.edit'), run: () => navigate(`/account/api-keys/${menu.key.id}`) }]
               : []),
-            { id: 'regen', icon: RefreshCw, label: t('apiKeys.regenerate'), run: () => setRegen(menu.key) },
+            // A revoked key stays revoked (the server answers 409); an expired one can be regenerated.
+            ...(menu.key.revokedAt ? [] : [{ id: 'regen', icon: RefreshCw, label: t('apiKeys.regenerate'), run: () => setRegen(menu.key) }]),
             ...(menu.key.revokedAt || !isLive(menu.key) ? [] : [{ id: 'revoke', icon: Ban, label: t('apiKeys.revoke'), run: () => void revoke(menu.key) }]),
             { id: 'delete', icon: Trash2, label: t('actions.delete'), run: () => void remove(menu.key) },
           ].map((item) => (

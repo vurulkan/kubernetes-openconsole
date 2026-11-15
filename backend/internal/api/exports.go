@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/csv"
+	"io"
 	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/models"
 	"net/http"
@@ -29,7 +30,7 @@ func (s *Server) handleExportUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", "attachment; filename=users.csv")
-	cw := csv.NewWriter(w)
+	cw := newCSVWriter(w)
 	_ = cw.Write([]string{"username", "source", "admin", "active", "must_change_password", "groups", "created_at"})
 	for _, u := range users {
 		ids, _ := s.store.GetUserGroups(ctx, u.ID)
@@ -77,7 +78,7 @@ func (s *Server) handleExportGroups(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", "attachment; filename=groups.csv")
-	cw := csv.NewWriter(w)
+	cw := newCSVWriter(w)
 	_ = cw.Write([]string{"group", "members", "roles"})
 	for _, g := range groups {
 		roleIDs, _ := s.store.GetGroupRoles(ctx, g.ID)
@@ -112,4 +113,27 @@ func joinNames(ids []int, names map[int]string) string {
 	}
 	sort.Strings(out)
 	return strings.Join(out, "; ")
+}
+
+// csvWriter writes CSV that a spreadsheet won't run: a cell starting with
+// = + - @ tab or CR gets a ' in front, so a user name, User-Agent or
+// X-Forwarded-For typed by someone else can't become a formula
+// (=HYPERLINK(…)) in the admin's spreadsheet. Every export uses it.
+type csvWriter struct{ *csv.Writer }
+
+func newCSVWriter(w io.Writer) csvWriter { return csvWriter{csv.NewWriter(w)} }
+
+func (c csvWriter) Write(record []string) error {
+	safe := make([]string, len(record))
+	for i, v := range record {
+		safe[i] = csvCell(v)
+	}
+	return c.Writer.Write(safe)
+}
+
+func csvCell(v string) string {
+	if v != "" && strings.ContainsRune("=+-@\t\r", rune(v[0])) {
+		return "'" + v
+	}
+	return v
 }

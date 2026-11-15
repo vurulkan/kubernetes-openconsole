@@ -143,7 +143,7 @@ func (s *Server) handleCreateCluster(w http.ResponseWriter, r *http.Request) {
 	// Validate credentials against the cluster BEFORE persisting; a bad kubeconfig
 	// should fail here rather than silently stuck in the DB.
 	if err := kube.ValidateCredentials(creds); err != nil {
-		writeError(w, http.StatusBadRequest, "cluster validation failed: "+err.Error())
+		writeError(w, http.StatusBadRequest, clusterValidationError(err))
 		return
 	}
 	id, err := s.store.CreateCluster(r.Context(), p.Name, p.Description, creds)
@@ -173,7 +173,7 @@ func (s *Server) handleUpdateClusterByID(w http.ResponseWriter, r *http.Request)
 	}
 	if p.ReplaceSecrets {
 		if err := kube.ValidateCredentials(creds); err != nil {
-			writeError(w, http.StatusBadRequest, "cluster validation failed: "+err.Error())
+			writeError(w, http.StatusBadRequest, clusterValidationError(err))
 			return
 		}
 	}
@@ -273,4 +273,14 @@ func (s *Server) recordClusterAudit(r *http.Request, verb, name string, id int) 
 		Cluster:      name,
 		ClusterID:    id,
 	})
+}
+
+// clusterValidationError is the 400 message for credentials that don't
+// validate; a kubeconfig that runs a program or reads a file starts with the
+// reason code kubeconfig_unsupported.
+func clusterValidationError(err error) string {
+	if errors.Is(err, kube.ErrKubeconfigUnsupported) {
+		return err.Error()
+	}
+	return "cluster validation failed: " + err.Error()
 }

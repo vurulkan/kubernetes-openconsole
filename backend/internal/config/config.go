@@ -29,6 +29,9 @@ type Config struct {
 	// PasswordMinLength is the minimum length for local account passwords.
 	PasswordMinLength int
 
+	// TrustedProxies (TRUSTED_PROXIES): CIDRs whose X-Forwarded-For is believed.
+	TrustedProxies string
+
 	// Pod shell limits.
 	ExecIdleTimeout        time.Duration
 	MaxExecSessionsPerUser int
@@ -92,6 +95,7 @@ func Load() Config {
 
 		PasswordMinLength: envIntMin("PASSWORD_MIN_LENGTH", 8, 1),
 
+		TrustedProxies:         os.Getenv("TRUSTED_PROXIES"),
 		ExecIdleTimeout:        envDurationMin("EXEC_IDLE_TIMEOUT", 5*time.Minute, 30*time.Second),
 		MaxExecSessionsPerUser: envIntMin("MAX_EXEC_SESSIONS_PER_USER", 3, 0),
 		RestartHistoryDays:     envIntMin("RESTART_HISTORY_RETENTION_DAYS", 30, 1),

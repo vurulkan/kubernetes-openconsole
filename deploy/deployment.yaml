@@ -122,6 +122,16 @@ spec:
             - name: MAX_REPLICAS
               value: "100"
 
+            # TRUSTED_PROXIES: the proxies in front of the console (CIDRs or
+            # addresses, comma-separated). Only a connection from one of them
+            # may set the client address with X-Forwarded-For / X-Real-Ip; it
+            # is the address in the audit, Admin → Sessions and the sign-in
+            # lock. The private ranges below cover an ingress controller or an
+            # Application Gateway inside the cluster's network; narrow them to
+            # your ingress pod CIDR if you can. Default (unset) = no header is
+            # believed: everyone appears as the ingress pod's address.
+            - name: TRUSTED_PROXIES
+              value: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"
             # The ones below are commented out and show their defaults.
             # PASSWORD_MIN_LENGTH: minimum length of local passwords. Default 8.
             # - name: PASSWORD_MIN_LENGTH

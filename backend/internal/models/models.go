@@ -65,6 +65,7 @@ type LDAPConfig struct {
 	UseSSL             bool     `json:"useSsl"`
 	StartTLS           bool     `json:"startTls"`
 	SkipVerify         bool     `json:"sslSkipVerify"`
+	CACert             string   `json:"caCert"` // PEM, for ldaps / StartTLS; empty = system CAs
 	TimeoutSeconds     int      `json:"timeoutSeconds"`
 	BindDN             string   `json:"bindDn"`
 	BindPassword       string   `json:"bindPassword"`

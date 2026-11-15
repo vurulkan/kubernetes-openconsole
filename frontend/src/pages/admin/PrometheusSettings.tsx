@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Plus, Search, Trash2, XCircle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { Alert, Button, Checkbox, Input, Modal, NativeSelect, Spinner } from '../../components/ui';
+import { Alert, Button, Checkbox, Input, Modal, NativeSelect, Spinner, TextArea } from '../../components/ui';
 import {
   discoverPrometheus,
   getPrometheusSettings,
@@ -13,29 +13,6 @@ import {
 
 const MASK = '••••••••';
 
-const TextArea: React.FC<{ label: string; value?: string; onChange: (v: string) => void; placeholder?: string }> = ({
-  label,
-  value,
-  onChange,
-  placeholder,
-}) => {
-  const id = React.useId();
-  return (
-    <div className="flex flex-col gap-1.5">
-      <label htmlFor={id} className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-        {label}
-      </label>
-      <textarea
-        id={id}
-        rows={3}
-        value={value ?? ''}
-        placeholder={placeholder}
-        onChange={(e) => onChange(e.target.value)}
-        className="rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-xs text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-      />
-    </div>
-  );
-};
 
 /** Per-cluster Prometheus: in-cluster Service through the API server proxy, or a direct URL. */
 export const PrometheusSettingsModal: React.FC<{ cluster: { id: number; name: string }; onClose: () => void }> = ({

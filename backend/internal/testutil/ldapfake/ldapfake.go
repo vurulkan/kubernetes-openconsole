@@ -7,7 +7,15 @@
 package ldapfake
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"net"
 	"strings"
 	"testing"
@@ -26,6 +34,7 @@ type Entry struct {
 // Server is a running fake directory.
 type Server struct {
 	Addr    string // host:port
+	CAPEM   string // with StartTLS: the PEM certificate the server presents (self-signed, 127.0.0.1 / localhost)
 	entries []Entry
 	srv     *gldap.Server
 }
@@ -33,6 +42,18 @@ type Server struct {
 // Start launches the server on a free localhost port; it stops when the test
 // ends.
 func Start(t *testing.T, entries []Entry) *Server {
+	t.Helper()
+	return start(t, entries, false)
+}
+
+// StartTLS is Start with the StartTLS extended operation, served with a
+// self-signed certificate for 127.0.0.1 and localhost (Server.CAPEM).
+func StartTLS(t *testing.T, entries []Entry) *Server {
+	t.Helper()
+	return start(t, entries, true)
+}
+
+func start(t *testing.T, entries []Entry, withTLS bool) *Server {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -55,6 +76,19 @@ func Start(t *testing.T, entries []Entry) *Server {
 	}
 	if err := mux.Search(s.search); err != nil {
 		t.Fatal(err)
+	}
+	if withTLS {
+		cfg, caPEM := selfSigned(t)
+		s.CAPEM = caPEM
+		if err := mux.ExtendedOperation(func(w *gldap.ResponseWriter, r *gldap.Request) {
+			res := r.NewExtendedResponse(gldap.WithResponseCode(gldap.ResultSuccess))
+			res.SetResponseName(gldap.ExtendedOperationStartTLS)
+			if w.Write(res) == nil {
+				_ = r.StartTLS(cfg)
+			}
+		}, gldap.ExtendedOperationStartTLS); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := srv.Router(mux); err != nil {
 		t.Fatal(err)
@@ -224,4 +258,30 @@ func unescape(s string) string {
 		b.WriteByte(s[i])
 	}
 	return b.String()
+}
+
+func selfSigned(t *testing.T) (*tls.Config, string) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "ldapfake"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1")},
+		DNSNames:              []string{"localhost"},
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}},
+		string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
 }

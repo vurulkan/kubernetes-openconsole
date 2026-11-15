@@ -314,6 +314,11 @@ func migrate(ctx context.Context, conn *sql.DB) error {
 		`ALTER TABLE session_settings ADD COLUMN api_key_allow_no_expiry INTEGER NOT NULL DEFAULT 1`,
 		// 2.22.0 (M16): shell | command (one command over REST).
 		`ALTER TABLE session_recordings ADD COLUMN mode TEXT NOT NULL DEFAULT 'shell'`,
+		// 2.23.1 (M24): the Entra object id an Azure AD account belongs to
+		// ('' = bound on its next Azure AD sign-in).
+		`ALTER TABLE users ADD COLUMN azure_oid TEXT NOT NULL DEFAULT ''`,
+		// 2.23.1 (M24): CA (PEM) the LDAP server's certificate is checked against.
+		`ALTER TABLE ldap_config ADD COLUMN ca_cert TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, stmt := range alterStatements {
 		if _, err := conn.ExecContext(ctx, stmt); err != nil {

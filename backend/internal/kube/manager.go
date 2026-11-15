@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -233,6 +234,9 @@ func buildConfig(creds models.KubeCredentials) (*rest.Config, error) {
 func buildConfigRaw(creds models.KubeCredentials) (*rest.Config, error) {
 	switch creds.Method {
 	case "kubeconfig":
+		if err := checkInlineKubeconfig(creds.Kubeconfig); err != nil {
+			return nil, err
+		}
 		return clientcmd.RESTConfigFromKubeConfig(creds.Kubeconfig)
 	case "token":
 		if creds.Server == "" || len(creds.Token) == 0 {
@@ -249,4 +253,43 @@ func buildConfigRaw(creds models.KubeCredentials) (*rest.Config, error) {
 	default:
 		return nil, fmt.Errorf("unsupported credentials method")
 	}
+}
+
+// ErrKubeconfigUnsupported: the kubeconfig runs a program or reads a file.
+var ErrKubeconfigUnsupported = errors.New("kubeconfig_unsupported")
+
+// checkInlineKubeconfig refuses a kubeconfig that would run a program (exec,
+// auth-provider) or read a file (token / certificate / key paths) in the
+// console's pod: an admin, or an admin-scoped API key, could otherwise run
+// code there or send its files (the DB, the ServiceAccount token) to a server
+// of their choice. Only inline data is accepted.
+func checkInlineKubeconfig(raw []byte) error {
+	cfg, err := clientcmd.Load(raw)
+	if err != nil {
+		return err
+	}
+	for name, u := range cfg.AuthInfos {
+		bad := ""
+		switch {
+		case u.Exec != nil:
+			bad = "exec"
+		case u.AuthProvider != nil:
+			bad = "auth-provider"
+		case u.TokenFile != "":
+			bad = "tokenFile"
+		case u.ClientCertificate != "":
+			bad = "client-certificate"
+		case u.ClientKey != "":
+			bad = "client-key"
+		}
+		if bad != "" {
+			return fmt.Errorf("%w: user %q uses %s; use inline credentials (token, client-certificate-data, client-key-data)", ErrKubeconfigUnsupported, name, bad)
+		}
+	}
+	for name, c := range cfg.Clusters {
+		if c.CertificateAuthority != "" {
+			return fmt.Errorf("%w: cluster %q uses certificate-authority (a file); use certificate-authority-data", ErrKubeconfigUnsupported, name)
+		}
+	}
+	return nil
 }
