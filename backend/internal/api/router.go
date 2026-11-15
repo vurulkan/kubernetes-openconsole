@@ -149,7 +149,7 @@ func (v *sessionValidator) Validate(ctx context.Context, jti string) (bool, erro
 	return true, nil
 }
 
-func (v *sessionValidator) Touch(jti string) { v.t.Touch(jti) }
+func (v *sessionValidator) Touch(jti string, until time.Time) { v.t.Touch(jti, until) }
 
 // authValidator wires the Store + toucher into the shape AuthMiddleware wants.
 // Returned fresh each time so AuthMiddleware never holds a reference it could
@@ -846,34 +846,48 @@ func (s *Server) issueTokenForUser(w http.ResponseWriter, r *http.Request, user 
 		return
 	}
 
-	session, err := s.store.GetSessionSettings(r.Context())
+	token, err := s.newSession(r, user)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
-	}
-	ttl := time.Duration(session.SessionMinutes) * time.Minute
-	jti, err := newSessionID()
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-	token, err := auth.GenerateToken(s.jwtKey, user.ID, user.Username, jti, ttl)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-	now := time.Now().UTC()
-	// Session row failure is logged but doesn't fail the login — the JWT is
-	// still valid; the admin loses revocation visibility for this session
-	// until the next login, which is the desired safety trade-off.
-	if err := s.store.CreateSession(r.Context(), jti, user.ID, now, now.Add(ttl), clientIP(r), r.UserAgent()); err != nil {
-		slog.Warn("could not record session", "user", user.Username, "error", err.Error())
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"token": token,
 		"user":  user,
 	})
+}
+
+// sessionMaxAge is how long a session lasts however active it is (or the
+// inactivity timeout, when an admin set that longer); then sign in again.
+const sessionMaxAge = 12 * time.Hour
+
+// newSession signs a session token for user and records it. The session ends
+// after the inactivity timeout (Admin → session setting, minutes) without
+// activity, which TouchSession moves on, and at the latest after
+// sessionMaxAge (the JWT's own expiry).
+func (s *Server) newSession(r *http.Request, user *models.User) (string, error) {
+	settings, err := s.store.GetSessionSettings(r.Context())
+	if err != nil {
+		return "", err
+	}
+	idle := time.Duration(settings.SessionMinutes) * time.Minute
+	jti, err := newSessionID()
+	if err != nil {
+		return "", err
+	}
+	token, err := auth.GenerateSessionToken(s.jwtKey, user.ID, user.Username, jti, max(sessionMaxAge, idle), idle)
+	if err != nil {
+		return "", err
+	}
+	now := time.Now().UTC()
+	// Session row failure is logged but doesn't fail the login — the JWT is
+	// still valid; the admin loses revocation visibility for this session
+	// until the next login, which is the desired safety trade-off.
+	if err := s.store.CreateSession(r.Context(), jti, user.ID, now, now.Add(idle), clientIP(r), r.UserAgent()); err != nil {
+		slog.Warn("could not record session", "user", user.Username, "error", err.Error())
+	}
+	return token, nil
 }
 
 // newSessionID returns a URL-safe 128-bit random string used as the JWT jti
@@ -1048,25 +1062,10 @@ func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.store.MarkLogin(r.Context(), user.ID)
 
-	session, err := s.store.GetSessionSettings(r.Context())
+	token, err := s.newSession(r, user)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load session settings")
+		writeError(w, http.StatusInternalServerError, "failed to start the session")
 		return
-	}
-	ttl := time.Duration(session.SessionMinutes) * time.Minute
-	jti, err := newSessionID()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to generate session id")
-		return
-	}
-	token, err := auth.GenerateToken(s.jwtKey, user.ID, user.Username, jti, ttl)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to generate token")
-		return
-	}
-	now := time.Now().UTC()
-	if err := s.store.CreateSession(r.Context(), jti, user.ID, now, now.Add(ttl), clientIP(r), r.UserAgent()); err != nil {
-		slog.Warn("could not record azure session", "user", user.Username, "error", err.Error())
 	}
 	login := audit.D{"login_method": models.AuthSourceAzure}
 	if linkedBy != "" {
@@ -1177,7 +1176,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleNamespaces(w http.ResponseWriter, r *http.Request) {
 	existing, err := s.resources.ListNamespaces(r.Context())
 	if err != nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
+		writeReadError(w, r, err, "namespaces")
 		return
 	}
 	if _, ok := s.userForRequest(r); !ok {
@@ -1225,7 +1224,7 @@ func (s *Server) handlePods(w http.ResponseWriter, r *http.Request) {
 	}
 	pods, err := s.resources.ListPods(r.Context(), namespace)
 	if err != nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
+		writeReadError(w, r, err, "pods")
 		return
 	}
 	s.auditRead(r, audit.VerbList, "pods", namespace, "*")
@@ -1239,7 +1238,7 @@ func (s *Server) handlePod(w http.ResponseWriter, r *http.Request) {
 	}
 	pod, err := s.resources.GetPod(r.Context(), namespace, chi.URLParam(r, "name"))
 	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
+		writeReadError(w, r, err, "pods")
 		return
 	}
 	s.auditRead(r, audit.VerbGet, "pods", namespace, pod.Name)
@@ -1253,7 +1252,7 @@ func (s *Server) handleDeployments(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.resources.ListDeployments(r.Context(), namespace)
 	if err != nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
+		writeReadError(w, r, err, "deployments")
 		return
 	}
 	s.auditRead(r, audit.VerbList, "deployments", namespace, "*")
@@ -1267,7 +1266,7 @@ func (s *Server) handleDeployment(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := s.resources.GetDeployment(r.Context(), namespace, chi.URLParam(r, "name"))
 	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
+		writeReadError(w, r, err, "deployments")
 		return
 	}
 	s.auditRead(r, audit.VerbGet, "deployments", namespace, item.Name)
@@ -1281,7 +1280,7 @@ func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.resources.ListServices(r.Context(), namespace)
 	if err != nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
+		writeReadError(w, r, err, "services")
 		return
 	}
 	s.auditRead(r, audit.VerbList, "services", namespace, "*")
@@ -1295,7 +1294,7 @@ func (s *Server) handleService(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := s.resources.GetService(r.Context(), namespace, chi.URLParam(r, "name"))
 	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
+		writeReadError(w, r, err, "services")
 		return
 	}
 	s.auditRead(r, audit.VerbGet, "services", namespace, item.Name)
@@ -1309,7 +1308,7 @@ func (s *Server) handleConfigMaps(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.resources.ListConfigMaps(r.Context(), namespace)
 	if err != nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
+		writeReadError(w, r, err, "configmaps")
 		return
 	}
 	s.auditRead(r, audit.VerbList, "configmaps", namespace, "*")
@@ -1323,7 +1322,7 @@ func (s *Server) handleConfigMap(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := s.resources.GetConfigMap(r.Context(), namespace, chi.URLParam(r, "name"))
 	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
+		writeReadError(w, r, err, "configmaps")
 		return
 	}
 	s.auditRead(r, audit.VerbGet, "configmaps", namespace, item.Name)
@@ -1343,7 +1342,7 @@ func (s *Server) handlePodYAML(w http.ResponseWriter, r *http.Request) {
 	}
 	pod, err := s.resources.GetPod(r.Context(), namespace, chi.URLParam(r, "name"))
 	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
+		writeReadError(w, r, err, "pods")
 		return
 	}
 	pod.ManagedFields = nil
@@ -1363,7 +1362,7 @@ func (s *Server) handleDeploymentYAML(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := s.resources.GetDeployment(r.Context(), namespace, chi.URLParam(r, "name"))
 	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
+		writeReadError(w, r, err, "deployments")
 		return
 	}
 	item.ManagedFields = nil
@@ -1383,7 +1382,7 @@ func (s *Server) handleServiceYAML(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := s.resources.GetService(r.Context(), namespace, chi.URLParam(r, "name"))
 	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
+		writeReadError(w, r, err, "services")
 		return
 	}
 	item.ManagedFields = nil
@@ -1403,7 +1402,7 @@ func (s *Server) handleConfigMapYAML(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := s.resources.GetConfigMap(r.Context(), namespace, chi.URLParam(r, "name"))
 	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
+		writeReadError(w, r, err, "configmaps")
 		return
 	}
 	item.ManagedFields = nil
@@ -1423,7 +1422,7 @@ func (s *Server) handleConfigMapData(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := s.resources.GetConfigMap(r.Context(), namespace, chi.URLParam(r, "name"))
 	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
+		writeReadError(w, r, err, "configmaps")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"data": item.Data})
@@ -1436,7 +1435,7 @@ func (s *Server) handleIngresses(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.resources.ListIngresses(r.Context(), namespace)
 	if err != nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
+		writeReadError(w, r, err, "ingresses")
 		return
 	}
 	s.auditRead(r, audit.VerbList, "ingresses", namespace, "*")
@@ -1450,7 +1449,7 @@ func (s *Server) handleCronJobs(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.resources.ListCronJobs(r.Context(), namespace)
 	if err != nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
+		writeReadError(w, r, err, "cronjobs")
 		return
 	}
 	s.auditRead(r, audit.VerbList, "cronjobs", namespace, "*")
@@ -1464,7 +1463,7 @@ func (s *Server) handleCronJobYAML(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := s.resources.GetCronJob(r.Context(), namespace, chi.URLParam(r, "name"))
 	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
+		writeReadError(w, r, err, "cronjobs")
 		return
 	}
 	item.ManagedFields = nil
@@ -1485,7 +1484,7 @@ func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.resources.ListJobs(r.Context(), namespace)
 	if err != nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
+		writeReadError(w, r, err, "jobs")
 		return
 	}
 	s.auditRead(r, audit.VerbList, "jobs", namespace, "*")
@@ -1499,7 +1498,7 @@ func (s *Server) handleJobYAML(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := s.resources.GetJob(r.Context(), namespace, chi.URLParam(r, "name"))
 	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
+		writeReadError(w, r, err, "jobs")
 		return
 	}
 	item.ManagedFields = nil
@@ -1520,7 +1519,7 @@ func (s *Server) handleIngressYAML(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := s.resources.GetIngress(r.Context(), namespace, chi.URLParam(r, "name"))
 	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
+		writeReadError(w, r, err, "ingresses")
 		return
 	}
 	item.ManagedFields = nil
@@ -2741,11 +2740,28 @@ func (s *Server) can(ctx context.Context, userID int, namespace, resource, actio
 		return false
 	}
 	user, err := s.store.GetUserByID(ctx, userID)
-	if err != nil || !user.IsActive || (user.MustChangePassword && !user.IsAdmin) {
+	if err != nil {
+		logPermissionError(ctx, err)
+		return false
+	}
+	if !user.IsActive || (user.MustChangePassword && !user.IsAdmin) {
 		return false
 	}
 	engine, err := s.accessFor(ctx, user)
-	return err == nil && engine.Can(clusterIDFrom(ctx), namespace, resource, action)
+	if err != nil {
+		logPermissionError(ctx, err)
+		return false
+	}
+	return engine.Can(clusterIDFrom(ctx), namespace, resource, action)
+}
+
+// logPermissionError: a permission check that could not read the database
+// refuses (and the caller audits a denial), so the cause is logged here.
+func logPermissionError(ctx context.Context, err error) {
+	if errors.Is(err, sql.ErrNoRows) {
+		return
+	}
+	slog.Error("permission check failed", slog.Any("error", err), slog.String("request_id", logpkg.RequestIDFrom(ctx)))
 }
 
 func (s *Server) userForRequest(r *http.Request) (*models.User, bool) {

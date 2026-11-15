@@ -490,7 +490,7 @@ func restartSummary(rows []models.ContainerTermination, now time.Time) (int64, [
 
 // warningEvents: the informer cache when it is warm, else one filtered list call.
 func warningEvents(ctx context.Context, m *kube.Manager, client kubernetes.Interface, since time.Time) ([]corev1.Event, error) {
-	if ic := m.Informers(); ic != nil && ic.Synced() {
+	if ic := m.Informers(); ic != nil && ic.Usable("Event") {
 		return ic.WarningEvents(since), nil
 	}
 	list, err := client.CoreV1().Events("").List(ctx, metav1.ListOptions{FieldSelector: "type=Warning"})

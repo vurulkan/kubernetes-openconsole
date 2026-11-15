@@ -44,7 +44,7 @@ func (c *ResourceClient) Apply(
 ) (*ApplyResult, error) {
 	cfg, ok := c.mgr(ctx).RESTConfig()
 	if !ok {
-		return nil, fmt.Errorf("kubernetes client not ready")
+		return nil, ErrNotReady
 	}
 	dyn, err := dynamic.NewForConfig(cfg)
 	if err != nil {

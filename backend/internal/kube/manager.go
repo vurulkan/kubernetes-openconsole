@@ -49,7 +49,7 @@ func (m *Manager) EventBus() *EventBus {
 }
 
 // Informers returns the active informer cache or nil when no cluster is
-// configured. Callers must check Synced() before trusting lister results.
+// configured. Callers must check Usable(kind) before trusting lister results.
 func (m *Manager) Informers() *InformerCache {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -169,6 +169,33 @@ func (m *Manager) Ready() bool {
 	return m.client != nil && m.ready
 }
 
+// Connected is what openconsole_cluster_connected reports: a client, and an
+// informer cache that has listed something and isn't failing (see
+// InformerCache.Connected). A Manager without a cache (tests) is connected
+// when it has a client.
+func (m *Manager) Connected() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.client == nil || !m.ready {
+		return false
+	}
+	return m.informers == nil || m.informers.Connected()
+}
+
+// Check makes one real call (list namespaces, limit 1) with the Manager's
+// client: connecting builds a client but asks the cluster nothing, so a
+// refused token or an unreachable server shows only here.
+func (m *Manager) Check(ctx context.Context) error {
+	client, ok := m.Client()
+	if !ok {
+		return ErrNotReady
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	_, err := client.CoreV1().Namespaces().List(ctx, metav1.ListOptions{Limit: 1})
+	return err
+}
+
 func (m *Manager) LastError() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -213,6 +240,9 @@ func (m *Manager) Stop() {
 	m.client = nil
 	m.restConfig = nil
 	m.ready = false
+	// Live Events sockets on this cluster end, so the panels reconnect to the
+	// new connection instead of waiting on a bus nothing publishes to anymore.
+	m.bus.CloseAll()
 }
 
 func buildConfig(creds models.KubeCredentials) (*rest.Config, error) {

@@ -1639,7 +1639,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
 
           {/* ─────────────────────────── SESSION ────────────────────── */}
           {tab === 'session' && (
-            <SectionCard title={tr('admin.sections.sessionSettings')}>
+            <SectionCard title={tr('admin.sections.sessionSettings')} description={tr('admin.cards.sessionDesc')}>
               <Input
                 label={tr("common.sessionLifetime")}
                 type="number"

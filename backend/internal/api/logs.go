@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,6 +30,7 @@ import (
 //	{"t":"line","ts":"…","p":"pod","c":"container","text":"…"}
 //	{"t":"end","reason":"previous_complete|container_terminated|pod_deleted|interrupted","retry":bool}
 //	{"t":"error","reason":"forbidden|rate_limited|not_ready|container_not_found|previous_unavailable|no_pods|unavailable","retry":bool}
+//	{"t":"note","reason":"pods_limited","shown":20,"total":60}   (a workload view follows at most maxLogPods pods)
 //
 // retry tells the viewer to reconnect with ?sinceTime=<last ts>&skip=<lines at that ts>&resume=true.
 // An error frame with "p" set is about one stream of a multi-pod view; the others go on.
@@ -41,7 +43,18 @@ type logFrame struct {
 	Reason string `json:"reason,omitempty"`
 	Msg    string `json:"msg,omitempty"`
 	Retry  bool   `json:"retry,omitempty"`
+	Shown  int    `json:"shown,omitempty"`
+	Total  int    `json:"total,omitempty"`
 }
+
+// maxLogPods caps the pods a workload log view follows: each container is
+// one API server stream, held as long as the viewer is open.
+const maxLogPods = 20
+
+// logWriteTimeout bounds one frame write: a viewer that stops reading (a
+// frozen tab) ends its socket and the streams behind it instead of holding
+// them. A var for tests.
+var logWriteTimeout = 10 * time.Second
 
 // Fixed width, so the browser can compare timestamps as strings.
 const logTSLayout = "2006-01-02T15:04:05.000000000Z"
@@ -118,22 +131,46 @@ func wsFail(w http.ResponseWriter, r *http.Request, status int, reason string) {
 
 var logUpgrader = websocket.Upgrader{CheckOrigin: wsOriginOK}
 
-// logSocket serializes writes from the per-stream goroutines.
+// logSocket serializes writes from the per-stream goroutines. The first
+// write that fails or times out cancels the view (cancel ends every
+// Kubernetes stream) and later frames are dropped.
 type logSocket struct {
-	mu   sync.Mutex
-	conn *websocket.Conn
+	mu     sync.Mutex
+	conn   *websocket.Conn
+	cancel context.CancelFunc
+	dead   bool
+}
+
+func newLogSocket(conn *websocket.Conn, cancel context.CancelFunc) *logSocket {
+	return &logSocket{conn: conn, cancel: cancel}
 }
 
 func (s *logSocket) send(f logFrame) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_ = s.conn.WriteJSON(f)
+	if s.dead {
+		return
+	}
+	_ = s.conn.SetWriteDeadline(time.Now().Add(logWriteTimeout))
+	if err := s.conn.WriteJSON(f); err != nil {
+		s.dead = true
+		s.cancel()
+	}
 }
 
 func (s *logSocket) close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_ = s.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+	if s.dead {
+		return
+	}
+	_ = s.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(time.Second))
+}
+
+// keepAlive pings until ctx ends, so a proxy's idle timeout (ingress-nginx:
+// 60 s) doesn't cut a quiet log; a ping that can't be written ends the view.
+func (s *logSocket) keepAlive(ctx context.Context) {
+	keepAlive(ctx, s.conn, s.cancel)
 }
 
 // pump reads a timestamped log stream into line frames until it ends. With timestamps on,
@@ -232,10 +269,11 @@ func (s *Server) handlePodLogsWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 	MetricsLogStreamIncr()
-	sock := &logSocket{conn: conn}
-	defer sock.close()
 	ctx, cancel := readerContext(r.Context(), conn)
 	defer cancel()
+	sock := newLogSocket(conn, cancel)
+	defer sock.close()
+	go sock.keepAlive(ctx)
 
 	opts := models.PodLogOptions{Container: container, TailLines: logTail(r), Previous: previous}
 	filter := parseResume(r)
@@ -405,6 +443,8 @@ func (s *Server) workloadLogsWS(w http.ResponseWriter, r *http.Request, kind, re
 		wsFail(w, r, http.StatusNotFound, "no_pods")
 		return
 	}
+	total := len(pods)
+	pods = followedPods(pods)
 
 	conn, err := logUpgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -414,13 +454,17 @@ func (s *Server) workloadLogsWS(w http.ResponseWriter, r *http.Request, kind, re
 	defer conn.Close()
 	MetricsLogStreamIncr()
 	if r.URL.Query().Get("resume") != "true" {
-		logsEvent.Details = audit.D{"pods": len(pods)}
+		logsEvent.Details = audit.D{"pods": total}
 		s.auditEvent(r, logsEvent)
 	}
-	sock := &logSocket{conn: conn}
-	defer sock.close()
 	ctx, cancel := readerContext(r.Context(), conn)
 	defer cancel()
+	sock := newLogSocket(conn, cancel)
+	defer sock.close()
+	go sock.keepAlive(ctx)
+	if total > len(pods) {
+		sock.send(logFrame{T: "note", Reason: "pods_limited", Shown: len(pods), Total: total})
+	}
 
 	tail := logTail(r)
 	// shortcut: one sinceTime for all pods, so a line another pod wrote just before the
@@ -465,6 +509,30 @@ func (s *Server) workloadLogsWS(w http.ResponseWriter, r *http.Request, kind, re
 		}
 	}
 	sock.send(end)
+}
+
+// followedPods picks the pods a workload log view follows: ready ones first,
+// then by name, at most maxLogPods.
+func followedPods(pods []corev1.Pod) []corev1.Pod {
+	sort.SliceStable(pods, func(i, j int) bool {
+		if a, b := podReady(&pods[i]), podReady(&pods[j]); a != b {
+			return a
+		}
+		return pods[i].Name < pods[j].Name
+	})
+	if len(pods) > maxLogPods {
+		pods = pods[:maxLogPods]
+	}
+	return pods
+}
+
+func podReady(p *corev1.Pod) bool {
+	for _, c := range p.Status.Conditions {
+		if c.Type == corev1.PodReady {
+			return c.Status == corev1.ConditionTrue
+		}
+	}
+	return false
 }
 
 // Limits of GET /api/namespaces/{namespace}/pods/{name}/logs (M16).

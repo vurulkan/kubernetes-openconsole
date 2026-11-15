@@ -151,6 +151,9 @@ func (s *Server) handleCreateCluster(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to save cluster")
 		return
 	}
+	// Connected right away, like the clusters connected at start: its cache
+	// warms up and openconsole_cluster_connected reports it before anyone picks it.
+	_, _ = s.clusters.Get(r.Context(), id)
 	s.recordClusterAudit(r, audit.VerbCreate, p.Name, id)
 	writeJSON(w, http.StatusOK, map[string]any{"id": id})
 }
@@ -187,6 +190,7 @@ func (s *Server) handleUpdateClusterByID(w http.ResponseWriter, r *http.Request)
 		s.clusters.Invalidate(id)
 		s.prom.Delete(id)
 		s.dropHistory(id)
+		_, _ = s.clusters.Get(r.Context(), id)
 	}
 	s.recordClusterAudit(r, audit.VerbUpdate, p.Name, id)
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
@@ -243,7 +247,11 @@ func (s *Server) handleActivateCluster(w http.ResponseWriter, r *http.Request) {
 	}
 	// Connect first: a cluster that can't be reached must not become the
 	// default every new user lands on.
-	if _, err := s.clusters.Get(r.Context(), id); err != nil {
+	m, err := s.clusters.Get(r.Context(), id)
+	if err == nil {
+		err = m.Check(r.Context())
+	}
+	if err != nil {
 		writeError(w, http.StatusBadGateway, "activation failed: "+err.Error())
 		return
 	}

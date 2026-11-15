@@ -19,7 +19,7 @@ import (
 // refreshHeader marks the list requests the UI sends on its own every few
 // seconds. They are not audited: the list the user opened already was, and
 // the HTTP request log still shows every request. Ignored with an API key.
-const refreshHeader = "X-OpenConsole-Refresh"
+const refreshHeader = auth.AutoRefreshHeader
 
 // auditEvent records e for request r. It fills in the acting user (from the
 // token, unless set), the request id, source IP, user agent and the user's

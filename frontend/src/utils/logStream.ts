@@ -2,7 +2,7 @@ import { wsUrl } from '../services/api';
 
 // Frames the backend log sockets send (backend/internal/api/logs.go).
 export type LogFrame = {
-  t: 'line' | 'end' | 'error';
+  t: 'line' | 'end' | 'error' | 'note';
   ts?: string;
   p?: string;
   c?: string;
@@ -10,6 +10,9 @@ export type LogFrame = {
   reason?: string;
   msg?: string;
   retry?: boolean;
+  /** note pods_limited: the view follows `shown` of the workload's `total` pods. */
+  shown?: number;
+  total?: number;
 };
 
 export type LogStatus = {
@@ -25,7 +28,8 @@ export const MAX_BACKOFF_MS = 15000;
 
 type Connect = (path: string, params: URLSearchParams) => Promise<WebSocket>;
 
-const ticketConnect: Connect = async (path, params) => new WebSocket(await wsUrl(path, params));
+// A resume is the socket reconnecting on its own: not user activity.
+const ticketConnect: Connect = async (path, params) => new WebSocket(await wsUrl(path, params, params.has('resume')));
 
 /**
  * Opens a log socket and keeps it going: a live view that drops (network, proxy timeout,
@@ -41,9 +45,11 @@ export function openLogStream(opts: {
   onStatus: (s: LogStatus) => void;
   /** One stream of a multi-pod view failed; the others go on. */
   onStreamError?: (f: LogFrame) => void;
+  /** Information about the view that doesn't end it (pods_limited). */
+  onNote?: (f: LogFrame) => void;
   connect?: Connect;
 }): () => void {
-  const { path, params, live, onLine, onStatus, onStreamError, connect = ticketConnect } = opts;
+  const { path, params, live, onLine, onStatus, onStreamError, onNote, connect = ticketConnect } = opts;
   let socket: WebSocket | null = null;
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -109,6 +115,8 @@ export function openLogStream(opts: {
         onLine(f);
       } else if (f.t === 'error' && f.p) {
         onStreamError?.(f);
+      } else if (f.t === 'note') {
+        onNote?.(f);
       } else {
         final = true;
         // The server only asks for a retry where one helps (never after a previous instance's end).

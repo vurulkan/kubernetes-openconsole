@@ -102,13 +102,13 @@ func (r *Registry) Invalidate(clusterID int) {
 	}
 }
 
-// Ready reports whether the cluster's Manager exists and is connected,
-// without connecting it.
+// Ready reports whether the cluster's Manager exists and is connected (see
+// Manager.Connected), without connecting it.
 func (r *Registry) Ready(clusterID int) bool {
 	r.mu.Lock()
 	m, ok := r.managers[clusterID]
 	r.mu.Unlock()
-	return ok && m.Ready()
+	return ok && m.Connected()
 }
 
 // Connected returns the ids of clusters with a live Manager.

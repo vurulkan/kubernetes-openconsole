@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -68,7 +69,7 @@ func (s *Server) handleEventsWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	pinger := time.NewTicker(25 * time.Second)
+	pinger := time.NewTicker(wsPingInterval)
 	defer pinger.Stop()
 
 	ch := sub.Chan()
@@ -97,6 +98,33 @@ func (s *Server) handleEventsWS(w http.ResponseWriter, r *http.Request) {
 			return
 		case <-r.Context().Done():
 			return
+		}
+	}
+}
+
+// wsPingInterval: every server socket (events, logs, shell) pings this often,
+// well inside the 60 s idle timeout of common proxies (ingress-nginx
+// proxy-read-timeout), so a quiet socket isn't cut.
+const wsPingInterval = 25 * time.Second
+
+// keepAlive pings conn every wsPingInterval until ctx ends; a ping that
+// can't be written calls stop. WriteControl may run next to other writers.
+func keepAlive(ctx context.Context, conn *websocket.Conn, stop func()) {
+	keepAliveEvery(ctx, conn, stop, wsPingInterval)
+}
+
+func keepAliveEvery(ctx context.Context, conn *websocket.Conn, stop func(), every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second)); err != nil {
+				stop()
+				return
+			}
 		}
 	}
 }

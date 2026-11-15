@@ -30,7 +30,7 @@ func (s *Server) handleDaemonSets(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.resources.ListDaemonSets(r.Context(), namespace)
 	if err != nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
+		writeReadError(w, r, err, "daemonsets")
 		return
 	}
 	s.auditRead(r, audit.VerbList, "daemonsets", namespace, "*")
@@ -44,7 +44,7 @@ func (s *Server) handleDaemonSet(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := s.resources.GetDaemonSet(r.Context(), namespace, chi.URLParam(r, "name"))
 	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
+		writeReadError(w, r, err, "daemonsets")
 		return
 	}
 	s.auditRead(r, audit.VerbGet, "daemonsets", namespace, item.Name)
@@ -58,7 +58,7 @@ func (s *Server) handleDaemonSetYAML(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := s.resources.GetDaemonSet(r.Context(), namespace, chi.URLParam(r, "name"))
 	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
+		writeReadError(w, r, err, "daemonsets")
 		return
 	}
 	item.ManagedFields = nil
@@ -78,7 +78,7 @@ func (s *Server) handleStatefulSets(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.resources.ListStatefulSets(r.Context(), namespace)
 	if err != nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
+		writeReadError(w, r, err, "statefulsets")
 		return
 	}
 	s.auditRead(r, audit.VerbList, "statefulsets", namespace, "*")
@@ -92,7 +92,7 @@ func (s *Server) handleStatefulSet(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := s.resources.GetStatefulSet(r.Context(), namespace, chi.URLParam(r, "name"))
 	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
+		writeReadError(w, r, err, "statefulsets")
 		return
 	}
 	s.auditRead(r, audit.VerbGet, "statefulsets", namespace, item.Name)
@@ -106,7 +106,7 @@ func (s *Server) handleStatefulSetYAML(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := s.resources.GetStatefulSet(r.Context(), namespace, chi.URLParam(r, "name"))
 	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
+		writeReadError(w, r, err, "statefulsets")
 		return
 	}
 	item.ManagedFields = nil
@@ -186,7 +186,7 @@ func (s *Server) handleHPAs(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.resources.ListHPAs(r.Context(), namespace)
 	if err != nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
+		writeReadError(w, r, err, "hpas")
 		return
 	}
 	s.auditRead(r, audit.VerbList, "hpas", namespace, "*")
@@ -200,7 +200,7 @@ func (s *Server) handleHPA(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := s.resources.GetHPA(r.Context(), namespace, chi.URLParam(r, "name"))
 	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
+		writeReadError(w, r, err, "hpas")
 		return
 	}
 	s.auditRead(r, audit.VerbGet, "hpas", namespace, item.Name)
@@ -214,7 +214,7 @@ func (s *Server) handleHPAYAML(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := s.resources.GetHPA(r.Context(), namespace, chi.URLParam(r, "name"))
 	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
+		writeReadError(w, r, err, "hpas")
 		return
 	}
 	item.ManagedFields = nil
@@ -260,7 +260,7 @@ func (s *Server) handleDeploymentReplicaSets(w http.ResponseWriter, r *http.Requ
 	}
 	sets, err := s.resources.ListDeploymentReplicaSets(r.Context(), namespace, chi.URLParam(r, "name"))
 	if err != nil {
-		writeKubeError(w, err, "replicasets")
+		writeReadError(w, r, err, "replicasets")
 		return
 	}
 	out := make([]replicaSetRevision, 0, len(sets))

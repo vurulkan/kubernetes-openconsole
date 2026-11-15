@@ -182,7 +182,7 @@ func (s *Server) handleDiscoverPrometheus(w http.ResponseWriter, r *http.Request
 	}
 	svcs, err := client.CoreV1().Services("").List(r.Context(), metav1.ListOptions{})
 	if err != nil {
-		writeKubeError(w, err, "services")
+		writeReadError(w, r, err, "services")
 		return
 	}
 	type ranked struct {

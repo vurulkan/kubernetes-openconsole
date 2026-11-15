@@ -56,7 +56,7 @@ var VerbDocs = map[string]string{
 	VerbPurge:          "deleted recordings past their retention",
 	VerbViewOverview:   "opened the admin overview",
 	VerbRegenerate:     "replaced an API key's secret",
-	VerbUse:            "presented an API key (recorded only when it was refused or rate limited)",
+	VerbUse:            "presented an API key, or worked on a cluster named per request (`X-OpenConsole-Cluster`; recorded only when it was refused or rate limited)",
 }
 
 // OutcomeDocs: one line per outcome.

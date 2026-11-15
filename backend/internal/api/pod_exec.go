@@ -223,6 +223,9 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 
 	bridge := newExecBridge(conn, cancel, rec)
 	defer bridge.Close()
+	// A shell waiting for input sends nothing; without pings a proxy's idle
+	// timeout (ingress-nginx: 60 s) closes it.
+	go keepAlive(ctx, conn, cancel)
 
 	err = executor.StreamWithContext(ctx, remotecommand.StreamOptions{
 		Stdin:             bridge,
