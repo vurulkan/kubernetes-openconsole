@@ -101,6 +101,8 @@ type execControl struct {
 // handlePodExecWS opens a WebSocket, authenticates the user, verifies the
 // pods:exec permission and bridges to the Kubernetes exec SPDY stream.
 func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
+	s.ws.Add(1)
+	defer s.ws.Done()
 	claims, ok := auth.FromContext(r.Context())
 	if !ok {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -259,6 +261,10 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 		"duration_ms": duration.Milliseconds(),
 	}
 	s.recordExecAudit(r, namespace, pod, outcome, failReason(streamErr), failDetails(streamErr, end))
+	if s.stopping.Load() {
+		_ = conn.WriteControl(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseServiceRestart, "server restarting"), time.Now().Add(time.Second))
+	}
 
 	if rec != nil {
 		res := rec.Close()

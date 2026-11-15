@@ -175,6 +175,8 @@ func readerContext(parent context.Context, conn *websocket.Conn) (context.Contex
 }
 
 func (s *Server) handlePodLogsWS(w http.ResponseWriter, r *http.Request) {
+	s.ws.Add(1)
+	defer s.ws.Done()
 	claims, ok := auth.FromContext(r.Context())
 	if !ok {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -366,6 +368,8 @@ func (s *Server) handleJobLogsWS(w http.ResponseWriter, r *http.Request) {
 type podLister func(ctx context.Context, client kubernetes.Interface, namespace, name string) ([]corev1.Pod, error)
 
 func (s *Server) workloadLogsWS(w http.ResponseWriter, r *http.Request, kind, resource string, listPods podLister) {
+	s.ws.Add(1)
+	defer s.ws.Done()
 	claims, ok := auth.FromContext(r.Context())
 	if !ok {
 		w.WriteHeader(http.StatusUnauthorized)

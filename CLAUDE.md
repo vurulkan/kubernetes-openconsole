@@ -20,7 +20,8 @@ reference pages into `docs/reference/` (see "Generated reference" below).
 | `internal/auth` | local passwords + policy, JWT sessions, LDAP, Azure AD |
 | `internal/kube` | per-cluster client + informer cache (`Manager`, `Registry`; nodes only with list + watch, pods indexed by `spec.nodeName`), event bus, resource reads, apply, YAML prettify; `metrics.go` 30 s metrics-server sampler (24 h in memory, per pod / workload / node / cluster), `terminations.go` container exits from the pod informer (restart history) |
 | `internal/prom` | Prometheus-compatible query client (API server proxy or URL; basic / bearer / Azure AD / mTLS), history queries, test-button diagnosis |
-| `internal/store`, `internal/db` | SQLite store (users, roles, clusters + their Prometheus settings, sessions, views, recordings settings, restart history) and migrations; credentials encrypted at rest |
+| `internal/store`, `internal/db` | SQLite store (users, roles, clusters + their Prometheus settings, sessions, views, recordings settings, restart history) and migrations; credentials encrypted at rest (`store/keys.go`: the key in the DB, or `ENCRYPTION_KEY_FILE` with re-encryption / rotation on start). `db.go`: WAL + `busy_timeout` + foreign keys, `Conn` (the one writer) + `Read` (audit reads, `VACUUM INTO`), `migrate` in one transaction, one-time `steps` counted in `PRAGMA user_version`; multi-statement writes go through `store.inTx` |
+| `internal/backup` | database copies (`VACUUM INTO` → `BACKUP_DIR`): scheduled, before an upgrade (`db.OpenWithBackup`), Admin → Backups (`api/backups.go`, download only when allowed in the DB) |
 | `internal/config` | env vars (`Load`; `Vars` = every one with default + description, `vars_test.go` scans the backend for reads), feature flags (`FEATURE_*`) |
 | `internal/logging` | slog setup; `LOG_FORMAT=text|json|ecs` (`ecs.go`) |
 | `internal/recording` | pod shell session recording (asciicast), quota / eviction |
@@ -43,7 +44,7 @@ reference pages into `docs/reference/` (see "Generated reference" below).
 | `src/utils` | `formatAge`, `formatBytes`, `formatDuration`, Kubernetes quantities (`parseCpu` / `parseMem` / `formatCpu` / `formatMem`); `podStatus.ts` = kubectl STATUS logic, last container termination, exit code hints, `podOwner` ("Deployment/web"), `podController` (direct controller), `containerStates` (per-container look for the Containers squares); use it, don't re-derive pod health or ownership; `resources.ts` requests / limits sums; `searchText.ts` what the Dashboard search matches per tab (add a column → add its text there); `openDashboard.ts` opens a Dashboard view or a pod drawer from another page |
 
 `deploy/`: kustomize manifests; `rbac.yaml` / `rbac-readonly.yaml` = ClusterRole of the token users paste in;
-`elk/` = Elasticsearch ingest pipeline + mappings for the logs. `.github/workflows/ci.yml` = tests + image publish.
+`elk/` = Elasticsearch ingest pipeline + mappings for the logs; `optional/` = not in the kustomization (NetworkPolicy). The Deployment uses `strategy: Recreate` (RWO + SQLite: never two pods). `.github/workflows/ci.yml` = tests + image publish.
 
 Large files (`AdminPage.tsx`, `router.go`, `DashboardPage.tsx`, `i18n.ts`, ~1500–2700 lines): grep for the
 part you need and read that range. New screens and handlers go in their own files, not into these.
@@ -102,7 +103,9 @@ Screenshots: Playwright's `chromium.launch` dies on this Mac; start Chrome yours
 - **any of the above** → `cd backend && go run ./cmd/docgen` and commit `docs/reference/` (CI fails on a diff). New
   fixed text in docgen (a title, an intro, a table header) needs its Turkish in `cmd/docgen/tr.go` (docgen stops without).
 - **a UI poll** → send `X-OpenConsole-Refresh: auto` (`autoRefresh(true)` in `api.ts`) so it isn't audited.
-- **a DB column / table** → migration in `internal/db` (idempotent; store tests upgrade an old schema).
+- **a DB column / table** → migration in `internal/db` (idempotent `CREATE` / `ALTER`, or a new entry at the end of
+  `steps` for a one-time change such as a table rebuild; never edit a shipped step; store tests upgrade an old schema).
+  A new encrypted column → `store.encryptedColumns`.
 - **any UI** → light + dark theme, TR + EN, keyboard reachable, axe clean (frontend tests run axe).
 - **anything a user or operator notices** → the docs site (below); the README only if a highlight or the quick start
   changes.

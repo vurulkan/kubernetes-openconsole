@@ -438,7 +438,7 @@ func (m *Manager) purge(ctx context.Context) {
 		}
 		if removed > 0 {
 			slog.Info("recording retention purge", slog.Int("removed", removed), slog.Int64("freed_bytes", freed))
-			go m.audit.Record(context.Background(), models.AuditLog{
+			m.audit.RecordAsync(models.AuditLog{
 				User:         "system",
 				Verb:         audit.VerbPurge,
 				ResourceType: audit.KindRecording,
@@ -505,7 +505,7 @@ func (m *Manager) recoverOpen(ctx context.Context) {
 // recordEvictAudit records a recording removed to make room (quota or low
 // disk) before its retention ended.
 func (m *Manager) recordEvictAudit(rec models.SessionRecording, reason string) {
-	go m.audit.Record(context.Background(), models.AuditLog{
+	m.audit.RecordAsync(models.AuditLog{
 		User:         "system",
 		Verb:         audit.VerbEvict,
 		Reason:       reason,

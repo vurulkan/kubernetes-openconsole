@@ -5,6 +5,13 @@ metadata:
   namespace: kubernetes-openconsole
 spec:
   replicas: 1
+  # Recreate, never a rolling update: the volume is ReadWriteOnce and SQLite
+  # takes one writer. A rolling update starts the new pod while the old one
+  # still runs: on another node it hangs (Multi-Attach), on the same node two
+  # processes write one database. The console is down for the seconds the
+  # new pod needs to start.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: kubernetes-openconsole
@@ -22,6 +29,9 @@ spec:
       # pod's ServiceAccount.
       # serviceAccountName: openconsole-reader
       automountServiceAccountToken: false
+      # On shutdown the server finishes requests (10 s), then closes open
+      # shells and log streams and writes their audit and recordings (15 s).
+      terminationGracePeriodSeconds: 30
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -101,8 +111,8 @@ spec:
 
             # ── Audit retention ──────────────────────────────────────────────────
             # LOG_RETENTION_DAYS: how many days of audit rows the backend keeps
-            # in SQLite. A background job purges older rows every ~hour. 0 means
-            # never purge. Default 30.
+            # in SQLite. Older rows are purged at start and every 12 hours. 0
+            # means never purge. Default 30.
             - name: LOG_RETENTION_DAYS
               value: "30"
             # RESTART_HISTORY_RETENTION_DAYS: how long container exits (restart
@@ -114,6 +124,36 @@ spec:
             # LOG_RETENTION_DAYS. Default 7.
             # - name: API_KEY_READ_RETENTION_DAYS
             #   value: "7"
+
+            # ── Database backups ─────────────────────────────────────────────────
+            # A copy of the database (VACUUM INTO) goes to BACKUP_DIR every
+            # BACKUP_INTERVAL and before an upgrade changes the database; the
+            # newest BACKUP_KEEP are kept. Admin → Backups lists them, makes one
+            # on demand and (once allowed there) downloads them. A copy holds
+            # every stored credential: protect it like the volume. Defaults:
+            # /data/backups (same volume), 24h (0 = no scheduled copy), 7.
+            # - name: BACKUP_INTERVAL
+            #   value: 24h
+            # - name: BACKUP_KEEP
+            #   value: "7"
+
+            # ── Encryption key of the stored credentials ─────────────────────────
+            # By default the key that encrypts cluster credentials, the LDAP
+            # bind password and the Azure AD secret is kept in the database, so a
+            # copy of the volume or a backup holds both. Keep it in a Secret
+            # instead (the first start moves every value to it and signs
+            # everyone out once; keep a copy of the key, without it the values
+            # are lost):
+            #   kubectl -n kubernetes-openconsole create secret generic \
+            #     openconsole-encryption-key --from-literal=key="$(openssl rand -base64 32)"
+            # then uncomment this and the "encryption-key" volume + mount below.
+            # Rotation: add the old key as "previous" to the Secret and set
+            # ENCRYPTION_KEY_PREVIOUS_FILE=/etc/openconsole/key/previous for one
+            # start. A key lost for good: one start with a new key and
+            # ENCRYPTION_KEY_LOST=true empties what can't be decrypted, then
+            # enter the cluster credentials, LDAP and Azure AD secrets again.
+            # - name: ENCRYPTION_KEY_FILE
+            #   value: /etc/openconsole/key/key
 
             # ── Operational guardrails ───────────────────────────────────────────
             # MAX_REPLICAS: upper bound the Scale endpoint accepts for
@@ -256,6 +296,9 @@ spec:
               mountPath: /data
             - name: tmp
               mountPath: /tmp
+            # - name: encryption-key
+            #   mountPath: /etc/openconsole/key
+            #   readOnly: true
             # Optional: separate volume for session recordings. Uncomment
             # together with the "recordings" volume below, the second PVC in
             # pvc.yaml, and SESSION_RECORDING_DIR=/recordings above.
@@ -268,6 +311,10 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: 256Mi
+        # - name: encryption-key
+        #   secret:
+        #     secretName: openconsole-encryption-key
+        #     defaultMode: 0440 # root:fsGroup, readable by the server
         # - name: recordings
         #   persistentVolumeClaim:
         #     claimName: kubernetes-openconsole-recordings

@@ -56,6 +56,8 @@ Aksiyon `<resource type>.<verb>` biçimindedir. Handler'ların kodundan okunur; 
 | `api_key.revoke` | `success`, `denied`, `failed` |
 | `api_key.update` | `success`, `denied`, `failed` |
 | `api_key.use` | `denied`, `rate_limited` |
+| `backup.create` | `success`, `failed` |
+| `backup.download` | `success`, `denied`, `failed` |
 | `cluster.activate` | `success` |
 | `cluster.create` | `success` |
 | `cluster.deactivate` | `success` |
@@ -77,7 +79,7 @@ Aksiyon `<resource type>.<verb>` biçimindedir. Handler'ların kodundan okunur; 
 | `group.create` | `success` |
 | `group.delete` | `success` |
 | `group.export` | `success` |
-| `group.update` | `success` |
+| `group.update` | `success`, `failed` |
 | `hpa.get` | `success`, `denied` |
 | `hpa.list` | `success`, `denied` |
 | `ingress.get` | `success`, `denied` |
@@ -89,7 +91,7 @@ Aksiyon `<resource type>.<verb>` biçimindedir. Handler'ların kodundan okunur; 
 | `namespace.list` | `success` |
 | `node.get` | `success`, `denied`, `failed` |
 | `node.list` | `success`, `denied`, `failed` |
-| `permission.create` | `success` |
+| `permission.create` | `success`, `failed` |
 | `permission.delete` | `success` |
 | `pod.exec` | `success`, `denied`, `failed`, `rate_limited` |
 | `pod.get` | `success`, `denied` |
@@ -127,7 +129,7 @@ Aksiyon `<resource type>.<verb>` biçimindedir. Handler'ların kodundan okunur; 
 | `user.import` | `success` |
 | `user.login` | `success`, `failed`, `locked` |
 | `user.reset_password` | `success`, `denied`, `failed` |
-| `user.update` | `success` |
+| `user.update` | `success`, `failed` |
 
 ## İşlem türleri {#verbs}
 

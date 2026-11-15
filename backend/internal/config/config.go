@@ -1,6 +1,8 @@
 package config
 
 import (
+	"encoding/base64"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -37,6 +39,19 @@ type Config struct {
 	AllowedOrigins string
 	WSOriginCheck  string
 
+	// Encryption key of the stored credentials (see store.Keys): a file
+	// (a mounted Secret) or the value itself, base64 of 32 bytes; the
+	// previous one during a rotation.
+	EncryptionKeyFile, EncryptionKey                 string
+	EncryptionKeyPreviousFile, EncryptionKeyPrevious string
+	EncryptionKeyLost                                bool
+
+	// Database backups (VACUUM INTO): directory ("" = backups next to the
+	// database), interval (0 = no scheduled backup), how many to keep.
+	BackupDir      string
+	BackupInterval time.Duration
+	BackupKeep     int
+
 	// Pod shell limits.
 	ExecIdleTimeout        time.Duration
 	MaxExecSessionsPerUser int
@@ -72,7 +87,8 @@ func Load() Config {
 
 	retention := 30
 	if value := os.Getenv("LOG_RETENTION_DAYS"); value != "" {
-		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 {
+		// 0 = never purge
+		if parsed, err := strconv.Atoi(value); err == nil && parsed >= 0 {
 			retention = parsed
 		}
 	}
@@ -100,9 +116,19 @@ func Load() Config {
 
 		PasswordMinLength: envIntMin("PASSWORD_MIN_LENGTH", 8, 1),
 
-		TrustedProxies:         os.Getenv("TRUSTED_PROXIES"),
-		AllowedOrigins:         os.Getenv("ALLOWED_ORIGINS"),
-		WSOriginCheck:          os.Getenv("WS_ORIGIN_CHECK"),
+		TrustedProxies: os.Getenv("TRUSTED_PROXIES"),
+		AllowedOrigins: os.Getenv("ALLOWED_ORIGINS"),
+		WSOriginCheck:  os.Getenv("WS_ORIGIN_CHECK"),
+
+		EncryptionKeyFile:         os.Getenv("ENCRYPTION_KEY_FILE"),
+		EncryptionKey:             os.Getenv("ENCRYPTION_KEY"),
+		EncryptionKeyPreviousFile: os.Getenv("ENCRYPTION_KEY_PREVIOUS_FILE"),
+		EncryptionKeyPrevious:     os.Getenv("ENCRYPTION_KEY_PREVIOUS"),
+		EncryptionKeyLost:         envBool("ENCRYPTION_KEY_LOST", false),
+
+		BackupDir:              os.Getenv("BACKUP_DIR"),
+		BackupInterval:         envDurationMin("BACKUP_INTERVAL", 24*time.Hour, 0),
+		BackupKeep:             envIntMin("BACKUP_KEEP", 7, 1),
 		ExecIdleTimeout:        envDurationMin("EXEC_IDLE_TIMEOUT", 5*time.Minute, 30*time.Second),
 		MaxExecSessionsPerUser: envIntMin("MAX_EXEC_SESSIONS_PER_USER", 3, 0),
 		RestartHistoryDays:     envIntMin("RESTART_HISTORY_RETENTION_DAYS", 30, 1),
@@ -117,6 +143,27 @@ func Load() Config {
 			DiskPolicy:    envOr("SESSION_RECORDING_DISK_POLICY", "evict_oldest"),
 		},
 	}
+}
+
+// ReadKey returns the key from file (preferred) or value: base64 of 32
+// bytes. Both empty = nil (no key).
+func ReadKey(file, value string) ([]byte, error) {
+	if file != "" {
+		b, err := os.ReadFile(file)
+		if err != nil {
+			return nil, fmt.Errorf("read key file: %w", err)
+		}
+		value = string(b)
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	key, err := base64.StdEncoding.DecodeString(value)
+	if err != nil || len(key) != 32 {
+		return nil, fmt.Errorf("the key must be base64 of 32 bytes (openssl rand -base64 32)")
+	}
+	return key, nil
 }
 
 func envOr(key, fallback string) string {

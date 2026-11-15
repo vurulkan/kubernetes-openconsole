@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,6 +15,7 @@ import (
 	"k8s-dashboard/backend/internal/api"
 	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/auth"
+	"k8s-dashboard/backend/internal/backup"
 	"k8s-dashboard/backend/internal/config"
 	"k8s-dashboard/backend/internal/db"
 	"k8s-dashboard/backend/internal/kube"
@@ -69,15 +71,29 @@ func main() {
 		fatal("config error", err)
 	}
 
-	database, err := db.Open(cfg.DataPath)
+	currentKey, err := config.ReadKey(cfg.EncryptionKeyFile, cfg.EncryptionKey)
+	if err != nil {
+		fatal("ENCRYPTION_KEY", err)
+	}
+	previousKey, err := config.ReadKey(cfg.EncryptionKeyPreviousFile, cfg.EncryptionKeyPrevious)
+	if err != nil {
+		fatal("ENCRYPTION_KEY_PREVIOUS", err)
+	}
+
+	backupDir := cfg.BackupDir
+	if backupDir == "" {
+		backupDir = filepath.Join(filepath.Dir(cfg.DataPath), "backups")
+	}
+	database, err := db.OpenWithBackup(cfg.DataPath, backupDir)
 	if err != nil {
 		fatal("db error", err)
 	}
 
-	stor, err := store.New(database.Conn)
+	stor, err := store.NewWithKeys(database.Conn, store.Keys{Current: currentKey, Previous: previousKey, Lost: cfg.EncryptionKeyLost})
 	if err != nil {
 		fatal("store error", err)
 	}
+	stor.SetReadConn(database.Read)
 
 	defaultHash, err := auth.HashPassword("admin")
 	if err != nil {
@@ -102,6 +118,7 @@ func main() {
 	auditLogger := audit.New(stor)
 	auditLogger.SetConsoleMirror(cfg.LogIncludeAudit)
 	audit.SetMetricHook(api.MetricsAuditIncr)
+	audit.SetFailureHook(api.MetricsAuditFailed)
 	if err := auditLogger.UpgradeLegacy(context.Background()); err != nil {
 		slog.Warn("audit upgrade failed; older rows keep the pre-2.17 format", slog.Any("error", err))
 	}
@@ -130,11 +147,28 @@ func main() {
 	}
 	dataDir := filepath.Dir(cfg.DataPath)
 	server := api.NewServer(stor, auditLogger, clusters, recorder, staticDir, dataDir, cfg.TimeZone)
+	backups := backup.New(database, backupDir, cfg.BackupKeep)
+	server.SetBackups(backups, cfg.BackupInterval)
+	server.SetKeyExternal(currentKey != nil)
+	backups.Run(context.Background(), cfg.BackupInterval, func(info backup.Info, err error) {
+		e := models.AuditLog{User: "system", Verb: audit.VerbCreate, ResourceType: audit.KindBackup, ResourceName: info.Name,
+			Details: audit.D{"size_bytes": info.SizeBytes}}
+		if err != nil {
+			e.Outcome, e.Reason, e.ResourceName, e.Details = audit.Failed, "error", "*", audit.D{"error": err.Error()}
+		}
+		auditLogger.RecordAsync(e)
+	})
+
+	// Every request's context derives from base; cancelling it on shutdown
+	// ends the WebSockets (shells, logs, events), which http.Server.Shutdown
+	// does not wait for.
+	base, stopBase := context.WithCancel(context.Background())
 	httpServer := &http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      server.Router(),
 		ReadTimeout:  60 * time.Second,
 		WriteTimeout: 60 * time.Second,
+		BaseContext:  func(net.Listener) context.Context { return base },
 	}
 
 	go func() {
@@ -148,13 +182,24 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
 
+	// The pod gets terminationGracePeriodSeconds (30) in all: up to 10 s for
+	// requests in flight, then up to 15 s for the open WebSockets to write
+	// their end audit and close their recordings, then the database.
 	slog.Info("shutdown signal received")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	server.BeginShutdown()
 	if err := httpServer.Shutdown(ctx); err != nil {
 		slog.Error("shutdown error", slog.Any("error", err))
 	}
-	if err := shutdownTracing(ctx); err != nil {
+	stopBase()
+	drain, cancelDrain := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancelDrain()
+	server.Drain(drain)
+	if err := database.Close(); err != nil {
+		slog.Warn("database close failed", slog.Any("error", err))
+	}
+	if err := shutdownTracing(drain); err != nil {
 		slog.Warn("tracing flush failed", slog.Any("error", err))
 	}
 	slog.Info("server stopped")
