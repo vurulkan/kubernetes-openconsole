@@ -1,6 +1,6 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 vi.mock('../components/Layout', () => ({ default: ({ children }: { children: React.ReactNode }) => <main>{children}</main> }));
@@ -39,5 +39,28 @@ describe('AdminPage clusters', () => {
     const put = calls.find((c) => c.method === 'PUT')!;
     expect(put.body).toMatchObject({ token: 'new-token', replaceSecrets: true, removeCaCert: false });
     expect((put.body as { caCertBase64?: string }).caCertBase64).toBeUndefined();
+  });
+
+  it('keeps what was typed while the save was running when it fails', async () => {
+    localStorage.setItem('adminActiveTab', 'clusters');
+    let fail: (r: Response) => void = () => {};
+    mockFetch([
+      ['GET /api/admin/clusters', () => ({ items: [{ id: 7, name: 'prod', method: 'token', server: 'https://k8s:6443', isActive: true }] })],
+      ['PUT /api/admin/clusters/7', () => new Promise<Response>((resolve) => (fail = resolve))],
+    ]);
+    render(
+      <MemoryRouter>
+        <AdminPage user={admin} />
+      </MemoryRouter>,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    const dialog = screen.getByRole('dialog', { name: 'Edit cluster · prod' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    fireEvent.change(within(dialog).getByLabelText('Description'), { target: { value: 'typed meanwhile' } });
+    await act(async () => {
+      fail(new Response(JSON.stringify(x509), { status: 400 }));
+    });
+    expect(await within(dialog).findByRole('alert')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Description')).toHaveValue('typed meanwhile');
   });
 });
