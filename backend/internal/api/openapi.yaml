@@ -19,6 +19,8 @@ info:
     what the key itself was given. `GET /api/auth/me` shows who you are and what the key reaches.
 
     **Cluster:** `X-OpenConsole-Cluster: <name or id>` on each request; without it, the owner's selected cluster.
+    Responses name the cluster that answered in the same header (its id). A WebSocket works on the cluster
+    named when its ticket was requested.
 
     **WebSockets** (`/ws/…`, live logs, shell, events): first `POST /api/ws-ticket` with `{"path": "/ws/…"}`,
     then connect to that path with `?ticket=<ticket>` (single use, short-lived). For one command or a log
@@ -31,6 +33,9 @@ info:
       (the policy turns API access off for this user), `api_key_not_allowed` (web session only),
       `feature_disabled` (switched off by the operator), `admin_only`.
     - `429`: too many requests (10 per second per key, bursts of 30) or too many open shells / log streams.
+    - The cluster failed a read: `403 cluster_forbidden` (OpenConsole's credentials for the cluster may not
+      read this; see its ClusterRole), `404 not_found`, `502 cluster_unreachable`, `503 not_connected`,
+      `504 cluster_timeout`.
 
     Every action and every resource read made with a key is written to the audit log with the key's name;
     helper calls such as `/api/auth/me` and `/api/ws-ticket` are not.
@@ -63,7 +68,7 @@ components:
       in: header
       required: false
       schema: {type: string}
-      description: Cluster name or id (API keys only); defaults to your selected cluster.
+      description: Cluster name or id; defaults to your selected cluster.
     ticket: {name: ticket, in: query, required: true, schema: {type: string}, description: From POST /api/ws-ticket.}
     container: {name: container, in: query, schema: {type: string}, description: Container name; defaults to the pod's default container.}
   responses:
@@ -198,11 +203,12 @@ paths:
     post:
       tags: [Account]
       summary: A single-use ticket for one WebSocket path
+      parameters: [{$ref: '#/components/parameters/cluster'}]
       requestBody:
         content: {application/json: {example: {path: /ws/namespaces/ci-dev/pods/web-7c9f/logs}}}
       responses:
         "200":
-          description: Use as ?ticket= on that path, once, within a minute.
+          description: Use as ?ticket= on that path, once, within 30 seconds. The socket works on the cluster this request named (X-OpenConsole-Cluster).
           content: {application/json: {example: {ticket: 9f2c…}}}
   /api/namespaces:
     get:
@@ -404,14 +410,14 @@ paths:
     parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}, {$ref: '#/components/parameters/ticket'}]
     get:
       tags: [Logs]
-      summary: Follow every pod and container of a Deployment (WebSocket)
+      summary: Follow the pods and containers of a Deployment (WebSocket; at most 20 pods, ready ones first)
       x-openconsole-permission: ["deployments:get", "pods:logs"]
       responses: {"101": {$ref: '#/components/responses/websocket'}}
   /ws/namespaces/{namespace}/jobs/{name}/logs:
     parameters: [{$ref: '#/components/parameters/namespace'}, {$ref: '#/components/parameters/name'}, {$ref: '#/components/parameters/ticket'}]
     get:
       tags: [Logs]
-      summary: Follow every pod of a Job (WebSocket)
+      summary: Follow the pods of a Job (WebSocket; at most 20 pods, ready ones first)
       x-openconsole-permission: ["jobs:get", "pods:logs"]
       responses: {"101": {$ref: '#/components/responses/websocket'}}
 

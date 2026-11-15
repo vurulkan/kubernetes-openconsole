@@ -350,7 +350,7 @@ func listNodes(ctx context.Context, m *kube.Manager, client kubernetes.Interface
 
 // nodePods: the cache's nodeName index when warm, else every pod filtered.
 func (s *Server) nodePods(ctx context.Context, m *kube.Manager, node string) ([]*corev1.Pod, error) {
-	if ic := m.Informers(); ic != nil && ic.Synced() {
+	if ic := m.Informers(); ic != nil && ic.Usable("Pod") {
 		return ic.NodePods(node), nil
 	}
 	pods, err := s.resources.ListPods(ctx, "")
@@ -368,7 +368,7 @@ func (s *Server) nodePods(ctx context.Context, m *kube.Manager, node string) ([]
 
 func nodeEvents(ctx context.Context, m *kube.Manager, client kubernetes.Interface, node string) ([]corev1.Event, error) {
 	var out []corev1.Event
-	if ic := m.Informers(); ic != nil && ic.Synced() {
+	if ic := m.Informers(); ic != nil && ic.Usable("Event") {
 		out = ic.NodeEvents(node)
 	} else {
 		list, err := client.CoreV1().Events("").List(ctx, metav1.ListOptions{FieldSelector: "involvedObject.kind=Node,involvedObject.name=" + node})

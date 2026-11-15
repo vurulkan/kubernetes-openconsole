@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronsUpDown, Server } from 'lucide-react';
-import { listClustersPublic, selectCluster } from '../services/api';
+import { listClustersPublic, selectCluster, tabClusterId } from '../services/api';
 import { User } from '../services/api';
 import { confirm } from './ConfirmDialog';
 import { CLUSTER_SWITCHER_EVENT_NAME } from '../hooks/useGlobalShortcuts';
@@ -32,10 +32,14 @@ export const ClusterSwitcher: React.FC<Props> = () => {
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
 
-  const refresh = async () => {
+  // auto: the background refresh, which is not user activity (inactivity timeout).
+  const refresh = async (auto = false) => {
     try {
-      const result = await listClustersPublic();
-      setClusters(result.items ?? []);
+      const result = await listClustersPublic(auto);
+      // The tab's own cluster, which may differ from the stored pick when
+      // another tab switched.
+      const tab = tabClusterId();
+      setClusters((result.items ?? []).map((c) => (tab ? { ...c, selected: c.id === tab } : c)));
     } catch (err) {
       setClusters([]);
     }
@@ -43,7 +47,7 @@ export const ClusterSwitcher: React.FC<Props> = () => {
 
   useEffect(() => {
     void refresh();
-    const t = setInterval(refresh, 30_000);
+    const t = setInterval(() => void refresh(true), 30_000);
     return () => clearInterval(t);
   }, []);
 

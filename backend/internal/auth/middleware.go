@@ -6,7 +6,12 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 )
+
+// AutoRefreshHeader marks a request a screen sends on its own (a poll): it is
+// neither audited nor counted as activity for the inactivity timeout.
+const AutoRefreshHeader = "X-OpenConsole-Refresh"
 
 type contextKey string
 
@@ -30,8 +35,9 @@ type SessionValidator interface {
 	// explicitly rejected; err means lookup failed (treated as fail-open by
 	// the middleware so a DB blip doesn't log everyone out).
 	Validate(ctx context.Context, jti string) (live bool, err error)
-	// Touch bumps last_used_at; non-blocking.
-	Touch(jti string)
+	// Touch records activity: last_used_at, and the inactivity deadline moves
+	// on (never past until, the token's own expiry); non-blocking.
+	Touch(jti string, until time.Time)
 }
 
 // APIKeyPrefix starts every API key secret, so secret scanners can spot one.
@@ -52,7 +58,7 @@ type KeyAuthenticator interface {
 // with oc_ is an API key, checked by keys (nil = API keys are off).
 func AuthMiddleware(secret []byte, sessions SessionValidator, keys KeyAuthenticator) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
-		serveKey := func(w http.ResponseWriter, r *http.Request, secret string, keyID int) {
+		serveKey := func(w http.ResponseWriter, r *http.Request, secret string, keyID int, cluster string) {
 			if keys == nil {
 				w.WriteHeader(http.StatusUnauthorized)
 				return
@@ -68,6 +74,7 @@ func AuthMiddleware(secret []byte, sessions SessionValidator, keys KeyAuthentica
 				w.WriteHeader(status)
 				return
 			}
+			claims.Cluster = cluster
 			next.ServeHTTP(w, r.WithContext(WithUser(r.Context(), claims)))
 		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -81,7 +88,7 @@ func AuthMiddleware(secret []byte, sessions SessionValidator, keys KeyAuthentica
 			}
 			var claims *Claims
 			if strings.HasPrefix(token, APIKeyPrefix) {
-				serveKey(w, r, token, 0)
+				serveKey(w, r, token, 0, "")
 				return
 			} else if token != "" {
 				parsed, err := ParseToken(secret, token)
@@ -99,7 +106,7 @@ func AuthMiddleware(secret []byte, sessions SessionValidator, keys KeyAuthentica
 				}
 				if redeemed.APIKey != nil {
 					// Checked again: the key may have been revoked since the ticket was issued.
-					serveKey(w, r, "", redeemed.APIKey.ID)
+					serveKey(w, r, "", redeemed.APIKey.ID, redeemed.Cluster)
 					return
 				}
 				claims = redeemed
@@ -115,7 +122,12 @@ func AuthMiddleware(secret []byte, sessions SessionValidator, keys KeyAuthentica
 					w.WriteHeader(http.StatusUnauthorized)
 					return
 				}
-				sessions.Touch(claims.ID)
+				// A screen's automatic refresh is not activity: a tab left open still times out.
+				// Nor is a WebSocket connect (ticket): its ticket request already counted
+				// when the user caused it, and a reconnect the socket makes itself must not.
+				if token != "" && r.Header.Get(AutoRefreshHeader) != "auto" && claims.ExpiresAt != nil {
+					sessions.Touch(claims.ID, claims.ExpiresAt.Time)
+				}
 			}
 			next.ServeHTTP(w, r.WithContext(WithUser(r.Context(), claims)))
 		})

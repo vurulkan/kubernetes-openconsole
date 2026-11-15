@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"sort"
 	"time"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
 	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/kube"
@@ -95,7 +93,7 @@ func (s *Server) handleSecrets(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.resources.ListSecrets(r.Context(), namespace)
 	if err != nil {
-		writeKubeError(w, err, "secrets")
+		writeReadError(w, r, err, "secrets")
 		return
 	}
 	out := make([]secretSummary, 0, len(items))
@@ -113,7 +111,7 @@ func (s *Server) handleSecret(w http.ResponseWriter, r *http.Request) {
 	}
 	sec, err := s.resources.GetSecret(r.Context(), namespace, chi.URLParam(r, "name"))
 	if err != nil {
-		writeKubeError(w, err, "secrets")
+		writeReadError(w, r, err, "secrets")
 		return
 	}
 	s.auditRead(r, audit.VerbGet, "secrets", namespace, sec.Name)
@@ -146,7 +144,7 @@ func (s *Server) handleSecretReveal(w http.ResponseWriter, r *http.Request) {
 	sec, err := s.resources.GetSecret(r.Context(), namespace, name)
 	if err != nil {
 		s.recordSecretAudit(r, namespace, name, audit.VerbReveal, audit.Failed, failReason(err), failDetails(err, audit.D{"key": body.Key}))
-		writeKubeError(w, err, "secrets")
+		writeReadError(w, r, err, "secrets")
 		return
 	}
 	value, found := sec.Data[body.Key]
@@ -187,7 +185,7 @@ func (s *Server) handleSecretYAML(w http.ResponseWriter, r *http.Request) {
 	sec, err := s.resources.GetSecret(r.Context(), namespace, name)
 	if err != nil {
 		s.recordSecretAudit(r, namespace, name, audit.VerbViewYAML, audit.Failed, failReason(err), failDetails(err, nil))
-		writeKubeError(w, err, "secrets")
+		writeReadError(w, r, err, "secrets")
 		return
 	}
 	out, err := kube.EditableSecretYAML(sec)
@@ -214,19 +212,3 @@ func (s *Server) recordSecretAudit(r *http.Request, namespace, name, verb, outco
 	})
 }
 
-// writeKubeError reuses httpStatusFor for API-server errors and reports
-// anything else (no active cluster, client not ready) as 503. A Kubernetes
-// 403 gets a hint: the ServiceAccount's ClusterRole lacks access to resource.
-func writeKubeError(w http.ResponseWriter, err error, resource string) {
-	var status apierrors.APIStatus
-	if !errors.As(err, &status) {
-		writeError(w, http.StatusServiceUnavailable, "kubernetes client not ready")
-		return
-	}
-	code := httpStatusFor(err)
-	if code == http.StatusForbidden {
-		writeError(w, code, "the OpenConsole ServiceAccount is not allowed to read "+resource+" here (check the ClusterRole)")
-		return
-	}
-	writeError(w, code, err.Error())
-}

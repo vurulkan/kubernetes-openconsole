@@ -65,16 +65,26 @@ func (s *Store) LookupSession(ctx context.Context, jti string) (SessionStatus, e
 	}, nil
 }
 
-// TouchSession bumps last_used_at. Called from a goroutine so a long-running
-// request isn't delayed by the write. Callers upstream throttle so we don't
-// hammer SQLite on every API call.
-func (s *Store) TouchSession(ctx context.Context, jti string) error {
+// TouchSession records activity on a live session: last_used_at, and
+// expires_at (the inactivity deadline) moves to now + the session setting,
+// never past until (the token's own expiry, the absolute limit). A session
+// already timed out or revoked stays so.
+func (s *Store) TouchSession(ctx context.Context, jti string, until time.Time) error {
 	if jti == "" {
 		return nil
 	}
-	_, err := s.conn.ExecContext(ctx,
-		`UPDATE session_tokens SET last_used_at = ? WHERE jti = ?`,
-		time.Now().UTC(), jti,
+	settings, err := s.GetSessionSettings(ctx)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	deadline := now.Add(time.Duration(settings.SessionMinutes) * time.Minute)
+	if !until.IsZero() && until.UTC().Before(deadline) {
+		deadline = until.UTC()
+	}
+	_, err = s.conn.ExecContext(ctx,
+		`UPDATE session_tokens SET last_used_at = ?, expires_at = ? WHERE jti = ? AND revoked_at IS NULL AND expires_at > ?`,
+		now, deadline, jti, now,
 	)
 	return err
 }
@@ -184,9 +194,9 @@ func NewSessionToucher(s *Store) *SessionToucher {
 }
 
 // Touch fires an UPDATE in the background if the jti hasn't been touched in
-// the last throttle window. Safe to call from the hot path; it is
-// non-blocking.
-func (t *SessionToucher) Touch(jti string) {
+// the last throttle window (so the inactivity deadline moves in 30 s steps).
+// Safe to call from the hot path; it is non-blocking.
+func (t *SessionToucher) Touch(jti string, until time.Time) {
 	if jti == "" {
 		return
 	}
@@ -202,7 +212,7 @@ func (t *SessionToucher) Touch(jti string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		_ = t.store.TouchSession(ctx, jti)
+		_ = t.store.TouchSession(ctx, jti, until)
 	}()
 }
 

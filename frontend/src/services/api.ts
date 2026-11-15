@@ -1,3 +1,6 @@
+import i18n from '../i18n';
+import { noteActivity } from '../utils/session';
+
 export type User = {
   id: number;
   username: string;
@@ -91,14 +94,67 @@ const checkSession = (status: number) => {
   if (status === 401 && getToken()) endSession();
 };
 
-// When the JWT runs out (ms since epoch), or null if it can't be read.
-export const tokenExpiresAt = (): number | null => {
+const tokenClaims = (): { exp?: number; idle?: number } => {
   try {
-    const payload = JSON.parse(atob(getToken().split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))) as { exp?: number };
-    return payload.exp ? payload.exp * 1000 : null;
+    return JSON.parse(atob(getToken().split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
   } catch {
-    return null;
+    return {};
   }
+};
+
+// When the JWT runs out (ms since epoch, by the server's clock), or null if it can't be read.
+export const tokenExpiresAt = (): number | null => {
+  const { exp } = tokenClaims();
+  return exp ? exp * 1000 : null;
+};
+
+// The inactivity timeout in seconds (the admin's session setting), or null for an older token.
+export const tokenIdleSeconds = (): number | null => tokenClaims().idle ?? null;
+
+// The cluster this tab shows. Every request names it, so another tab
+// switching the user's cluster can't redirect this tab's actions (the server
+// otherwise uses the user's stored pick). Learned from the first response,
+// which names the cluster that answered; a reload takes the latest pick.
+const CLUSTER_HEADER = 'X-OpenConsole-Cluster';
+let tabCluster: number | null = null;
+export const tabClusterId = () => tabCluster;
+
+const authHeaders = (): Record<string, string> => ({
+  ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
+  ...(tabCluster ? { [CLUSTER_HEADER]: String(tabCluster) } : {}),
+});
+
+// What every response tells the tab: a 401 ends the session; the first one
+// names the tab's cluster; a request the user caused (not a poll) is activity.
+const seeResponse = (response: Response, auto = false) => {
+  checkSession(response.status);
+  if (tabCluster === null) {
+    const id = Number(response.headers.get(CLUSTER_HEADER));
+    if (id > 0) tabCluster = id;
+  }
+  if (!auto && response.ok && getToken()) noteActivity();
+};
+
+// Another tab picked a cluster: the key other tabs watch (storage event).
+export const CLUSTER_PICK_KEY = 'clusterPick';
+
+// Reasons the server gives when the cluster failed a read (api/kube_errors.go),
+// shown as a sentence instead of the code.
+const CLUSTER_ERRORS = ['cluster_forbidden', 'cluster_timeout', 'cluster_unreachable', 'not_connected'];
+const errorText = (reason: string) => (CLUSTER_ERRORS.includes(reason) ? i18n.t(`clusterErrors.${reason}`) : reason);
+
+// The error a failed response stands for: the server's {"error": …} reason
+// (the parse used to throw inside its own try, so the raw JSON body came out),
+// else the body text, else the status text.
+const responseError = async (response: Response) => {
+  const text = await response.text();
+  let reason = '';
+  try {
+    reason = (JSON.parse(text) as { error?: string }).error ?? '';
+  } catch {
+    /* not JSON */
+  }
+  return new Error(errorText(reason || text || response.statusText));
 };
 
 const apiRequest = async <T>(path: string, options: RequestInit = {}): Promise<T> => {
@@ -111,7 +167,7 @@ const apiRequest = async <T>(path: string, options: RequestInit = {}): Promise<T
       headers: {
         'Content-Type': 'application/json',
         ...(options.headers || {}),
-        ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {})
+        ...authHeaders()
       }
     });
   } catch (error) {
@@ -119,28 +175,8 @@ const apiRequest = async <T>(path: string, options: RequestInit = {}): Promise<T
     throw new Error(`Network error while contacting the server: ${target}`);
   }
 
-  checkSession(response.status);
-  if (!response.ok) {
-    const contentType = response.headers.get('content-type') || '';
-    const messageText = await response.text();
-    if (contentType.includes('application/json')) {
-      try {
-        const parsed = JSON.parse(messageText) as { error?: string };
-        throw new Error(parsed.error || response.statusText);
-      } catch (error) {
-        throw new Error(messageText || response.statusText);
-      }
-    }
-    if (messageText.startsWith('{') && messageText.includes('"error"')) {
-      try {
-        const parsed = JSON.parse(messageText) as { error?: string };
-        throw new Error(parsed.error || response.statusText);
-      } catch (error) {
-        throw new Error(messageText || response.statusText);
-      }
-    }
-    throw new Error(messageText || response.statusText);
-  }
+  seeResponse(response, new Headers(options.headers).get('X-OpenConsole-Refresh') === 'auto');
+  if (!response.ok) throw await responseError(response);
 
   if (response.status === 204) {
     return {} as T;
@@ -157,37 +193,15 @@ const formRequest = async <T>(path: string, formData: FormData): Promise<T> => {
       body: formData,
       credentials: 'same-origin',
       cache: 'no-store',
-      headers: {
-        ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {})
-      }
+      headers: authHeaders()
     });
   } catch (error) {
     const target = `${window.location.origin}${path}`;
     throw new Error(`Network error while contacting the server: ${target}`);
   }
 
-  checkSession(response.status);
-  if (!response.ok) {
-    const contentType = response.headers.get('content-type') || '';
-    const messageText = await response.text();
-    if (contentType.includes('application/json')) {
-      try {
-        const parsed = JSON.parse(messageText) as { error?: string };
-        throw new Error(parsed.error || response.statusText);
-      } catch (error) {
-        throw new Error(messageText || response.statusText);
-      }
-    }
-    if (messageText.startsWith('{') && messageText.includes('"error"')) {
-      try {
-        const parsed = JSON.parse(messageText) as { error?: string };
-        throw new Error(parsed.error || response.statusText);
-      } catch (error) {
-        throw new Error(messageText || response.statusText);
-      }
-    }
-    throw new Error(messageText || response.statusText);
-  }
+  seeResponse(response);
+  if (!response.ok) throw await responseError(response);
 
   if (response.status === 204) {
     return {} as T;
@@ -256,10 +270,12 @@ export const changePassword = (currentPassword: string, newPassword: string) =>
 // header so the server doesn't audit each one; the lists the user opens are.
 // A WebSocket can't carry the Authorization header, and the JWT must not go into a URL:
 // trade it for a single-use ticket (30 s, valid for this path only).
-export const wsUrl = async (path: string, params?: URLSearchParams) => {
+// auto: a reconnect the socket makes on its own, which is not user activity.
+export const wsUrl = async (path: string, params?: URLSearchParams, auto?: boolean) => {
   const { ticket } = await apiRequest<{ ticket: string }>('/api/ws-ticket', {
     method: 'POST',
     body: JSON.stringify({ path }),
+    ...autoRefresh(auto),
   });
   const query = new URLSearchParams(params);
   query.set('ticket', ticket);
@@ -566,18 +582,27 @@ export type ClusterListItem = {
 
 // Clusters the caller may use: isActive = the default cluster, selected =
 // the caller's current one.
-export const listClustersPublic = () =>
+export const listClustersPublic = (auto?: boolean) =>
   apiRequest<{ items: Array<{ id: number; name: string; isActive: boolean; selected: boolean }> }>(
-    '/api/clusters/public'
+    '/api/clusters/public',
+    autoRefresh(auto)
   );
 
 // Picks the caller's own cluster (0 = back to the default). Only affects the
 // current user.
-export const selectCluster = (clusterId: number) =>
-  apiRequest<{ status: string; clusterId: number; name: string }>('/api/cluster/select', {
+export const selectCluster = async (clusterId: number) => {
+  const result = await apiRequest<{ status: string; clusterId: number; name: string }>('/api/cluster/select', {
     method: 'POST',
     body: JSON.stringify({ clusterId }),
   });
+  // Other open tabs see this (storage event) and offer to follow.
+  try {
+    localStorage.setItem(CLUSTER_PICK_KEY, JSON.stringify({ id: result.clusterId, name: result.name, at: Date.now() }));
+  } catch {
+    /* storage unavailable */
+  }
+  return result;
+};
 
 export const getActiveCluster = () =>
   apiRequest<{
@@ -939,9 +964,9 @@ export const downloadWithAuth = async (path: string, fallbackName: string) => {
   const response = await fetch(path, {
     credentials: 'same-origin',
     cache: 'no-store',
-    headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {},
+    headers: authHeaders(),
   });
-  checkSession(response.status);
+  seeResponse(response);
   if (!response.ok) {
     const text = await response.text();
     let message = text || response.statusText;
@@ -1107,9 +1132,9 @@ const fetchRecordingCast = async (id: number, download: boolean): Promise<Respon
   const response = await fetch(`/api/admin/recordings/${id}/cast${download ? '?download=1' : ''}`, {
     credentials: 'same-origin',
     cache: 'no-store',
-    headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {},
+    headers: authHeaders(),
   });
-  checkSession(response.status);
+  seeResponse(response);
   if (!response.ok) {
     const text = await response.text();
     let message = text || response.statusText;

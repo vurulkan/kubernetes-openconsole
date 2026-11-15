@@ -58,6 +58,7 @@ The action is `<resource type>.<verb>`. Read from the handlers' code; an action 
 | `cluster.delete` | `success` |
 | `cluster.select` | `success`, `denied`, `failed` |
 | `cluster.update` | `success` |
+| `cluster.use` | `denied` |
 | `cluster.view_overview` | `success`, `denied`, `failed` |
 | `configmap.get` | `success`, `denied` |
 | `configmap.list` | `success`, `denied` |
@@ -157,7 +158,7 @@ The action is `<resource type>.<verb>`. Read from the handlers' code; an action 
 | `purge` | deleted recordings past their retention |
 | `view_overview` | opened the admin overview |
 | `regenerate` | replaced an API key's secret |
-| `use` | presented an API key (recorded only when it was refused or rate limited) |
+| `use` | presented an API key, or worked on a cluster named per request (`X-OpenConsole-Cluster`; recorded only when it was refused or rate limited) |
 
 ## Outcomes
 

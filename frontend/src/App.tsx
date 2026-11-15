@@ -14,7 +14,8 @@ import ShortcutsHelp from './components/ShortcutsHelp';
 import { ConfirmProvider } from './components/ConfirmDialog';
 import { useGlobalShortcuts } from './hooks/useGlobalShortcuts';
 import { useTheme } from './components/ThemeProvider';
-import { endSession, getMe, listNamespaces, tokenExpiresAt, User } from './services/api';
+import { endSession, getMe, listNamespaces, tokenExpiresAt, tokenIdleSeconds, User } from './services/api';
+import { isIdle, noteActivity } from './utils/session';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -42,15 +43,41 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // Back to the sign-in page when the session runs out, even on an idle screen
-  // that sends no requests. Polled, so a laptop waking from sleep is caught too.
+  // Back to the sign-in page after the inactivity timeout, even on a screen
+  // that sends no requests (its polls are not activity). Polled, so a laptop
+  // waking from sleep is caught too. A token from before the inactivity
+  // timeout carries no idle claim: it ends at its expiry, as it used to.
   useEffect(() => {
     if (!user) return;
     const timer = window.setInterval(() => {
+      const idle = tokenIdleSeconds();
       const exp = tokenExpiresAt();
-      if (exp !== null && Date.now() >= exp) endSession();
+      if (idle ? isIdle(idle) : exp !== null && Date.now() >= exp) endSession();
     }, 15_000);
-    return () => window.clearInterval(timer);
+    // Clicks and keys are activity; while they go on without requests (typing
+    // in a shell), a request every minute (a quarter of a shorter timeout)
+    // keeps the server's deadline moving.
+    let lastPing = Date.now();
+    const pingEvery = Math.min(60_000, (tokenIdleSeconds() ?? 3600) * 250);
+    const onInput = () => {
+      noteActivity();
+      if (Date.now() - lastPing < pingEvery) return;
+      lastPing = Date.now();
+      void getMe().catch(() => undefined);
+    };
+    // Signed out in another tab: this one follows.
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'authToken' && !e.newValue) endSession();
+    };
+    window.addEventListener('pointerdown', onInput, true);
+    window.addEventListener('keydown', onInput, true);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('pointerdown', onInput, true);
+      window.removeEventListener('keydown', onInput, true);
+      window.removeEventListener('storage', onStorage);
+    };
   }, [user]);
 
   useEffect(() => {

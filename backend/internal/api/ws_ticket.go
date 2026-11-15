@@ -29,5 +29,9 @@ func (s *Server) handleWSTicket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "path must be a /ws/ endpoint")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"ticket": auth.IssueTicket(claims, body.Path)})
+	// The socket works on the cluster this request named (the tab's cluster),
+	// since a browser cannot set headers on a WebSocket.
+	withCluster := *claims
+	withCluster.Cluster = strings.TrimSpace(r.Header.Get(clusterHeader))
+	writeJSON(w, http.StatusOK, map[string]string{"ticket": auth.IssueTicket(&withCluster, body.Path)})
 }

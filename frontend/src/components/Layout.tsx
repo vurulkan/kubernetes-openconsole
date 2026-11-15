@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { Button } from './ui';
 import { ThemeToggle } from './ThemeProvider';
 import ClusterSwitcher from './ClusterSwitcher';
+import ClusterChangedBanner from './ClusterChangedBanner';
 import LocaleSwitcher from './LocaleSwitcher';
 import { dispatchOpenShortcuts, dispatchToggleEvents } from '../hooks/useGlobalShortcuts';
 import { docsUrl, getFeatures, getVersion, PROJECT_URL, User } from '../services/api';
@@ -346,7 +347,10 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, liveEvents, children
 
       {/* ── Main content ───────────────────────────────────────────── */}
       <main className={`min-h-screen pt-14 pl-[64px] ${panel !== undefined ? 'lg:pl-[304px]' : ''}`}>
-        <div className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8">{children}</div>
+        <div className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8">
+          <ClusterChangedBanner />
+          {children}
+        </div>
       </main>
     </div>
   );

@@ -84,6 +84,7 @@ const LogViewerBody: React.FC<Props> = ({ namespace, target, pod, onClose }) => 
   const [mode, setMode] = useState<'live' | 'previous'>(target.previous ? 'previous' : 'live');
   const [status, setStatus] = useState<LogStatus>({ state: 'connecting' });
   const [streamError, setStreamError] = useState<LogFrame | null>(null);
+  const [limited, setLimited] = useState<LogFrame | null>(null);
   const [paused, setPaused] = useState(false);
   const [wrap, setWrap] = useState(false);
   const [query, setQuery] = useState('');
@@ -125,6 +126,7 @@ const LogViewerBody: React.FC<Props> = ({ namespace, target, pod, onClose }) => 
     renderedDropRef.current = 0;
     atBottomRef.current = true;
     setStreamError(null);
+    setLimited(null);
     setVersion((v) => v + 1);
     const params: Record<string, string> = { tail: '100' };
     if (target.kind === 'pods') {
@@ -140,6 +142,7 @@ const LogViewerBody: React.FC<Props> = ({ namespace, target, pod, onClose }) => 
         live: mode === 'live',
         onStatus: setStatus,
         onStreamError: setStreamError,
+        onNote: (f) => f.reason === 'pods_limited' && setLimited(f),
         onLine: (f) => {
           const lines = linesRef.current;
           lines.push({ id: nextId.current++, p: f.p, c: f.c, text: f.text ?? '' });
@@ -384,6 +387,9 @@ const LogViewerBody: React.FC<Props> = ({ namespace, target, pod, onClose }) => 
           {paused && <span className="text-slate-600 dark:text-slate-300">{t('logs.pausedNote')}</span>}
           {droppedRef.current > 0 && (
             <span className="text-slate-600 dark:text-slate-300">{t('logs.dropped', { count: droppedRef.current, max: MAX_LINES.toLocaleString() })}</span>
+          )}
+          {limited && (
+            <span className="text-amber-700 dark:text-amber-400">{t('logs.podsLimited', { shown: limited.shown, total: limited.total })}</span>
           )}
           {streamError && (
             <span className="text-amber-700 dark:text-amber-400">
