@@ -21,6 +21,7 @@ import (
 type Manager struct {
 	mu         sync.RWMutex
 	client     kubernetes.Interface
+	stream     kubernetes.Interface // followed logs: no overall request timeout
 	restConfig *rest.Config
 	ready      bool
 	lastError  string
@@ -39,7 +40,7 @@ func NewManager() *Manager {
 // no informer cache, so every read goes straight to the client. Used by tests
 // with client-go's fake clientset.
 func NewManagerWithClient(client kubernetes.Interface) *Manager {
-	return &Manager{bus: NewEventBus(), client: client, ready: true}
+	return &Manager{bus: NewEventBus(), client: client, stream: client, ready: true}
 }
 
 // EventBus exposes the shared bus so API handlers can subscribe clients to
@@ -74,13 +75,14 @@ func (m *Manager) ApplyCredentials(creds models.KubeCredentials) error {
 		return err
 	}
 
-	client, err := kubernetes.NewForConfig(config)
+	client, stream, err := newClients(config)
 	if err != nil {
 		m.lastError = err.Error()
 		return fmt.Errorf("client: %w", err)
 	}
 
 	m.client = client
+	m.stream = stream
 	m.restConfig = config
 	m.ready = true
 	m.lastError = ""
@@ -163,6 +165,32 @@ func (m *Manager) Client() (kubernetes.Interface, bool) {
 	return m.client, true
 }
 
+// StreamClient is the client for followed log streams: the same credentials
+// without the overall request timeout, which would cut a live log every 30 s.
+func (m *Manager) StreamClient() (kubernetes.Interface, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.stream == nil {
+		return nil, false
+	}
+	return m.stream, true
+}
+
+// newClients builds the client for ordinary calls (bounded by config.Timeout)
+// and the one for followed streams (no overall timeout; they end with their
+// request context, and dial / TLS timeouts still apply).
+func newClients(config *rest.Config) (client, stream kubernetes.Interface, err error) {
+	if client, err = kubernetes.NewForConfig(config); err != nil {
+		return nil, nil, err
+	}
+	sc := rest.CopyConfig(config)
+	sc.Timeout = 0
+	if stream, err = kubernetes.NewForConfig(sc); err != nil {
+		return nil, nil, err
+	}
+	return client, stream, nil
+}
+
 func (m *Manager) Ready() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -238,6 +266,7 @@ func (m *Manager) Stop() {
 	}
 	m.stopMetrics()
 	m.client = nil
+	m.stream = nil
 	m.restConfig = nil
 	m.ready = false
 	// Live Events sockets on this cluster end, so the panels reconnect to the
@@ -278,12 +307,15 @@ func buildConfigRaw(creds models.KubeCredentials) (*rest.Config, error) {
 			TLSClientConfig: rest.TLSClientConfig{
 				CAData: creds.CACert,
 			},
-			Timeout: 30 * time.Second,
+			Timeout: apiTimeout,
 		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported credentials method")
 	}
 }
+
+// apiTimeout bounds an ordinary API call of a token cluster. A var for tests.
+var apiTimeout = 30 * time.Second
 
 // ErrKubeconfigUnsupported: the kubeconfig runs a program or reads a file.
 var ErrKubeconfigUnsupported = errors.New("kubeconfig_unsupported")

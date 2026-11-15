@@ -280,7 +280,7 @@ func (s *Server) handlePodLogsWS(w http.ResponseWriter, r *http.Request) {
 	if !filter.since.IsZero() {
 		opts.SinceTime = filter.since.Truncate(time.Second)
 	}
-	stream, err := client.CoreV1().Pods(namespace).GetLogs(podName, opts.ToKube()).Stream(ctx)
+	stream, err := streamClient(r, client).CoreV1().Pods(namespace).GetLogs(podName, opts.ToKube()).Stream(ctx)
 	if err != nil {
 		reason := logErrorReason(err, previous)
 		sock.send(logFrame{T: "error", Reason: reason, Msg: err.Error(), Retry: reason == "not_ready" && !previous})
@@ -302,6 +302,15 @@ func (s *Server) handlePodLogsWS(w http.ResponseWriter, r *http.Request) {
 	end := liveLogEnd(ctx, client, namespace, podName, container, restartsOf(pod, container))
 	end.Msg = note
 	sock.send(end)
+}
+
+// streamClient is the request cluster's client for followed logs (no overall
+// timeout), else client.
+func streamClient(r *http.Request, client kubernetes.Interface) kubernetes.Interface {
+	if c, ok := kubeFor(r).StreamClient(); ok {
+		return c
+	}
+	return client
 }
 
 // liveLogEnd explains why a followed log stopped: the container exited (and will it come
@@ -467,6 +476,7 @@ func (s *Server) workloadLogsWS(w http.ResponseWriter, r *http.Request, kind, re
 	}
 
 	tail := logTail(r)
+	follow := streamClient(r, client)
 	// shortcut: one sinceTime for all pods, so a line another pod wrote just before the
 	// drop but had not delivered yet is lost; per-pod resume points if that ever matters.
 	filter := parseResume(r)
@@ -481,7 +491,7 @@ func (s *Server) workloadLogsWS(w http.ResponseWriter, r *http.Request, kind, re
 				if !filter.since.IsZero() {
 					opts.SinceTime = filter.since.Truncate(time.Second)
 				}
-				stream, err := client.CoreV1().Pods(namespace).GetLogs(podName, opts.ToKube()).Stream(ctx)
+				stream, err := follow.CoreV1().Pods(namespace).GetLogs(podName, opts.ToKube()).Stream(ctx)
 				if err != nil {
 					sock.send(logFrame{T: "error", Pod: podName, C: container, Reason: logErrorReason(err, false), Msg: err.Error()})
 					return
