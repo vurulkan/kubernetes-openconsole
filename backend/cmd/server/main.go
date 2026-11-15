@@ -148,7 +148,7 @@ func main() {
 	dataDir := filepath.Dir(cfg.DataPath)
 	server := api.NewServer(stor, auditLogger, clusters, recorder, staticDir, dataDir, cfg.TimeZone)
 	backups := backup.New(database, backupDir, cfg.BackupKeep)
-	server.SetBackups(backups, cfg.BackupInterval)
+	server.SetBackups(backups, cfg.BackupInterval, cfg.BackupAllowDownload)
 	server.SetKeyExternal(currentKey != nil)
 	backups.Run(context.Background(), cfg.BackupInterval, func(info backup.Info, err error) {
 		e := models.AuditLog{User: "system", Verb: audit.VerbCreate, ResourceType: audit.KindBackup, ResourceName: info.Name,

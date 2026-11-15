@@ -23,6 +23,7 @@ var Vars = []Var{
 	{"LOG_RETENTION_DAYS", "Core", "30", "How long audit events are kept in the database, in days; older ones are purged at start and every 12 hours. `0` = never purge."},
 	{"BACKUP_INTERVAL", "Core", "24h", "How often the database is copied into `BACKUP_DIR` (Go duration: `12h`, `24h`). `0` = no scheduled copy; Admin → Backups can still make one. A copy is also made before an upgrade changes the database."},
 	{"BACKUP_KEEP", "Core", "7", "How many copies `BACKUP_DIR` keeps; the oldest beyond that are deleted after each new one."},
+	{"BACKUP_ALLOW_DOWNLOAD", "Core", "false", "`true` lets admins download the copies in Admin → Backups (each download is audited; an API key never can). A copy holds every stored credential, so this is off by default and set on the Deployment rather than in the UI: an admin account alone can't turn it on. Copies made before it was turned on can be downloaded too."},
 	{"BACKUP_DIR", "Core", "`backups` next to `DATA_PATH`", "Where database copies go. A copy holds every stored credential: without `ENCRYPTION_KEY_FILE` it also holds the key that decrypts them."},
 	{"API_KEY_READ_RETENTION_DAYS", "Core", "7", "How long **successful reads made with an API key** (`list`, `get`, `logs`, `view_yaml`, `view_overview`) are kept; they are most of an agent's audit volume. Writes, denials, failures, `pod.exec` and `api_key.*` events stay for `LOG_RETENTION_DAYS`. Console / Elastic lines are not affected."},
 	{"RESTART_HISTORY_RETENTION_DAYS", "Core", "30", "How long container exits (restart history) are kept."},

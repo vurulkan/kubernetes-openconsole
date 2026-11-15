@@ -128,14 +128,19 @@ spec:
             # ── Database backups ─────────────────────────────────────────────────
             # A copy of the database (VACUUM INTO) goes to BACKUP_DIR every
             # BACKUP_INTERVAL and before an upgrade changes the database; the
-            # newest BACKUP_KEEP are kept. Admin → Backups lists them, makes one
-            # on demand and (once allowed there) downloads them. A copy holds
-            # every stored credential: protect it like the volume. Defaults:
-            # /data/backups (same volume), 24h (0 = no scheduled copy), 7.
+            # newest BACKUP_KEEP are kept. Admin → Backups lists them and makes
+            # one on demand. A copy holds every stored credential: protect it
+            # like the volume. Defaults: /data/backups (same volume), 24h (0 =
+            # no scheduled copy), 7.
             # - name: BACKUP_INTERVAL
             #   value: 24h
             # - name: BACKUP_KEEP
             #   value: "7"
+            # BACKUP_ALLOW_DOWNLOAD: "true" lets admins download the copies in
+            # Admin → Backups (audited; never with an API key). Set here, not in
+            # the UI, so an admin account alone can't turn it on. Default false.
+            # - name: BACKUP_ALLOW_DOWNLOAD
+            #   value: "true"
 
             # ── Encryption key of the stored credentials ─────────────────────────
             # By default the key that encrypts cluster credentials, the LDAP

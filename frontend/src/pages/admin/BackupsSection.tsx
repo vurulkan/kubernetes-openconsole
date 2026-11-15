@@ -1,22 +1,21 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, DatabaseBackup, Download, RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { Alert, Button, Toggle } from '../../components/ui';
+import { Alert, Button } from '../../components/ui';
 import { Column, DataTable, IconButton } from '../../components/DataTable';
-import { confirm } from '../../components/ConfirmDialog';
 import {
   BackupInfo,
   BackupList,
   createBackup,
   downloadBackup,
   listBackups,
-  setBackupDownload,
 } from '../../services/api';
 import { formatBytes, formatDuration } from '../../utils/format';
 
 // Admin → Backups: copies of the database the server makes on a schedule,
 // before an upgrade, and on demand here. A copy holds every stored
-// credential, so downloading is off until an admin turns it on.
+// credential, so downloading is off unless BACKUP_ALLOW_DOWNLOAD=true is set
+// on the Deployment (not here: an admin account alone can't turn it on).
 export const BackupsSection: React.FC = () => {
   const { t } = useTranslation();
   const [data, setData] = useState<BackupList | null>(null);
@@ -53,25 +52,6 @@ export const BackupsSection: React.FC = () => {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
-    }
-  };
-
-  const toggleDownload = async (on: boolean) => {
-    if (on) {
-      const ok = await confirm({
-        title: t('backups.allowTitle'),
-        message: t('backups.allowBody'),
-        confirmText: t('backups.allowConfirm'),
-        variant: 'danger',
-      });
-      if (!ok) return;
-    }
-    setError(null);
-    try {
-      await setBackupDownload(on);
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
     }
   };
 
@@ -141,13 +121,9 @@ export const BackupsSection: React.FC = () => {
         </Alert>
       )}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-col gap-1">
-          <Toggle
-            checked={!!data?.allowDownload}
-            onChange={toggleDownload}
-            label={t('backups.allowDownload')}
-          />
-          <span className="text-xs text-slate-500 dark:text-slate-400">{schedule}</span>
+        <div className="flex flex-col gap-1 text-xs text-slate-500 dark:text-slate-400">
+          <span>{schedule}</span>
+          {data && <span>{data.allowDownload ? t('backups.downloadOn') : t('backups.downloadOff')}</span>}
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={refresh} disabled={loading}>

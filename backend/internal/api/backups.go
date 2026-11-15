@@ -1,10 +1,8 @@
 package api
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -15,15 +13,16 @@ import (
 )
 
 // Admin → Backups: copies of the database (backup.Manager). A copy holds
-// every stored credential, so downloading is off until an admin turns it on,
-// and an API key may neither download nor change that setting.
+// every stored credential, so downloading is off unless the operator sets
+// BACKUP_ALLOW_DOWNLOAD=true on the Deployment, and an API key never may.
 
 const reasonBackupDownloadOff = "backup_download_disabled"
 
-// SetBackups gives the server its backup manager and the interval of
-// scheduled copies (nil manager = the screen says backups are not set up).
-func (s *Server) SetBackups(m *backup.Manager, interval time.Duration) {
-	s.backups, s.backupInterval = m, interval
+// SetBackups gives the server its backup manager, the interval of scheduled
+// copies and BACKUP_ALLOW_DOWNLOAD (nil manager = the screen says backups are
+// not set up).
+func (s *Server) SetBackups(m *backup.Manager, interval time.Duration, allowDownload bool) {
+	s.backups, s.backupInterval, s.backupDownload = m, interval, allowDownload
 }
 
 // SetKeyExternal tells Admin → Backups whether the encryption key lives
@@ -41,17 +40,12 @@ func (s *Server) handleListBackups(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list backups")
 		return
 	}
-	allow, err := s.store.BackupDownloadAllowed(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to read backup settings")
-		return
-	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"items":           list,
 		"dir":             s.backups.Dir(),
 		"keep":            s.backups.Keep(),
 		"intervalSeconds": int(s.backupInterval / time.Second),
-		"allowDownload":   allow,
+		"allowDownload":   s.backupDownload,
 		"keyExternal":     s.keyExternal,
 	})
 }
@@ -74,31 +68,9 @@ func (s *Server) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, info)
 }
 
-func (s *Server) handleUpdateBackupSettings(w http.ResponseWriter, r *http.Request) {
-	e := models.AuditLog{Verb: audit.VerbUpdate, ResourceType: audit.KindSettings, ResourceName: "backups"}
-	if s.denyAPIKey(w, r, e) {
-		return
-	}
-	var in struct {
-		AllowDownload *bool `json:"allowDownload"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.AllowDownload == nil {
-		writeError(w, http.StatusBadRequest, `the body must be {"allowDownload": true|false}`)
-		return
-	}
-	if err := s.store.SetBackupDownloadAllowed(r.Context(), *in.AllowDownload); err != nil {
-		e.Outcome, e.Reason, e.Details = audit.Failed, failReason(err), failDetails(err, nil)
-		s.auditEvent(r, e)
-		writeError(w, http.StatusInternalServerError, "failed to save backup settings")
-		return
-	}
-	e.Details = audit.D{"changed": []string{"allow_download"}, "summary": "allow_download=" + strconv.FormatBool(*in.AllowDownload)}
-	s.auditEvent(r, e)
-	writeJSON(w, http.StatusOK, map[string]bool{"allowDownload": *in.AllowDownload})
-}
-
-// handleDownloadBackup sends one copy. Refused (403) while downloading is
-// off; once it is on, every copy can be downloaded, older ones included.
+// handleDownloadBackup sends one copy. Refused (403) unless
+// BACKUP_ALLOW_DOWNLOAD=true; then every copy can be downloaded, older ones
+// included.
 func (s *Server) handleDownloadBackup(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	e := models.AuditLog{Verb: audit.VerbDownload, ResourceType: audit.KindBackup, ResourceName: name}
@@ -109,12 +81,7 @@ func (s *Server) handleDownloadBackup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "backups are not set up")
 		return
 	}
-	allow, err := s.store.BackupDownloadAllowed(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to read backup settings")
-		return
-	}
-	if !allow {
+	if !s.backupDownload {
 		e.Outcome, e.Reason = audit.Denied, reasonBackupDownloadOff
 		s.auditEvent(r, e)
 		writeError(w, http.StatusForbidden, reasonBackupDownloadOff)

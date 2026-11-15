@@ -51,6 +51,10 @@ type Config struct {
 	BackupDir      string
 	BackupInterval time.Duration
 	BackupKeep     int
+	// BackupAllowDownload (BACKUP_ALLOW_DOWNLOAD): admins may download the
+	// copies in Admin → Backups. Off by default and set on the Deployment, so
+	// an admin account alone can't turn it on.
+	BackupAllowDownload bool
 
 	// Pod shell limits.
 	ExecIdleTimeout        time.Duration
@@ -129,6 +133,7 @@ func Load() Config {
 		BackupDir:              os.Getenv("BACKUP_DIR"),
 		BackupInterval:         envDurationMin("BACKUP_INTERVAL", 24*time.Hour, 0),
 		BackupKeep:             envIntMin("BACKUP_KEEP", 7, 1),
+		BackupAllowDownload:    envBool("BACKUP_ALLOW_DOWNLOAD", false),
 		ExecIdleTimeout:        envDurationMin("EXEC_IDLE_TIMEOUT", 5*time.Minute, 30*time.Second),
 		MaxExecSessionsPerUser: envIntMin("MAX_EXEC_SESSIONS_PER_USER", 3, 0),
 		RestartHistoryDays:     envIntMin("RESTART_HISTORY_RETENTION_DAYS", 30, 1),

@@ -92,6 +92,7 @@ type Server struct {
 	// backups: Admin → Backups (backups.go).
 	backups        *backup.Manager
 	backupInterval time.Duration
+	backupDownload bool
 	keyExternal    bool
 }
 
@@ -419,7 +420,6 @@ func (s *Server) routes() *chi.Mux {
 
 		r.Get("/api/admin/backups", s.handleListBackups)
 		r.Post("/api/admin/backups", s.handleCreateBackup)
-		r.Put("/api/admin/backups/settings", s.handleUpdateBackupSettings)
 		r.Get("/api/admin/backups/{name}", s.handleDownloadBackup)
 
 		r.Get("/api/admin/session", s.handleGetSession)

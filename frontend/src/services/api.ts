@@ -981,11 +981,6 @@ export type BackupList = {
 };
 export const listBackups = () => apiRequest<BackupList>('/api/admin/backups');
 export const createBackup = () => apiRequest<BackupInfo>('/api/admin/backups', { method: 'POST' });
-export const setBackupDownload = (allowDownload: boolean) =>
-  apiRequest<{ allowDownload: boolean }>('/api/admin/backups/settings', {
-    method: 'PUT',
-    body: JSON.stringify({ allowDownload }),
-  });
 export const downloadBackup = (name: string) =>
   downloadWithAuth(`/api/admin/backups/${encodeURIComponent(name)}`, name);
 

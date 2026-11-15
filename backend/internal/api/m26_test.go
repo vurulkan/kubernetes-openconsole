@@ -18,12 +18,13 @@ import (
 	"k8s-dashboard/backend/internal/models"
 )
 
-// Admin → Backups: a copy holds every credential, so downloading it is off
-// until an admin turns it on (then older copies download too), and an API
-// key can neither download nor turn it on.
-func TestBackupDownloadIsOffUntilEnabled(t *testing.T) {
+// Admin → Backups: a copy holds every credential, so downloading is off
+// unless BACKUP_ALLOW_DOWNLOAD=true (then older copies download too), and an
+// API key never downloads one.
+func TestBackupDownloadNeedsTheEnvSwitch(t *testing.T) {
 	e := newTestEnv(t)
-	e.server.SetBackups(backup.New(e.db, filepath.Join(e.tmp, "backups"), 3), 0)
+	m := backup.New(e.db, filepath.Join(e.tmp, "backups"), 3)
+	e.server.SetBackups(m, 0, false)
 	_, root := e.user("root", true)
 	_, bob := e.user("bob", false)
 
@@ -37,18 +38,15 @@ func TestBackupDownloadIsOffUntilEnabled(t *testing.T) {
 	}
 	e.waitAudit("backup.download.denied", reasonBackupDownloadOff)
 	e.expect("GET", path, bob, nil, http.StatusForbidden)
-	e.expect("PUT", "/api/admin/backups/settings", bob, map[string]bool{"allowDownload": true}, http.StatusForbidden)
 
-	key, _ := e.createKey(root, map[string]any{"name": "admin-key", "clusters": []int{0}, "allNamespaces": true, "grants": []string{"pods:list"}, "adminScope": true})
-	e.expect("PUT", "/api/admin/backups/settings", key, map[string]bool{"allowDownload": true}, http.StatusForbidden)
-
-	e.expect("PUT", "/api/admin/backups/settings", root, map[string]bool{"allowDownload": true}, http.StatusOK)
-	e.waitAudit("settings.update.success", "allow_download=true")
+	e.server.SetBackups(m, 0, true) // BACKUP_ALLOW_DOWNLOAD=true after a restart
 	if out := e.expect("GET", path, root, nil, http.StatusOK); !strings.HasPrefix(out, "SQLite format 3") {
 		t.Fatalf("download is not the database: %.20q", out)
 	}
 	e.waitAudit("backup.download.success", made.Name)
+	key, _ := e.createKey(root, map[string]any{"name": "admin-key", "clusters": []int{0}, "allNamespaces": true, "grants": []string{"pods:list"}, "adminScope": true})
 	e.expect("GET", path, key, nil, http.StatusForbidden)
+	e.expect("GET", path, bob, nil, http.StatusForbidden)
 	e.expect("GET", "/api/admin/backups/app-20000101-000000.db", root, nil, http.StatusNotFound)
 
 	var list struct {

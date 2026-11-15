@@ -371,12 +371,6 @@ func migrateTx(ctx context.Context, conn *sql.Tx) error {
 			action TEXT NOT NULL
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_api_key_permissions_key ON api_key_permissions (key_id)`,
-		// 2.23.1 (M26): whether admins may download database backups.
-		`CREATE TABLE IF NOT EXISTS backup_settings (
-			id INTEGER PRIMARY KEY CHECK (id = 1),
-			allow_download INTEGER NOT NULL DEFAULT 0
-		);`,
-		`INSERT OR IGNORE INTO backup_settings (id, allow_download) VALUES (1, 0)`,
 	}
 
 	for _, stmt := range stmts {

@@ -1098,16 +1098,3 @@ func (s *Store) SetUserAuthSource(ctx context.Context, userID int, source string
 	_, err := s.conn.ExecContext(ctx, `UPDATE users SET auth_source = ? WHERE id = ?`, source, userID)
 	return err
 }
-
-// BackupDownloadAllowed reports whether admins may download database backups
-// (Admin → Backups; off by default).
-func (s *Store) BackupDownloadAllowed(ctx context.Context) (bool, error) {
-	var v int
-	err := s.conn.QueryRowContext(ctx, `SELECT allow_download FROM backup_settings WHERE id = 1`).Scan(&v)
-	return v == 1, err
-}
-
-func (s *Store) SetBackupDownloadAllowed(ctx context.Context, allowed bool) error {
-	_, err := s.conn.ExecContext(ctx, `UPDATE backup_settings SET allow_download = ? WHERE id = 1`, boolToInt(allowed))
-	return err
-}
