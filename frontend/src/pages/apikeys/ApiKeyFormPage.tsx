@@ -86,6 +86,9 @@ const ApiKeyFormPage: React.FC<{ user: User }> = ({ user }) => {
         const [c, list] = await Promise.all([getApiKeyCeiling(), editId ? listApiKeys() : Promise.resolve(null)]);
         setCeiling(c);
         setChoice(defaultChoice(c));
+        // A new key starts from the safe read template, in the same render as
+        // the ceiling (a later effect left one render with empty cells).
+        if (!editId) setMatrix(toMatrix(templateGrants('safeRead', new Set(c.namespaces.flatMap((n) => n.grants)), c.safeRead)));
         const k = list?.items.find((x) => x.id === editId) ?? null;
         if (editId && !k) {
           setError(t('apiKeys.notFound'));
@@ -143,11 +146,6 @@ const ApiKeyFormPage: React.FC<{ user: User }> = ({ user }) => {
     setMatrix(m);
   }, [available, kept, ceiling]);
 
-  // A new key starts from the safe read template once the ceiling is known.
-  useEffect(() => {
-    if (ceiling && !editId)
-      setMatrix(toMatrix(templateGrants('safeRead', new Set(ceiling.namespaces.flatMap((n) => n.grants)), ceiling.safeRead)));
-  }, [ceiling, editId]);
 
   const applyTemplate = (tpl: KeyTemplate) => {
     setTemplate(tpl);
