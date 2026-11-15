@@ -76,6 +76,7 @@ const (
 	KindRecording  = "recording"
 	KindSavedView  = "saved_view"
 	KindAPIKey     = "api_key"
+	KindBackup     = "backup"
 )
 
 // kubeKinds maps the plural resource names used by RBAC grants and URLs to

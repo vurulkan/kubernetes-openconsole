@@ -958,6 +958,17 @@ paths:
   /api/admin/recordings/{id}/cast:
     parameters: [{$ref: '#/components/parameters/id'}]
     get: {tags: [Admin], x-openconsole-admin: true, summary: A recording as an asciicast file, responses: {"200": {description: asciicast v2.}}}
+  /api/admin/backups:
+    get: {tags: [Admin], x-openconsole-admin: true, summary: "Database backups: list, folder, schedule, whether downloading is allowed (BACKUP_ALLOW_DOWNLOAD)", responses: {"200": {$ref: '#/components/responses/ok'}}}
+    post: {tags: [Admin], x-openconsole-admin: true, summary: Make a database backup now, responses: {"201": {$ref: '#/components/responses/ok'}}}
+  /api/admin/backups/{name}:
+    parameters: [{$ref: '#/components/parameters/name'}]
+    get:
+      tags: [Admin]
+      x-openconsole-admin: true
+      x-openconsole-api-key: false
+      summary: Download a backup (403 backup_download_disabled unless BACKUP_ALLOW_DOWNLOAD=true)
+      responses: {"200": {description: The SQLite file.}}
   /api/admin/customization/logo:
     post: {tags: [Admin], x-openconsole-admin: true, summary: Upload a custom logo, responses: {"200": {$ref: '#/components/responses/ok'}}}
     delete: {tags: [Admin], x-openconsole-admin: true, summary: Remove the custom logo, responses: {"200": {$ref: '#/components/responses/ok'}}}

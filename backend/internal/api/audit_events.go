@@ -13,6 +13,7 @@ import (
 	"k8s-dashboard/backend/internal/auth"
 	logpkg "k8s-dashboard/backend/internal/logging"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/store"
 )
 
 // refreshHeader marks the list requests the UI sends on its own every few
@@ -48,7 +49,7 @@ func (s *Server) auditEvent(r *http.Request, e models.AuditLog) {
 		ci := clusterFrom(r.Context())
 		e.Cluster, e.ClusterID = ci.Name, ci.ID
 	}
-	go func() {
+	s.audit.Go(func() {
 		ctx := context.Background()
 		if e.AuthSource == "" && userID > 0 {
 			if u, err := s.store.GetUserByID(ctx, userID); err == nil {
@@ -56,7 +57,7 @@ func (s *Server) auditEvent(r *http.Request, e models.AuditLog) {
 			}
 		}
 		s.audit.Record(ctx, e)
-	}()
+	})
 }
 
 // auditRead records a successful read (list / get / logs) of a Kubernetes
@@ -112,6 +113,8 @@ func failReason(err error) string {
 		return ""
 	case errors.Is(err, errNotConnected):
 		return "not_connected"
+	case errors.Is(err, store.ErrUnknownReference):
+		return "not_found"
 	case apierrors.IsForbidden(err):
 		return "k8s_forbidden"
 	case apierrors.IsNotFound(err):

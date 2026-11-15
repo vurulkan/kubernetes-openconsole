@@ -33,6 +33,7 @@ import (
 
 	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/auth"
+	"k8s-dashboard/backend/internal/backup"
 	"k8s-dashboard/backend/internal/kube"
 	logpkg "k8s-dashboard/backend/internal/logging"
 	"k8s-dashboard/backend/internal/models"
@@ -81,7 +82,47 @@ type Server struct {
 	nodeHistory sync.Map
 	// keyLimits rate-limits API keys and thins out their last-use writes.
 	keyLimits apiKeyLimits
+	// facets caches the audit filter suggestions (facetsEntry, 60 s): seven
+	// DISTINCT scans of the whole audit log on every Audit Logs visit.
+	facets atomic.Pointer[facetsEntry]
+	// ws tracks open WebSocket handlers so shutdown can wait for them;
+	// stopping is set when shutdown begins.
+	ws       sync.WaitGroup
+	stopping atomic.Bool
+	// backups: Admin → Backups (backups.go).
+	backups        *backup.Manager
+	backupInterval time.Duration
+	backupDownload bool
+	keyExternal    bool
 }
+
+// BeginShutdown marks the server as stopping, before the base context of
+// the HTTP server is cancelled (which ends every WebSocket).
+func (s *Server) BeginShutdown() { s.stopping.Store(true) }
+
+// Drain waits for the WebSocket handlers to finish (each writes its end
+// audit and closes its recording) and then for pending audit writes, or
+// until ctx ends.
+func (s *Server) Drain(ctx context.Context) {
+	done := make(chan struct{})
+	go func() { s.ws.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		slog.Warn("shutdown: WebSocket sessions still open")
+	}
+	s.audit.Wait(ctx)
+}
+
+type facetsEntry struct {
+	at     time.Time
+	facets store.AuditFacets
+}
+
+const (
+	auditListMax   = 500    // rows per Audit Logs page
+	auditExportMax = 50_000 // rows per CSV export, newest first
+)
 
 // sessionValidator is the AuthMiddleware adapter around *store.Store. Returning
 // (false, nil) from Validate rejects a token; errors propagate so middleware
@@ -376,6 +417,10 @@ func (s *Server) routes() *chi.Mux {
 		r.Get("/api/admin/azure-ad", s.handleGetAzureAD)
 		r.Put("/api/admin/azure-ad", s.handleUpdateAzureAD)
 		r.Post("/api/admin/azure-ad/test", s.handleTestAzureAD)
+
+		r.Get("/api/admin/backups", s.handleListBackups)
+		r.Post("/api/admin/backups", s.handleCreateBackup)
+		r.Get("/api/admin/backups/{name}", s.handleDownloadBackup)
 
 		r.Get("/api/admin/session", s.handleGetSession)
 		r.Put("/api/admin/session", s.handleUpdateSession)
@@ -717,18 +762,15 @@ func (s *Server) ldapAutoProvision(r *http.Request, typed, password string) (*mo
 	if err != nil {
 		return nil, false
 	}
-	id, err := s.store.CreateUser(ctx, name, hash)
+	groups := s.existingGroupIDs(ctx, cfg.AutoProvisionGroupIDs)
+	id, err := s.store.CreateDirectoryUser(ctx, name, hash, models.AuthSourceLDAP, groups)
 	if err != nil {
 		// Lost a race with a parallel first sign-in: use that account.
 		if existing, getErr := s.store.GetUserByUsername(ctx, name); getErr == nil && existing.AuthSource == models.AuthSourceLDAP {
 			return existing, true
 		}
+		slog.Error("LDAP account creation failed", slog.String("user", name), slog.Any("error", err))
 		return nil, false
-	}
-	_ = s.store.SetUserAuthSource(ctx, id, models.AuthSourceLDAP)
-	groups := s.existingGroupIDs(ctx, cfg.AutoProvisionGroupIDs)
-	if len(groups) > 0 {
-		_ = s.store.SetUserGroups(ctx, id, groups)
 	}
 	user, err := s.store.GetUserByID(ctx, id)
 	if err != nil {
@@ -1776,6 +1818,12 @@ func (s *Server) handleSetUserGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.store.SetUserGroups(r.Context(), id, request.GroupIDs); err != nil {
+		s.auditEvent(r, models.AuditLog{Verb: audit.VerbUpdate, Outcome: audit.Failed, Reason: failReason(err),
+			ResourceType: audit.KindUser, ResourceName: s.userNameByID(r, id), Details: failDetails(err, audit.D{"changed": []string{"groups"}})})
+		if errors.Is(err, store.ErrUnknownReference) {
+			writeError(w, http.StatusBadRequest, "unknown user or group id")
+			return
+		}
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -1874,6 +1922,12 @@ func (s *Server) handleSetGroupRoles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.store.SetGroupRoles(r.Context(), id, request.RoleIDs); err != nil {
+		s.auditEvent(r, models.AuditLog{Verb: audit.VerbUpdate, Outcome: audit.Failed, Reason: failReason(err),
+			ResourceType: audit.KindGroup, ResourceName: s.groupNameByID(r, id), Details: failDetails(err, audit.D{"changed": []string{"roles"}})})
+		if errors.Is(err, store.ErrUnknownReference) {
+			writeError(w, http.StatusBadRequest, "unknown group or role id")
+			return
+		}
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -2031,6 +2085,13 @@ func (s *Server) handleAddRolePermission(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := s.store.AddNamespacePermission(r.Context(), roleID, request.ClusterID, request.Namespace, request.Resource, request.Action); err != nil {
+		s.auditEvent(r, models.AuditLog{Verb: audit.VerbCreate, Outcome: audit.Failed, Reason: failReason(err),
+			ResourceType: audit.KindPermission, ResourceName: strconv.Itoa(roleID), Namespace: request.Namespace,
+			Details: failDetails(err, audit.D{"grant": request.Resource + ":" + request.Action})})
+		if errors.Is(err, store.ErrUnknownReference) {
+			writeError(w, http.StatusNotFound, "role not found")
+			return
+		}
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -2196,7 +2257,7 @@ func (s *Server) handleImportLDAPUsers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
-	var created, skipped []string
+	var created, skipped, failed []string
 	for _, username := range request.Usernames {
 		username = strings.TrimSpace(username)
 		if username == "" {
@@ -2207,16 +2268,13 @@ func (s *Server) handleImportLDAPUsers(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		randomHash, err := auth.HashPassword(randomPassword())
-		if err != nil {
-			continue
+		if err == nil {
+			_, err = s.store.CreateDirectoryUser(r.Context(), username, randomHash, models.AuthSourceLDAP, request.GroupIDs)
 		}
-		id, err := s.store.CreateUser(r.Context(), username, randomHash)
 		if err != nil {
+			slog.Warn("LDAP import failed", slog.String("user", username), slog.Any("error", err))
+			failed = append(failed, username)
 			continue
-		}
-		_ = s.store.SetUserAuthSource(r.Context(), id, models.AuthSourceLDAP)
-		if len(request.GroupIDs) > 0 {
-			_ = s.store.SetUserGroups(r.Context(), id, request.GroupIDs)
 		}
 		created = append(created, username)
 	}
@@ -2230,6 +2288,7 @@ func (s *Server) handleImportLDAPUsers(w http.ResponseWriter, r *http.Request) {
 		"created":         len(created),
 		"createdUsers":    created,
 		"skippedExisting": skipped,
+		"failed":          failed,
 	})
 }
 
@@ -2348,6 +2407,9 @@ func (s *Server) handleAuditLogs(w http.ResponseWriter, r *http.Request) {
 			limit = parsed
 		}
 	}
+	if limit < 1 || limit > auditListMax {
+		limit = auditListMax
+	}
 	if value := r.URL.Query().Get("offset"); value != "" {
 		if parsed, err := strconv.Atoi(value); err == nil {
 			offset = parsed
@@ -2419,42 +2481,45 @@ func auditFilterFrom(w http.ResponseWriter, r *http.Request) (store.AuditFilter,
 // handleAuditFacets lists the actions, users and namespaces found in the
 // audit log, for the filter suggestions in Admin → Audit Logs.
 func (s *Server) handleAuditFacets(w http.ResponseWriter, r *http.Request) {
+	if e := s.facets.Load(); e != nil && time.Since(e.at) < time.Minute {
+		writeJSON(w, http.StatusOK, e.facets)
+		return
+	}
 	facets, err := s.store.AuditFacets(r.Context(), 1000)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to read audit facets")
 		return
 	}
+	s.facets.Store(&facetsEntry{at: time.Now(), facets: facets})
 	writeJSON(w, http.StatusOK, facets)
 }
 
+// handleAuditLogsExport streams the matching entries as CSV, newest first, at
+// most auditExportMax (or ?limit=). Rows are written as they are read.
 func (s *Server) handleAuditLogsExport(w http.ResponseWriter, r *http.Request) {
 	filter, ok := auditFilterFrom(w, r)
 	if !ok {
 		return
 	}
-	limit := 1000
+	limit := auditExportMax
 	if value := r.URL.Query().Get("limit"); value != "" {
-		if parsed, err := strconv.Atoi(value); err == nil {
+		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 && parsed < limit {
 			limit = parsed
 		}
 	}
-	logs, err := s.store.ListAuditLogsFiltered(r.Context(), limit, 0, filter)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to fetch audit logs")
-		return
-	}
+	extendWriteDeadline(w, 10*time.Minute)
 	w.Header().Set("Content-Type", "text/csv")
 	w.Header().Set("Content-Disposition", "attachment; filename=audit-logs.csv")
 	writer := newCSVWriter(w)
 	_ = writer.Write([]string{"timestamp", "user", "action", "verb", "outcome", "reason", "cluster", "namespace",
 		"resource_type", "resource_name", "details", "source_ip", "user_agent", "auth_source", "request_id", "api_key_name"})
-	for _, entry := range logs {
+	err := s.store.EachAuditLog(r.Context(), limit, filter, func(entry models.AuditLog) error {
 		details := ""
 		if len(entry.Details) > 0 {
 			b, _ := json.Marshal(entry.Details)
 			details = string(b)
 		}
-		_ = writer.Write([]string{
+		return writer.Write([]string{
 			entry.Timestamp.In(s.timezone).Format(time.RFC3339),
 			entry.User,
 			entry.Action,
@@ -2472,8 +2537,12 @@ func (s *Server) handleAuditLogsExport(w http.ResponseWriter, r *http.Request) {
 			entry.RequestID,
 			entry.APIKeyName,
 		})
-	}
+	})
 	writer.Flush()
+	if err != nil {
+		// Headers are gone; the file just ends early. The log says why.
+		slog.Warn("audit export stopped", slog.Any("error", err), slog.String("request_id", logpkg.RequestIDFrom(r.Context())))
+	}
 }
 
 const (

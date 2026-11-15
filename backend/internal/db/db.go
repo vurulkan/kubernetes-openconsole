@@ -6,38 +6,156 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
 
+// DB is the SQLite file. Conn is the one writing connection; Read is a small
+// pool for reads that may take a while (audit lists, exports, facets) and for
+// backups (VACUUM INTO), so they don't hold up writes. Never write through Read.
 type DB struct {
 	Conn *sql.DB
+	Read *sql.DB
+	path string
 }
 
-func Open(dbPath string) (*DB, error) {
+// BusyTimeoutMS is how long a statement waits for a lock held by another
+// connection before it fails with SQLITE_BUSY. Tests lower it.
+var BusyTimeoutMS = 5000
+
+// dsn: WAL lets readers and the writer work at the same time; NORMAL sync is
+// safe with WAL; foreign keys make ON DELETE CASCADE work; _txlock=immediate
+// takes the write lock at BEGIN, so a transaction never fails half-way when
+// it upgrades from reading to writing.
+func dsn(path string) string {
+	return path + fmt.Sprintf("?_pragma=busy_timeout(%d)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)&_txlock=immediate", BusyTimeoutMS)
+}
+
+// Open opens (or creates) the database and brings its schema up to date.
+func Open(dbPath string) (*DB, error) { return OpenWithBackup(dbPath, "") }
+
+// OpenWithBackup is Open, and when the schema is about to change, it first
+// copies the file into backupDir ("" = no copy) as app-<time>-pre-upgrade.db.
+func OpenWithBackup(dbPath, backupDir string) (*DB, error) {
 	dir := filepath.Dir(dbPath)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, fmt.Errorf("create db dir: %w", err)
 	}
 
-	conn, err := sql.Open("sqlite", dbPath)
+	conn, err := sql.Open("sqlite", dsn(dbPath))
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
-
 	conn.SetMaxOpenConns(1)
 	conn.SetMaxIdleConns(1)
 	conn.SetConnMaxLifetime(5 * time.Minute)
 
-	if err := migrate(context.Background(), conn); err != nil {
+	read, err := sql.Open("sqlite", dsn(dbPath))
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("open db: %w", err)
+	}
+	read.SetMaxOpenConns(4)
+	read.SetConnMaxIdleTime(time.Minute)
+
+	d := &DB{Conn: conn, Read: read, path: dbPath}
+	ctx := context.Background()
+	if backupDir != "" {
+		if err := d.backupBeforeUpgrade(ctx, backupDir); err != nil {
+			d.Close()
+			return nil, err
+		}
+	}
+	if err := migrate(ctx, conn); err != nil {
+		d.Close()
 		return nil, err
 	}
-
-	return &DB{Conn: conn}, nil
+	return d, nil
 }
 
+// Close closes both pools.
+func (d *DB) Close() error {
+	rerr := d.Read.Close()
+	if err := d.Conn.Close(); err != nil {
+		return err
+	}
+	return rerr
+}
+
+// BackupInto writes a consistent copy of the database to path (VACUUM INTO),
+// readable by the server's user only: it holds every credential. It reads
+// through the Read pool, so writes go on meanwhile.
+func (d *DB) BackupInto(ctx context.Context, path string) error {
+	if _, err := d.Read.ExecContext(ctx, `VACUUM INTO ?`, path); err != nil {
+		os.Remove(path)
+		return fmt.Errorf("backup: %w", err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		os.Remove(path)
+		return fmt.Errorf("backup: %w", err)
+	}
+	return nil
+}
+
+// backupBeforeUpgrade copies an existing database whose schema is older than
+// this build, before migrate touches it.
+func (d *DB) backupBeforeUpgrade(ctx context.Context, dir string) error {
+	var tables, version int
+	if err := d.Conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'users'`).Scan(&tables); err != nil {
+		return fmt.Errorf("read schema: %w", err)
+	}
+	if err := d.Conn.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
+		return fmt.Errorf("read schema version: %w", err)
+	}
+	if tables == 0 || version >= len(steps) {
+		return nil
+	}
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return fmt.Errorf("create backup dir: %w", err)
+	}
+	path := filepath.Join(dir, BackupName(time.Now(), "pre-upgrade"))
+	if err := d.BackupInto(ctx, path); err != nil {
+		return fmt.Errorf("backup before upgrade (%s): %w", path, err)
+	}
+	return nil
+}
+
+// BackupName is app-<UTC time>[-<tag>].db; names sort by time.
+func BackupName(t time.Time, tag string) string {
+	name := "app-" + t.UTC().Format("20060102-150405")
+	if tag != "" {
+		name += "-" + tag
+	}
+	return name + ".db"
+}
+
+// migrate brings the schema up to date in one transaction: a failure leaves
+// the file as it was and the server does not start. The CREATE / ALTER
+// statements are idempotent and run on every start (an ALTER that fails for
+// any reason but "duplicate column name" stops the migration); the steps
+// below run once each, counted in PRAGMA user_version.
 func migrate(ctx context.Context, conn *sql.DB) error {
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := migrateTx(ctx, tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("migrate: commit: %w", err)
+	}
+	return nil
+}
+
+func isDuplicateColumn(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "duplicate column name")
+}
+
+func migrateTx(ctx context.Context, conn *sql.Tx) error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS app_secrets (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -62,18 +180,18 @@ func migrate(ctx context.Context, conn *sql.DB) error {
 			description TEXT NOT NULL DEFAULT ''
 		);`,
 		`CREATE TABLE IF NOT EXISTS user_groups (
-			user_id INTEGER NOT NULL,
-			group_id INTEGER NOT NULL,
+			user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+			group_id INTEGER NOT NULL REFERENCES groups (id) ON DELETE CASCADE,
 			PRIMARY KEY (user_id, group_id)
 		);`,
 		`CREATE TABLE IF NOT EXISTS group_roles (
-			group_id INTEGER NOT NULL,
-			role_id INTEGER NOT NULL,
+			group_id INTEGER NOT NULL REFERENCES groups (id) ON DELETE CASCADE,
+			role_id INTEGER NOT NULL REFERENCES roles (id) ON DELETE CASCADE,
 			PRIMARY KEY (group_id, role_id)
 		);`,
 		`CREATE TABLE IF NOT EXISTS namespace_permissions (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			role_id INTEGER NOT NULL,
+			role_id INTEGER NOT NULL REFERENCES roles (id) ON DELETE CASCADE,
 			namespace TEXT NOT NULL,
 			resource TEXT NOT NULL,
 			action TEXT NOT NULL
@@ -321,9 +439,8 @@ func migrate(ctx context.Context, conn *sql.DB) error {
 		`ALTER TABLE ldap_config ADD COLUMN ca_cert TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, stmt := range alterStatements {
-		if _, err := conn.ExecContext(ctx, stmt); err != nil {
-			// Ignore duplicate column errors for existing databases.
-			continue
+		if _, err := conn.ExecContext(ctx, stmt); err != nil && !isDuplicateColumn(err) {
+			return fmt.Errorf("migrate %q: %w", stmt, err)
 		}
 	}
 	// 2.15.0: last sign-in. When the column is new, every existing account
@@ -334,12 +451,20 @@ func migrate(ctx context.Context, conn *sql.DB) error {
 		if _, err := conn.ExecContext(ctx, `UPDATE users SET last_login_at = created_at`); err != nil {
 			return fmt.Errorf("backfill last_login_at: %w", err)
 		}
+	} else if !isDuplicateColumn(err) {
+		return fmt.Errorf("migrate last_login_at: %w", err)
 	}
 
 	for _, stmt := range []string{
 		`CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs (timestamp)`,
 		`CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs (action)`,
 		`CREATE INDEX IF NOT EXISTS idx_audit_logs_outcome ON audit_logs (outcome)`,
+		// 2.23.1 (M26): the audit filters and their suggestion lists.
+		`CREATE INDEX IF NOT EXISTS idx_audit_logs_user ON audit_logs (user)`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_logs_cluster ON audit_logs (cluster)`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_logs_namespace ON audit_logs (namespace)`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_logs_verb ON audit_logs (verb)`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_logs_resource_type ON audit_logs (resource_type)`,
 	} {
 		if _, err := conn.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("audit indexes: %w", err)
@@ -378,5 +503,69 @@ func migrate(ctx context.Context, conn *sql.DB) error {
 		}
 	}
 
+	var version int
+	if err := conn.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
+		return fmt.Errorf("read schema version: %w", err)
+	}
+	for v := version; v < len(steps); v++ {
+		if err := steps[v](ctx, conn); err != nil {
+			return fmt.Errorf("migrate step %d: %w", v+1, err)
+		}
+	}
+	if version < len(steps) {
+		if _, err := conn.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version = %d`, len(steps))); err != nil {
+			return fmt.Errorf("write schema version: %w", err)
+		}
+	}
 	return nil
+}
+
+// steps run once each, in order; user_version = how many have run. Append
+// only: never change or reorder a step that shipped.
+var steps = []func(context.Context, *sql.Tx) error{
+	// 1 (2.23.1): foreign keys for memberships and role permissions. The
+	// tables had none, so deleting a user, group or role left rows behind and
+	// any id was accepted. Rebuild them with ON DELETE CASCADE, keeping only
+	// rows whose user / group / role still exists, and drop API key rows of
+	// deleted users and keys.
+	func(ctx context.Context, tx *sql.Tx) error {
+		for _, stmt := range []string{
+			`CREATE TABLE user_groups_v1 (
+				user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+				group_id INTEGER NOT NULL REFERENCES groups (id) ON DELETE CASCADE,
+				PRIMARY KEY (user_id, group_id))`,
+			`INSERT INTO user_groups_v1 SELECT user_id, group_id FROM user_groups
+				WHERE user_id IN (SELECT id FROM users) AND group_id IN (SELECT id FROM groups)`,
+			`DROP TABLE user_groups`,
+			`ALTER TABLE user_groups_v1 RENAME TO user_groups`,
+			`CREATE TABLE group_roles_v1 (
+				group_id INTEGER NOT NULL REFERENCES groups (id) ON DELETE CASCADE,
+				role_id INTEGER NOT NULL REFERENCES roles (id) ON DELETE CASCADE,
+				PRIMARY KEY (group_id, role_id))`,
+			`INSERT INTO group_roles_v1 SELECT group_id, role_id FROM group_roles
+				WHERE group_id IN (SELECT id FROM groups) AND role_id IN (SELECT id FROM roles)`,
+			`DROP TABLE group_roles`,
+			`ALTER TABLE group_roles_v1 RENAME TO group_roles`,
+			`CREATE TABLE namespace_permissions_v1 (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				role_id INTEGER NOT NULL REFERENCES roles (id) ON DELETE CASCADE,
+				namespace TEXT NOT NULL,
+				resource TEXT NOT NULL,
+				action TEXT NOT NULL,
+				cluster_id INTEGER NULL)`,
+			`INSERT INTO namespace_permissions_v1 (id, role_id, namespace, resource, action, cluster_id)
+				SELECT id, role_id, namespace, resource, action, cluster_id FROM namespace_permissions
+				WHERE role_id IN (SELECT id FROM roles)`,
+			`DROP TABLE namespace_permissions`,
+			`ALTER TABLE namespace_permissions_v1 RENAME TO namespace_permissions`,
+			`DELETE FROM api_keys WHERE user_id NOT IN (SELECT id FROM users)`,
+			`DELETE FROM api_key_scopes WHERE key_id NOT IN (SELECT id FROM api_keys)`,
+			`DELETE FROM api_key_permissions WHERE key_id NOT IN (SELECT id FROM api_keys)`,
+		} {
+			if _, err := tx.ExecContext(ctx, stmt); err != nil {
+				return err
+			}
+		}
+		return nil
+	},
 }

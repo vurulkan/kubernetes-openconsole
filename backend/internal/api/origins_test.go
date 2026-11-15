@@ -52,8 +52,8 @@ func TestSetOriginsRejectsBadValues(t *testing.T) {
 func TestWSOrigin(t *testing.T) {
 	cases := []struct {
 		name, origin, host, fwdHost, remote string
-		enforce                            bool
-		want                               bool
+		enforce                             bool
+		want                                bool
 	}{
 		{"no origin (curl)", "", "console.example", "", "203.0.113.5:1", true, true},
 		{"same host", "https://console.example", "console.example", "", "203.0.113.5:1", true, true},

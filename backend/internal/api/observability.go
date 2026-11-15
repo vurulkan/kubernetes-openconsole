@@ -157,6 +157,7 @@ type httpMetrics struct {
 	durationSumMs       atomic.Int64
 	durationCount       atomic.Int64
 	auditEventsTotal    atomic.Int64
+	auditWriteFailures  atomic.Int64
 	execSessionsTotal   atomic.Int64
 	wsLogStreamsStarted atomic.Int64
 	deployActionsTotal  atomic.Int64
@@ -205,6 +206,7 @@ func metricsRecordRequest(status int, durationMs int64) {
 
 // Public hooks so other files can bump counters.
 func MetricsAuditIncr()     { metricsStore.auditEventsTotal.Add(1) }
+func MetricsAuditFailed()   { metricsStore.auditWriteFailures.Add(1) }
 func MetricsExecIncr()      { metricsStore.execSessionsTotal.Add(1) }
 func MetricsLogStreamIncr() { metricsStore.wsLogStreamsStarted.Add(1) }
 func MetricsDeployAction()  { metricsStore.deployActionsTotal.Add(1) }
@@ -224,6 +226,7 @@ var Metrics = []MetricDoc{
 	{"openconsole_http_request_duration_ms_sum", "counter", "Sum of request durations in milliseconds.", nil},
 	{"openconsole_http_request_duration_ms_count", "counter", "Count of observed requests used for duration stats.", nil},
 	{"openconsole_audit_events_total", "counter", "Audit log entries recorded.", nil},
+	{"openconsole_audit_write_failures_total", "counter", "Audit events that could not be written to the database (full or locked volume); each one is also an error log line.", nil},
 	{"openconsole_pod_exec_sessions_total", "counter", "Pod exec sessions started.", nil},
 	{"openconsole_pod_log_streams_total", "counter", "Pod log WebSocket streams started.", nil},
 	{"openconsole_deployment_actions_total", "counter", "Deployment restart or scale actions attempted.", nil},
@@ -270,6 +273,7 @@ func handleMetrics(w http.ResponseWriter, _ *http.Request) {
 	writeMetric(w, "openconsole_http_request_duration_ms_count", count, "")
 
 	writeMetric(w, "openconsole_audit_events_total", metricsStore.auditEventsTotal.Load(), "")
+	writeMetric(w, "openconsole_audit_write_failures_total", metricsStore.auditWriteFailures.Load(), "")
 	writeMetric(w, "openconsole_pod_exec_sessions_total", metricsStore.execSessionsTotal.Load(), "")
 	writeMetric(w, "openconsole_pod_log_streams_total", metricsStore.wsLogStreamsStarted.Load(), "")
 	writeMetric(w, "openconsole_deployment_actions_total", metricsStore.deployActionsTotal.Load(), "")

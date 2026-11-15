@@ -73,6 +73,7 @@ func (s *Server) handleRecordingCast(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	extendWriteDeadline(w, 10*time.Minute) // a large recording over a slow link
 	verb := audit.VerbView
 	if r.URL.Query().Get("download") == "1" {
 		verb = audit.VerbDownload

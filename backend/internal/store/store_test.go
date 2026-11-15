@@ -52,7 +52,11 @@ func TestUpgradeFromLegacySchema(t *testing.T) {
 			VALUES ('olduser', 'hash', 0, 1, 1, '2025-01-01 00:00:00')`,
 		`INSERT INTO audit_logs (timestamp, user, action, namespace, resource_type, resource_name)
 			VALUES ('2025-01-01 00:00:00', 'olduser', 'login', '-', 'auth', 'ok')`,
+		`CREATE TABLE roles (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, description TEXT NOT NULL DEFAULT '')`,
+		`INSERT INTO roles (id, name) VALUES (1, 'viewer')`,
 		`INSERT INTO namespace_permissions (role_id, namespace, resource, action) VALUES (1, 'team-a', 'pods', 'list')`,
+		// left behind by a role deleted before 2.23.1: dropped by the upgrade
+		`INSERT INTO namespace_permissions (role_id, namespace, resource, action) VALUES (99, 'team-b', 'pods', 'list')`,
 		`INSERT INTO ldap_config (id, enabled, url) VALUES (1, 1, 'ldap://dc:389')`,
 	} {
 		if _, err := legacy.Exec(stmt); err != nil {
@@ -79,6 +83,9 @@ func TestUpgradeFromLegacySchema(t *testing.T) {
 	perms, err := st.ListNamespacePermissions(ctx, 1)
 	if err != nil || len(perms) != 1 || perms[0].ClusterID != 0 {
 		t.Fatalf("migrated permissions = %+v, %v", perms, err)
+	}
+	if orphans, _ := st.ListNamespacePermissions(ctx, 99); len(orphans) != 0 {
+		t.Fatalf("permissions of a deleted role survived the upgrade: %+v", orphans)
 	}
 	ldap, err := st.GetLDAPConfig(ctx)
 	if err != nil || !ldap.Enabled || ldap.URL != "ldap://dc:389" || ldap.Port != 389 || ldap.UsernameAttribute != "sAMAccountName" {

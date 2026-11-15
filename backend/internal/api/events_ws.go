@@ -19,6 +19,8 @@ import (
 // may send pings but does not need to send anything. The server pings every
 // 25s to keep intermediaries from reaping idle sockets.
 func (s *Server) handleEventsWS(w http.ResponseWriter, r *http.Request) {
+	s.ws.Add(1)
+	defer s.ws.Done()
 	ns := r.URL.Query().Get("namespace")
 	user, ok := s.userForRequest(r)
 	if !ok {

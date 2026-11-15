@@ -803,7 +803,7 @@ export const searchLdapUsers = (query: string) =>
   });
 
 export const importLdapUsers = (usernames: string[], groupIds: number[] = []) =>
-  apiRequest<{ created: number; createdUsers?: string[]; skippedExisting?: string[] }>('/api/admin/ldap/users/import', {
+  apiRequest<{ created: number; createdUsers?: string[]; skippedExisting?: string[]; failed?: string[] }>('/api/admin/ldap/users/import', {
     method: 'POST',
     body: JSON.stringify({ usernames, groupIds })
   });
@@ -969,6 +969,20 @@ export const exportAuditLogs = (q: AuditQuery) =>
 
 export const exportUsersCsv = () => downloadWithAuth('/api/admin/users/export', 'users.csv');
 export const exportGroupsCsv = () => downloadWithAuth('/api/admin/groups/export', 'groups.csv');
+
+export type BackupInfo = { name: string; sizeBytes: number; createdAt: string };
+export type BackupList = {
+  items: BackupInfo[];
+  dir: string;
+  keep: number;
+  intervalSeconds: number;
+  allowDownload: boolean;
+  keyExternal: boolean;
+};
+export const listBackups = () => apiRequest<BackupList>('/api/admin/backups');
+export const createBackup = () => apiRequest<BackupInfo>('/api/admin/backups', { method: 'POST' });
+export const downloadBackup = (name: string) =>
+  downloadWithAuth(`/api/admin/backups/${encodeURIComponent(name)}`, name);
 
 export type SessionRow = {
   id: number;

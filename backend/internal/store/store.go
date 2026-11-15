@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -14,44 +13,38 @@ import (
 )
 
 type Store struct {
-	conn *sql.DB
-	key  []byte
+	conn   *sql.DB
+	read   *sql.DB // optional pool for long reads (audit); see SetReadConn
+	key    []byte  // the database key (app_secrets), nil with an external key
+	extKey []byte  // ENCRYPTION_KEY_FILE / ENCRYPTION_KEY
 }
 
-func New(conn *sql.DB) (*Store, error) {
-	key, err := ensureKey(context.Background(), conn)
-	if err != nil {
+// SetReadConn gives the store a separate pool (db.DB.Read) for the audit
+// list, export and facets, so they don't hold the single writing connection.
+func (s *Store) SetReadConn(read *sql.DB) { s.read = read }
+
+func (s *Store) reader() *sql.DB {
+	if s.read != nil {
+		return s.read
+	}
+	return s.conn
+}
+
+// New opens the store with the key kept in the database.
+func New(conn *sql.DB) (*Store, error) { return NewWithKeys(conn, Keys{}) }
+
+// NewWithKeys opens the store; see Keys.
+func NewWithKeys(conn *sql.DB, keys Keys) (*Store, error) {
+	s := &Store{conn: conn}
+	if err := s.setupKeys(context.Background(), keys); err != nil {
 		return nil, err
 	}
-	return &Store{conn: conn, key: key}, nil
-}
-
-func (s *Store) SigningKey() []byte {
-	return s.key
+	return s, nil
 }
 
 // Ping verifies the underlying DB connection is responsive. Used by readyz.
 func (s *Store) Ping(ctx context.Context) error {
 	return s.conn.PingContext(ctx)
-}
-
-func ensureKey(ctx context.Context, conn *sql.DB) ([]byte, error) {
-	var existing []byte
-	err := conn.QueryRowContext(ctx, `SELECT encryption_key FROM app_secrets WHERE id = 1`).Scan(&existing)
-	if err == nil && len(existing) > 0 {
-		return existing, nil
-	}
-	if err != nil && err != sql.ErrNoRows {
-		return nil, fmt.Errorf("read encryption key: %w", err)
-	}
-	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		return nil, fmt.Errorf("generate key: %w", err)
-	}
-	if _, err := conn.ExecContext(ctx, `INSERT OR REPLACE INTO app_secrets (id, encryption_key) VALUES (1, ?)`, key); err != nil {
-		return nil, fmt.Errorf("store key: %w", err)
-	}
-	return key, nil
 }
 
 func (s *Store) EnsureDefaultAdmin(ctx context.Context, passwordHash string) error {
@@ -131,6 +124,30 @@ func (s *Store) CreateUser(ctx context.Context, username, passwordHash string) (
 	return int(id), err
 }
 
+// CreateDirectoryUser creates an account of a directory (LDAP) with a random
+// password hash and its groups in one transaction, so a failure leaves no
+// half-made account behind (one that is local and can't sign in).
+func (s *Store) CreateDirectoryUser(ctx context.Context, username, passwordHash, source string, groupIDs []int) (int, error) {
+	var id int64
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `INSERT INTO users (username, password_hash, must_change_password, is_active, is_admin, created_at, auth_source)
+			VALUES (?, ?, 0, 1, 0, ?, ?)`, username, passwordHash, time.Now().UTC(), source)
+		if err != nil {
+			return err
+		}
+		if id, err = res.LastInsertId(); err != nil {
+			return err
+		}
+		for _, g := range groupIDs {
+			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO user_groups (user_id, group_id) VALUES (?, ?)`, id, g); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return int(id), err
+}
+
 func (s *Store) UpdateUser(ctx context.Context, user models.User) error {
 	mustChange := 0
 	if user.MustChangePassword {
@@ -177,19 +194,22 @@ func (s *Store) CountActiveAdmins(ctx context.Context) (int, error) {
 	return n, err
 }
 
-// DeleteUser removes the account and its API keys.
+// DeleteUser removes the account and its API keys, group memberships and
+// sessions, in one transaction.
 func (s *Store) DeleteUser(ctx context.Context, id int) error {
-	for _, q := range []string{
-		`DELETE FROM api_key_scopes WHERE key_id IN (SELECT id FROM api_keys WHERE user_id = ?)`,
-		`DELETE FROM api_key_permissions WHERE key_id IN (SELECT id FROM api_keys WHERE user_id = ?)`,
-		`DELETE FROM api_keys WHERE user_id = ?`,
-		`DELETE FROM users WHERE id = ?`,
-	} {
-		if _, err := s.conn.ExecContext(ctx, q, id); err != nil {
-			return err
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		for _, q := range []string{
+			`DELETE FROM api_key_scopes WHERE key_id IN (SELECT id FROM api_keys WHERE user_id = ?)`,
+			`DELETE FROM api_key_permissions WHERE key_id IN (SELECT id FROM api_keys WHERE user_id = ?)`,
+			`DELETE FROM api_keys WHERE user_id = ?`,
+			`DELETE FROM users WHERE id = ?`,
+		} {
+			if _, err := tx.ExecContext(ctx, q, id); err != nil {
+				return err
+			}
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func (s *Store) ListGroups(ctx context.Context) ([]models.Group, error) {
@@ -298,16 +318,14 @@ func (s *Store) ListNamespacePermissions(ctx context.Context, roleID int) ([]mod
 // AddNamespacePermission writes a row. clusterID == 0 is stored as NULL
 // (meaning "all clusters").
 func (s *Store) AddNamespacePermission(ctx context.Context, roleID, clusterID int, namespace, resource, action string) error {
-	if clusterID <= 0 {
-		_, err := s.conn.ExecContext(ctx,
-			`INSERT INTO namespace_permissions (role_id, cluster_id, namespace, resource, action) VALUES (?, NULL, ?, ?, ?)`,
-			roleID, namespace, resource, action)
-		return err
+	var cluster any
+	if clusterID > 0 {
+		cluster = clusterID
 	}
 	_, err := s.conn.ExecContext(ctx,
 		`INSERT INTO namespace_permissions (role_id, cluster_id, namespace, resource, action) VALUES (?, ?, ?, ?, ?)`,
-		roleID, clusterID, namespace, resource, action)
-	return err
+		roleID, cluster, namespace, resource, action)
+	return fkErr(err)
 }
 
 // GetNamespacePermission returns one grant with its cluster name.
@@ -338,16 +356,20 @@ func (s *Store) DeleteNamespacePermission(ctx context.Context, id int) error {
 	return err
 }
 
+// SetUserGroups replaces the user's groups in one transaction; an unknown
+// group id fails with ErrUnknownReference and changes nothing.
 func (s *Store) SetUserGroups(ctx context.Context, userID int, groupIDs []int) error {
-	if _, err := s.conn.ExecContext(ctx, `DELETE FROM user_groups WHERE user_id = ?`, userID); err != nil {
-		return err
-	}
-	for _, groupID := range groupIDs {
-		if _, err := s.conn.ExecContext(ctx, `INSERT INTO user_groups (user_id, group_id) VALUES (?, ?)`, userID, groupID); err != nil {
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM user_groups WHERE user_id = ?`, userID); err != nil {
 			return err
 		}
-	}
-	return nil
+		for _, groupID := range groupIDs {
+			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO user_groups (user_id, group_id) VALUES (?, ?)`, userID, groupID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (s *Store) GetUserGroups(ctx context.Context, userID int) ([]int, error) {
@@ -367,16 +389,20 @@ func (s *Store) GetUserGroups(ctx context.Context, userID int) ([]int, error) {
 	return ids, nil
 }
 
+// SetGroupRoles replaces the group's roles in one transaction; an unknown
+// role id fails with ErrUnknownReference and changes nothing.
 func (s *Store) SetGroupRoles(ctx context.Context, groupID int, roleIDs []int) error {
-	if _, err := s.conn.ExecContext(ctx, `DELETE FROM group_roles WHERE group_id = ?`, groupID); err != nil {
-		return err
-	}
-	for _, roleID := range roleIDs {
-		if _, err := s.conn.ExecContext(ctx, `INSERT INTO group_roles (group_id, role_id) VALUES (?, ?)`, groupID, roleID); err != nil {
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM group_roles WHERE group_id = ?`, groupID); err != nil {
 			return err
 		}
-	}
-	return nil
+		for _, roleID := range roleIDs {
+			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO group_roles (group_id, role_id) VALUES (?, ?)`, groupID, roleID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (s *Store) GetGroupRoles(ctx context.Context, groupID int) ([]int, error) {
@@ -473,7 +499,7 @@ func (s *Store) GetLDAPConfig(ctx context.Context) (models.LDAPConfig, error) {
 	cfg.StartTLS = startTLS == 1
 	cfg.SkipVerify = skipVerify == 1
 	cfg.PasswordConfigured = encPassword != ""
-	password, err := decrypt(s.key, encPassword)
+	password, err := s.decrypt(encPassword)
 	if err != nil {
 		return cfg, err
 	}
@@ -487,7 +513,7 @@ func (s *Store) GetLDAPConfig(ctx context.Context) (models.LDAPConfig, error) {
 func (s *Store) UpdateLDAPConfig(ctx context.Context, cfg models.LDAPConfig) error {
 	encPassword := ""
 	if cfg.BindPassword != "" {
-		encrypted, err := encrypt(s.key, cfg.BindPassword)
+		encrypted, err := s.encrypt(cfg.BindPassword)
 		if err != nil {
 			return err
 		}
@@ -559,7 +585,7 @@ func (s *Store) GetAzureADConfig(ctx context.Context) (models.AzureADConfig, err
 	}
 	cfg.Enabled = enabled == 1
 	cfg.PasswordConfigured = encSecret != ""
-	secret, err := decrypt(s.key, encSecret)
+	secret, err := s.decrypt(encSecret)
 	if err != nil {
 		return cfg, err
 	}
@@ -570,7 +596,7 @@ func (s *Store) GetAzureADConfig(ctx context.Context) (models.AzureADConfig, err
 func (s *Store) UpdateAzureADConfig(ctx context.Context, cfg models.AzureADConfig) error {
 	encSecret := ""
 	if cfg.ClientSecret != "" {
-		encrypted, err := encrypt(s.key, cfg.ClientSecret)
+		encrypted, err := s.encrypt(cfg.ClientSecret)
 		if err != nil {
 			return err
 		}
@@ -625,15 +651,15 @@ func (s *Store) GetKubeCredentials(ctx context.Context) (models.KubeCredentials,
 		return creds, err
 	}
 	creds.Active = active == 1
-	kubeconfig, err := decrypt(s.key, encKubeconfig)
+	kubeconfig, err := s.decrypt(encKubeconfig)
 	if err != nil {
 		return creds, err
 	}
-	token, err := decrypt(s.key, encToken)
+	token, err := s.decrypt(encToken)
 	if err != nil {
 		return creds, err
 	}
-	ca, err := decrypt(s.key, encCA)
+	ca, err := s.decrypt(encCA)
 	if err != nil {
 		return creds, err
 	}
@@ -644,15 +670,15 @@ func (s *Store) GetKubeCredentials(ctx context.Context) (models.KubeCredentials,
 }
 
 func (s *Store) UpdateKubeCredentials(ctx context.Context, creds models.KubeCredentials) error {
-	encKubeconfig, err := encrypt(s.key, string(creds.Kubeconfig))
+	encKubeconfig, err := s.encrypt(string(creds.Kubeconfig))
 	if err != nil {
 		return err
 	}
-	encToken, err := encrypt(s.key, string(creds.Token))
+	encToken, err := s.encrypt(string(creds.Token))
 	if err != nil {
 		return err
 	}
-	encCA, err := encrypt(s.key, string(creds.CACert))
+	encCA, err := s.encrypt(string(creds.CACert))
 	if err != nil {
 		return err
 	}
@@ -792,15 +818,29 @@ const auditColumns = `id, timestamp, user, action, verb, outcome, reason, namesp
 	resource_name, cluster, cluster_id, details, request_id, source_ip, user_agent, auth_source, api_key_id, api_key_name`
 
 func (s *Store) ListAuditLogsFiltered(ctx context.Context, limit, offset int, f AuditFilter) ([]models.AuditLog, error) {
+	var logs []models.AuditLog
+	err := s.eachAuditLog(ctx, limit, offset, f, func(e models.AuditLog) error {
+		logs = append(logs, e)
+		return nil
+	})
+	return logs, err
+}
+
+// EachAuditLog calls fn for each matching entry, newest first, at most limit,
+// reading row by row (for exports that don't fit in memory).
+func (s *Store) EachAuditLog(ctx context.Context, limit int, f AuditFilter, fn func(models.AuditLog) error) error {
+	return s.eachAuditLog(ctx, limit, 0, f, fn)
+}
+
+func (s *Store) eachAuditLog(ctx context.Context, limit, offset int, f AuditFilter, fn func(models.AuditLog) error) error {
 	where, args := f.where()
 	query := `SELECT ` + auditColumns + ` FROM audit_logs` + where + ` ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?`
 	args = append(args, limit, offset)
-	rows, err := s.conn.QueryContext(ctx, query, args...)
+	rows, err := s.reader().QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer rows.Close()
-	var logs []models.AuditLog
 	for rows.Next() {
 		var entry models.AuditLog
 		var details string
@@ -808,14 +848,16 @@ func (s *Store) ListAuditLogsFiltered(ctx context.Context, limit, offset int, f 
 			&entry.Outcome, &entry.Reason, &entry.Namespace, &entry.ResourceType, &entry.ResourceName,
 			&entry.Cluster, &entry.ClusterID, &details, &entry.RequestID, &entry.SourceIP,
 			&entry.UserAgent, &entry.AuthSource, &entry.APIKeyID, &entry.APIKeyName); err != nil {
-			return nil, err
+			return err
 		}
 		if details != "" {
 			_ = json.Unmarshal([]byte(details), &entry.Details)
 		}
-		logs = append(logs, entry)
+		if err := fn(entry); err != nil {
+			return err
+		}
 	}
-	return logs, rows.Err()
+	return rows.Err()
 }
 
 func (s *Store) CountAuditLogs(ctx context.Context, userFilter, actionFilter, namespaceFilter string, startTime, endTime *time.Time) (int, error) {
@@ -825,7 +867,7 @@ func (s *Store) CountAuditLogs(ctx context.Context, userFilter, actionFilter, na
 func (s *Store) CountAuditLogsFiltered(ctx context.Context, f AuditFilter) (int, error) {
 	where, args := f.where()
 	var count int
-	if err := s.conn.QueryRowContext(ctx, `SELECT COUNT(1) FROM audit_logs`+where, args...).Scan(&count); err != nil {
+	if err := s.reader().QueryRowContext(ctx, `SELECT COUNT(1) FROM audit_logs`+where, args...).Scan(&count); err != nil {
 		return 0, err
 	}
 	return count, nil
@@ -846,7 +888,7 @@ type AuditFacets struct {
 // AuditFacets returns up to limit distinct values per column.
 func (s *Store) AuditFacets(ctx context.Context, limit int) (AuditFacets, error) {
 	distinct := func(column string) ([]string, error) {
-		rows, err := s.conn.QueryContext(ctx,
+		rows, err := s.reader().QueryContext(ctx,
 			`SELECT DISTINCT `+column+` FROM audit_logs WHERE `+column+` NOT IN ('', '-') ORDER BY `+column+` LIMIT ?`, limit)
 		if err != nil {
 			return nil, err
@@ -923,9 +965,26 @@ func (s *Store) UpgradeAuditLogs(ctx context.Context, entries []models.AuditLog)
 	return tx.Commit()
 }
 
+// PurgeAuditLogs deletes entries older than olderThan, a few thousand rows
+// per statement, so a large purge doesn't hold the writing connection (and
+// every audit write and sign-in behind it) for long.
 func (s *Store) PurgeAuditLogs(ctx context.Context, olderThan time.Time) error {
-	_, err := s.conn.ExecContext(ctx, `DELETE FROM audit_logs WHERE timestamp < ?`, olderThan)
-	return err
+	return s.purgeInBatches(ctx, `timestamp < ?`, olderThan)
+}
+
+const purgeBatch = 5000
+
+func (s *Store) purgeInBatches(ctx context.Context, where string, args ...any) error {
+	for {
+		res, err := s.conn.ExecContext(ctx,
+			`DELETE FROM audit_logs WHERE id IN (SELECT id FROM audit_logs WHERE `+where+` LIMIT `+strconv.Itoa(purgeBatch)+`)`, args...)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n < purgeBatch {
+			return nil
+		}
+	}
 }
 
 // APIKeyReadVerbs are the reads an API key's successful calls are kept a
@@ -934,9 +993,8 @@ var APIKeyReadVerbs = []string{"list", "get", "logs", "view_yaml", "view_overvie
 
 // PurgeAPIKeyReads deletes successful API key reads older than olderThan.
 func (s *Store) PurgeAPIKeyReads(ctx context.Context, olderThan time.Time) error {
-	_, err := s.conn.ExecContext(ctx, `DELETE FROM audit_logs WHERE api_key_id > 0 AND outcome = 'success'
+	return s.purgeInBatches(ctx, `api_key_id > 0 AND outcome = 'success'
 		AND verb IN ('`+strings.Join(APIKeyReadVerbs, "','")+`') AND timestamp < ?`, olderThan)
-	return err
 }
 
 func (s *Store) ListPermissionsByUser(ctx context.Context, userID int) ([]models.NamespacePermission, error) {

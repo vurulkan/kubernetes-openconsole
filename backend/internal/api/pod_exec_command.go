@@ -139,6 +139,8 @@ func (s *Server) handlePodExecCommand(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "timeoutSeconds must be between 1 and "+strconv.Itoa(execCommandMaxTimeout))
 		return
 	}
+	// The command may run longer than the server's WriteTimeout (60 s).
+	extendWriteDeadline(w, time.Duration(timeout)*time.Second+30*time.Second)
 
 	client, ok := kubeFor(r).Client()
 	if !ok {

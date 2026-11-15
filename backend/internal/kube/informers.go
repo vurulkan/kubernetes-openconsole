@@ -141,7 +141,7 @@ type InformerCache struct {
 func newInformerCache(client kubernetes.Interface, bus *EventBus, onTermination func(models.ContainerTermination)) *InformerCache {
 	// 10m resync keeps listers lively without flooding the API server; events
 	// still arrive via the watch stream in near real-time.
-	factory := informers.NewSharedInformerFactory(client, 10*time.Minute)
+	factory := informers.NewSharedInformerFactoryWithOptions(client, 10*time.Minute, informers.WithTransform(slimObject))
 	ic := &InformerCache{
 		factory: factory,
 		stop:    make(chan struct{}),
@@ -480,3 +480,25 @@ func (c *InformerCache) Synced() bool {
 	defer c.syncedMu.RUnlock()
 	return c.synced
 }
+
+// slimObject drops what the console never reads from the cache before an
+// object is stored: managedFields and the last-applied annotation, often
+// the largest part of an object (a full copy of its spec). YAML views and
+// edits read the object from the API server, not from here.
+func slimObject(obj any) (any, error) {
+	if m, ok := obj.(metav1.Object); ok {
+		m.SetManagedFields(nil)
+		if a := m.GetAnnotations(); a[lastApplied] != "" {
+			c := make(map[string]string, len(a)-1)
+			for k, v := range a {
+				if k != lastApplied {
+					c[k] = v
+				}
+			}
+			m.SetAnnotations(c)
+		}
+	}
+	return obj, nil
+}
+
+const lastApplied = "kubectl.kubernetes.io/last-applied-configuration"

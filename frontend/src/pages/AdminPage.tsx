@@ -18,6 +18,7 @@ import LdapImportPanel from '../components/LdapImportPanel';
 import Combobox from '../components/Combobox';
 import { GroupsSection } from './admin/GroupsSection';
 import { SessionsSection } from './admin/SessionsSection';
+import { BackupsSection } from './admin/BackupsSection';
 import { RecordingSettingsPanel, RecordingsSection } from './admin/RecordingsSection';
 import { RolePermissionsPanel } from './admin/RolePermissionsPanel';
 import { useTranslation } from 'react-i18next';
@@ -105,6 +106,7 @@ import {
   Users as UsersIcon,
   Video,
   X,
+  DatabaseBackup,
 } from 'lucide-react';
 
 // ─── Tab definitions ──────────────────────────────────────────────────────────
@@ -136,6 +138,7 @@ const ADMIN_TABS: Array<{
   { label: 'Sessions', value: 'sessions', icon: KeyRound },
   { label: 'API keys', value: 'api-keys', icon: KeyRound },
   { label: 'Recordings', value: 'recordings', icon: Video },
+  { label: 'Backups', value: 'backups', icon: DatabaseBackup },
 ];
 
 // Map tab slugs to admin.tabs.* i18n keys; a few older slugs don't line up
@@ -145,6 +148,7 @@ const TAB_I18N_KEY: Record<string, string> = {
   ldap: 'ldap', 'azure-ad': 'azure', session: 'session',
   clusters: 'clusters', customization: 'customization',
   audit: 'audit', sessions: 'sessions', recordings: 'recordings', 'api-keys': 'apiKeys',
+  backups: 'backups',
 };
 
 // Classic role-permission form defaults; also what the form resets to after
@@ -2323,6 +2327,12 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
           {tab === 'api-keys' && (
             <SectionCard title={tr('admin.sections.apiKeys')} description={tr('admin.cards.apiKeysDesc')}>
               <ApiKeysSection users={users} />
+            </SectionCard>
+          )}
+
+          {tab === 'backups' && (
+            <SectionCard title={tr('admin.sections.backups')} description={tr('admin.cards.backupsDesc')}>
+              <BackupsSection />
             </SectionCard>
           )}
 

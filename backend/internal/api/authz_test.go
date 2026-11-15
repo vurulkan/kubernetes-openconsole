@@ -47,6 +47,8 @@ type testEnv struct {
 	http    *httptest.Server
 	alpha   *kube.Manager // the default cluster's connection
 	alphaID int
+	db      *db.DB
+	tmp     string
 }
 
 const secretValue = "s3cr3t-db-password"
@@ -128,7 +130,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	srv := NewServer(st, auditLogger, clusters, rec, filepath.Join(tmp, "public"), tmp, "UTC")
 	hs := httptest.NewServer(srv.Router())
 	t.Cleanup(hs.Close)
-	return &testEnv{t: t, client: client, store: st, server: srv, http: hs, alpha: alphaMgr, alphaID: alpha}
+	return &testEnv{t: t, client: client, store: st, server: srv, http: hs, alpha: alphaMgr, alphaID: alpha, db: database, tmp: tmp}
 }
 
 // user creates an account and returns a bearer token for it.
