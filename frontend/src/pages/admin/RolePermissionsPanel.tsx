@@ -27,12 +27,7 @@ import {
 // rest are opinionated starting points that reflect common on-call shapes.
 type Template = 'viewer' | 'developer' | 'sre' | 'admin';
 
-const TEMPLATE_LABELS: Record<Template, string> = {
-  viewer: 'Viewer (read-only)',
-  developer: 'Developer (read + restart/scale)',
-  sre: 'SRE (developer + pod exec)',
-  admin: 'Admin (everything)',
-};
+const TEMPLATES: Template[] = ['viewer', 'developer', 'sre', 'admin'];
 
 function buildTemplateMatrix(template: Template): Record<string, Record<string, boolean>> {
   const out: Record<string, Record<string, boolean>> = {};
@@ -112,7 +107,7 @@ export const RolePermissionsPanel: React.FC<Props> = ({
       const { items } = await listRolePermissions(roleId);
       setPermissions(items ?? []);
     } catch (err) {
-      onError(err instanceof Error ? err.message : 'Failed to load permissions');
+      onError((err as Error).message || t('rolePermissions.loadFailed'));
     } finally {
       setLoading(false);
     }
@@ -218,13 +213,15 @@ export const RolePermissionsPanel: React.FC<Props> = ({
   }, [roles, roleSearch]);
 
   const handleClearGroup = async (group: { clusterId: number; namespaces: string[]; allPermissions: NamespacePermission[] }) => {
-    const nsLabel = group.namespaces.length === 1
-      ? `namespace "${group.namespaces[0]}"`
-      : `${group.namespaces.length} namespaces (${group.namespaces.slice(0, 3).join(', ')}${group.namespaces.length > 3 ? ', …' : ''})`;
+    const cluster = group.clusterId === 0 ? t('rolePermissions.allClustersShort') : String(group.clusterId);
+    const list = group.namespaces.slice(0, 3).join(', ') + (group.namespaces.length > 3 ? ', …' : '');
     const ok = await confirm({
-      title: 'Clear all permissions for this card?',
-      message: `This removes every (resource, action) grant on cluster ${group.clusterId === 0 ? 'all' : group.clusterId}, ${nsLabel}.`,
-      confirmText: 'Clear card',
+      title: t('rolePermissions.clearTitle'),
+      message:
+        group.namespaces.length === 1
+          ? t('rolePermissions.clearMessageOne', { cluster, namespace: group.namespaces[0] })
+          : t('rolePermissions.clearMessageMany', { cluster, count: group.namespaces.length, list }),
+      confirmText: t('rolePermissions.clearCard'),
       variant: 'danger',
     });
     if (!ok) return;
@@ -232,7 +229,7 @@ export const RolePermissionsPanel: React.FC<Props> = ({
       await Promise.all(group.allPermissions.map((p) => deletePermission(p.id)));
       if (selectedRoleId) await refresh(selectedRoleId);
     } catch (err) {
-      onError(err instanceof Error ? err.message : 'Clear failed');
+      onError((err as Error).message || t('rolePermissions.clearFailed'));
     }
   };
 
@@ -326,7 +323,7 @@ export const RolePermissionsPanel: React.FC<Props> = ({
       await refresh(selectedRoleId);
       setAddOpen(false);
     } catch (err) {
-      onError(err instanceof Error ? err.message : 'Save failed');
+      onError((err as Error).message || t('common.saveFailed'));
     }
   };
 
@@ -345,7 +342,7 @@ export const RolePermissionsPanel: React.FC<Props> = ({
       await Promise.all(ids.map((id) => deletePermission(id)));
       if (selectedRoleId) await refresh(selectedRoleId);
     } catch (err) {
-      onError(err instanceof Error ? err.message : 'Remove failed');
+      onError((err as Error).message || t('rolePermissions.removeFailed'));
     }
   };
 
@@ -369,7 +366,7 @@ export const RolePermissionsPanel: React.FC<Props> = ({
       await refresh(selectedRoleId);
       setCopyOpen(false);
     } catch (err) {
-      onError(err instanceof Error ? err.message : 'Copy failed');
+      onError((err as Error).message || t('rolePermissions.copyFailed'));
     }
   };
 
@@ -475,7 +472,7 @@ export const RolePermissionsPanel: React.FC<Props> = ({
               </div>
 
               {loading && (
-                <div className="text-xs text-slate-500 dark:text-slate-400">Loading…</div>
+                <div className="text-xs text-slate-500 dark:text-slate-400">{t('common.loading')}</div>
               )}
 
               {!loading && groups.length === 0 && (
@@ -692,7 +689,7 @@ const GrantCard: React.FC<{
           ref={menuAnchor}
           onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v); }}
           className="shrink-0 rounded p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-          aria-label="Card actions"
+          aria-label={t('rolePermissions.cardActions')}
         >
           <MoreHorizontal size={14} />
         </button>
@@ -982,7 +979,7 @@ const AddPermissionsModal: React.FC<{
             {tr('rolePermissions.template')}
           </label>
           <div className="flex flex-wrap gap-1.5">
-            {(Object.keys(TEMPLATE_LABELS) as Template[]).map((tplKey) => (
+            {TEMPLATES.map((tplKey) => (
               <button
                 key={tplKey}
                 type="button"
@@ -1011,7 +1008,7 @@ const AddPermissionsModal: React.FC<{
               selectedNs.length > 0 &&
               selectedNs.every((ns) => existing.has(`${clusterId}:${ns}:${resource}:${a.key}`));
             return everywhereExists
-              ? { struck: true, title: 'Already granted on every selected namespace — will be skipped' }
+              ? { struck: true, title: tr('rolePermissions.alreadyEverywhere') }
               : {};
           }}
         />

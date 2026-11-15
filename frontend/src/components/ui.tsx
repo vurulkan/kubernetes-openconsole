@@ -432,8 +432,8 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
   options,
   value,
   onChange,
-  placeholder = 'Select...',
-  noOptionsText = 'No options',
+  placeholder: placeholderProp,
+  noOptionsText: noOptionsProp,
   className = '',
   label,
 }) => {
@@ -448,6 +448,8 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
   const [menuPos, setMenuPos] = useState<{ top: number; left: number; width: number } | null>(null);
   const id = useId();
   const { t } = useTranslation();
+  const placeholder = placeholderProp ?? t('common.selectPlaceholder');
+  const noOptionsText = noOptionsProp ?? t('common.noOptions');
 
   // Portal the dropdown to document.body so it escapes any ancestor with
   // overflow:hidden (table rows, cards, drawers). Measure the trigger button

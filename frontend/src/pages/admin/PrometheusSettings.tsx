@@ -80,7 +80,7 @@ export const PrometheusSettingsModal: React.FC<{ cluster: { id: number; name: st
       footer={
         <>
           <Button variant="outline" size="sm" onClick={onClose}>
-            {t('common.close', { defaultValue: 'Close' })}
+            {t('common.close')}
           </Button>
           {cfg?.mode && (
             <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => run('test')}>
@@ -236,11 +236,11 @@ export const PrometheusSettingsModal: React.FC<{ cluster: { id: number; name: st
               {diag.steps.map((s) => (
                 <li key={s.id} className="flex items-start gap-2">
                   {s.status === 'ok' ? (
-                    <CheckCircle2 size={14} aria-label="OK" className="mt-px shrink-0 text-emerald-500" />
+                    <CheckCircle2 size={14} aria-label={t('common.statusOk')} className="mt-px shrink-0 text-emerald-500" />
                   ) : s.status === 'warn' ? (
-                    <AlertTriangle size={14} aria-label="Warning" className="mt-px shrink-0 text-amber-500" />
+                    <AlertTriangle size={14} aria-label={t('common.statusWarning')} className="mt-px shrink-0 text-amber-500" />
                   ) : (
-                    <XCircle size={14} aria-label="Failed" className="mt-px shrink-0 text-rose-500" />
+                    <XCircle size={14} aria-label={t('common.statusFailed')} className="mt-px shrink-0 text-rose-500" />
                   )}
                   <div className="min-w-0">
                     <span className="font-medium text-slate-800 dark:text-slate-200">{t(`prometheus.steps.${s.id}`, { defaultValue: s.id })}</span>

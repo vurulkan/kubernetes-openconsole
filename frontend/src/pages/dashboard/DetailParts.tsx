@@ -53,7 +53,7 @@ export const Conditions: React.FC<{ items?: Condition[]; okWhenFalse?: (type?: s
               <XCircle size={14} aria-label={c.status} className="mt-px shrink-0 text-rose-500" />
             )
           ) : (
-            <CircleDashed size={14} aria-label="Unknown" className="mt-px shrink-0 text-slate-400" />
+            <CircleDashed size={14} aria-label={t('common.statusUnknown')} className="mt-px shrink-0 text-slate-400" />
           )}
           <div className="min-w-0">
             <span className="font-medium text-slate-800 dark:text-slate-200">{c.type}</span>

@@ -106,23 +106,22 @@ import {
 // ─── Tab definitions ──────────────────────────────────────────────────────────
 
 const ADMIN_TABS: Array<{
-  label: string;
   value: string;
   icon: React.ComponentType<{ size?: number | string; className?: string }>;
 }> = [
-  { label: 'Users', value: 'users', icon: UsersIcon },
-  { label: 'Groups', value: 'groups', icon: Layers },
-  { label: 'Roles', value: 'roles', icon: ShieldCheck },
-  { label: 'LDAP', value: 'ldap', icon: UserPlus },
-  { label: 'Azure AD', value: 'azure-ad', icon: KeyRound },
-  { label: 'Session', value: 'session', icon: Clock },
-  { label: 'Clusters', value: 'clusters', icon: Boxes },
-  { label: 'Customization', value: 'customization', icon: ImageIcon },
-  { label: 'Audit Logs', value: 'audit', icon: FileText },
-  { label: 'Sessions', value: 'sessions', icon: KeyRound },
-  { label: 'API keys', value: 'api-keys', icon: KeyRound },
-  { label: 'Recordings', value: 'recordings', icon: Video },
-  { label: 'Backups', value: 'backups', icon: DatabaseBackup },
+  { value: 'users', icon: UsersIcon },
+  { value: 'groups', icon: Layers },
+  { value: 'roles', icon: ShieldCheck },
+  { value: 'ldap', icon: UserPlus },
+  { value: 'azure-ad', icon: KeyRound },
+  { value: 'session', icon: Clock },
+  { value: 'clusters', icon: Boxes },
+  { value: 'customization', icon: ImageIcon },
+  { value: 'audit', icon: FileText },
+  { value: 'sessions', icon: KeyRound },
+  { value: 'api-keys', icon: KeyRound },
+  { value: 'recordings', icon: Video },
+  { value: 'backups', icon: DatabaseBackup },
 ];
 
 // Map tab slugs to admin.tabs.* i18n keys; a few older slugs don't line up
@@ -581,7 +580,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     const failedCritical = [usersResult, groupsResult, rolesResult].some(
       (r) => r.status === 'rejected'
     );
-    if (failedCritical) setError('Unable to load admin data.');
+    if (failedCritical) setError(tr('admin.loadFailed'));
 
     if (usersResult.status === 'fulfilled' && groupsResult.status === 'fulfilled') {
       const groupMap = new Map(groupsItems.map((g) => [g.id, g.name]));
@@ -704,23 +703,21 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
   const handleAddPermission = async () => {
     setPermissionFormError(null);
     if (!selectedRoleId) {
-      setPermissionFormError('Select a role first.');
+      setPermissionFormError(tr('admin.roles.pickRoleFirst'));
       return;
     }
     const sanitizedNamespaces = newPermissionNamespaces
       .map((n) => n.trim())
       .filter((n) => n.length > 0);
     if (sanitizedNamespaces.length === 0) {
-      setPermissionFormError(
-        'Enter at least one namespace. Use * to grant on every namespace.'
-      );
+      setPermissionFormError(tr('admin.roles.enterNamespace'));
       return;
     }
     const anyChecked = Object.values(permissionMatrix).some((actions) =>
       Object.values(actions).some(Boolean)
     );
     if (!anyChecked) {
-      setPermissionFormError('Pick at least one action in the matrix below.');
+      setPermissionFormError(tr('admin.roles.pickAction'));
       return;
     }
     const existing = new Set(
@@ -773,6 +770,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
   const handleSaveLDAP = async () => {
     await updateLDAP({
       ...ldapConfig,
+      userBaseDns: ldapConfig.userBaseDns.map((dn) => dn.trim()).filter(Boolean),
       bindPassword:
         ldapUpdatePassword || !(ldapConfig.passwordConfigured ?? false)
           ? ldapConfig.bindPassword
@@ -790,7 +788,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     } catch (err) {
       setLdapTestStatus({
         status: 'error',
-        message: (err as Error).message || 'LDAP test failed.',
+        message: (err as Error).message || tr('admin.ldap.testFailed'),
       });
     }
   };
@@ -815,7 +813,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     } catch (err) {
       setAzureAdTestStatus({
         status: 'error',
-        message: (err as Error).message || 'Azure AD test failed.',
+        message: (err as Error).message || tr('admin.azure.testFailed'),
       });
     }
   };
@@ -856,7 +854,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     const timeout = setTimeout(() => {
       setLastAppliedCluster((prev) => {
         if (prev.requestId !== requestId || prev.status === 'applied') return prev;
-        return { ...prev, status: 'failed', error: 'Request timed out. No response from server.' };
+        return { ...prev, status: 'failed', error: tr('admin.clusters.timedOut') };
       });
     }, 15000);
     try {
@@ -883,7 +881,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
       await refresh();
     } catch (err) {
       const message =
-        (err as Error).message || 'Failed to apply cluster configuration.';
+        (err as Error).message || tr('admin.clusters.applyFailed');
       setClusterValidation({ status: 'error', message });
       setLastAppliedCluster((prev) => ({ ...prev, status: 'failed', error: message }));
     } finally {
@@ -906,7 +904,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     } catch (err) {
       setClusterValidation({
         status: 'error',
-        message: (err as Error).message || 'Validation failed.',
+        message: (err as Error).message || tr('admin.clusters.validationFailed'),
       });
     }
   };
@@ -925,7 +923,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     } catch (err) {
       setLogoStatus({
         status: 'error',
-        message: (err as Error).message || 'Logo upload failed.',
+        message: (err as Error).message || tr('admin.customization.uploadFailed'),
       });
     }
   };
@@ -940,7 +938,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     } catch (err) {
       setLogoStatus({
         status: 'error',
-        message: (err as Error).message || 'Failed to remove logo.',
+        message: (err as Error).message || tr('admin.customization.removeFailed'),
       });
     }
   };
@@ -950,13 +948,13 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
   return (
     <Layout
       user={user}
-      panelTitle="Admin"
+      panelTitle={tr('nav.admin')}
       panel={
         <nav aria-label={tr('nav.admin')} className="flex flex-col gap-0.5 p-2">
           {ADMIN_TABS.filter((entry) => apiKeysOn || entry.value !== 'api-keys').map((entry) => {
             const Icon = entry.icon;
             const active = tab === entry.value;
-            const label = tr(`admin.tabs.${TAB_I18N_KEY[entry.value] ?? entry.value}`, { defaultValue: entry.label });
+            const label = tr(`admin.tabs.${TAB_I18N_KEY[entry.value] ?? entry.value}`);
             return (
               <button
                 key={entry.value}
@@ -987,8 +985,8 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
           <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
             {(() => {
               const entry = ADMIN_TABS.find((t) => t.value === tab);
-              if (!entry) return 'Admin';
-              return tr(`admin.tabs.${TAB_I18N_KEY[entry.value] ?? entry.value}`, { defaultValue: entry.label });
+              if (!entry) return tr('nav.admin');
+              return tr(`admin.tabs.${TAB_I18N_KEY[entry.value] ?? entry.value}`);
             })()}
           </h1>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
@@ -1035,8 +1033,8 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                 const ok = await confirm({
                   title: tr("common.deleteUser", { name: u.username }),
                   message:
-                    'This removes the user. If they are the last active admin, the operation will be refused.',
-                  confirmText: 'Delete',
+                    tr('admin.users.deleteConfirm'),
+                  confirmText: tr('actions.delete'),
                   variant: 'danger',
                 });
                 if (!ok) return;
@@ -1045,7 +1043,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   await deleteUser(u.id);
                   await refresh();
                 } catch (err) {
-                  setError((err as Error).message || 'Delete failed.');
+                  setError((err as Error).message || tr('common.deleteFailed'));
                 }
               }}
             />
@@ -1076,8 +1074,8 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                 const ok = await confirm({
                   title: tr("common.deleteGroup", { name: g.name }),
                   message:
-                    'Members of this group will lose any roles they inherited through it.',
-                  confirmText: 'Delete',
+                    tr('admin.groups.deleteConfirm'),
+                  confirmText: tr('actions.delete'),
                   variant: 'danger',
                 });
                 if (!ok) return;
@@ -1086,7 +1084,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   await deleteGroup(g.id);
                   await refresh();
                 } catch (err) {
-                  setError((err as Error).message || 'Delete failed.');
+                  setError((err as Error).message || tr('common.deleteFailed'));
                 }
               }}
             />
@@ -1111,8 +1109,8 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   const ok = await confirm({
                     title: tr("common.deleteRole", { name: r.name }),
                     message:
-                      'All permissions attached to this role and all group assignments pointing to it are removed.',
-                    confirmText: 'Delete',
+                      tr('admin.roles.deleteConfirm'),
+                    confirmText: tr('actions.delete'),
                     variant: 'danger',
                   });
                   if (!ok) return;
@@ -1121,7 +1119,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                     await deleteRole(r.id);
                     await refresh();
                   } catch (err) {
-                    setError((err as Error).message || 'Delete failed.');
+                    setError((err as Error).message || tr('common.deleteFailed'));
                   }
                 }}
               />
@@ -1161,7 +1159,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                       void handleLoadRolePermissions(Number(val));
                     }}
                   >
-                    <option value="">Select role...</option>
+                    <option value="">{tr('admin.roles.selectRole')}</option>
                     {roles.map((r) => (
                       <option key={r.id} value={r.id}>
                         {r.name}
@@ -1198,8 +1196,8 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                     placeholder={tr("common.pickNsOrStar")}
                     noOptionsText={
                       namespaceOptions.length === 0
-                        ? 'No namespaces visible — activate a cluster first.'
-                        : 'No matching namespace.'
+                        ? tr('admin.roles.noNamespaces')
+                        : tr('admin.roles.noMatchingNamespace')
                     }
                   />
                 </div>
@@ -1242,15 +1240,15 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   className="mt-4"
                   onClick={handleAddPermission}
                 >
-                  Add Selected Permissions
+                  {tr('admin.roles.addSelected')}
                 </Button>
 
                 <div className="mt-4">
                   {!selectedRoleId && (
-                    <p className="text-sm text-slate-500 dark:text-slate-400">Select a role to view its permissions.</p>
+                    <p className="text-sm text-slate-500 dark:text-slate-400">{tr('admin.roles.selectToView')}</p>
                   )}
                   {selectedRoleId && groupedPermissions.length === 0 && (
-                    <p className="text-sm text-slate-500 dark:text-slate-400">No permissions assigned yet.</p>
+                    <p className="text-sm text-slate-500 dark:text-slate-400">{tr('admin.roles.noPermissions')}</p>
                   )}
                   {selectedRoleId && groupedPermissions.length > 0 && (
                     <div className="overflow-auto rounded-lg border border-slate-200 dark:border-slate-800">
@@ -1258,16 +1256,16 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                         <thead className="bg-slate-50 dark:bg-slate-900">
                           <tr>
                             <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300">
-                              Cluster
+                              {tr('admin.roles.colCluster')}
                             </th>
                             <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300">
-                              Namespace
+                              {tr('admin.roles.colNamespace')}
                             </th>
                             <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 dark:text-slate-300">
-                              Permissions
+                              {tr('admin.roles.colPermissions')}
                             </th>
                             <th className="px-4 py-3 text-right text-xs font-semibold text-slate-600 dark:text-slate-300">
-                              Actions
+                              {tr('admin.roles.colActions')}
                             </th>
                           </tr>
                         </thead>
@@ -1314,7 +1312,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                                     ids.forEach((id) => void handleRemovePermission(id));
                                   }}
                                 >
-                                  Remove Row
+                                  {tr('admin.roles.removeRow')}
                                 </Button>
                               </td>
                             </tr>
@@ -1399,7 +1397,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                     disabled={!ldapUpdatePassword && (ldapConfig.passwordConfigured ?? false)}
                     value={
                       !ldapUpdatePassword && (ldapConfig.passwordConfigured ?? false)
-                        ? 'Configured'
+                        ? tr('common.configured')
                         : ldapConfig.bindPassword
                     }
                     onChange={(e) =>
@@ -1413,18 +1411,12 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                       setLdapConfig({ ...ldapConfig, userBaseDn: e.target.value })
                     }
                   />
-                  <Input
+                  {/* One DN per line: a DN has commas of its own. */}
+                  <TextArea
                     label={tr("common.userBaseDnMulti")}
-                    value={ldapConfig.userBaseDns.join(',')}
-                    onChange={(e) =>
-                      setLdapConfig({
-                        ...ldapConfig,
-                        userBaseDns: e.target.value
-                          .split(',')
-                          .map((v) => v.trim())
-                          .filter(Boolean),
-                      })
-                    }
+                    value={ldapConfig.userBaseDns.join('\n')}
+                    placeholder={'OU=Users,DC=example,DC=com\nOU=Admins,DC=example,DC=com'}
+                    onChange={(v) => setLdapConfig({ ...ldapConfig, userBaseDns: v.split('\n') })}
                   />
                   <Input
                     label={tr("common.userFilter")}
@@ -1532,7 +1524,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   disabled={!azureAdUpdateSecret && (azureAdConfig.passwordConfigured ?? false)}
                   value={
                     !azureAdUpdateSecret && (azureAdConfig.passwordConfigured ?? false)
-                      ? 'Configured'
+                      ? tr('common.configured')
                       : azureAdConfig.clientSecret
                   }
                   onChange={(e) =>
@@ -1545,7 +1537,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   {tr("admin.azure.save")}
                 </Button>
                 <Button variant="outline" size="sm" onClick={handleTestAzureAd}>
-                  Test Connection
+                  {tr('admin.azure.test')}
                 </Button>
               </div>
               {azureAdTestStatus && (
@@ -1567,7 +1559,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                 className="w-60"
               />
               <Button variant="primary" size="sm" className="mt-4" onClick={handleSaveSession}>
-                Save Session
+                {tr('admin.session.save')}
               </Button>
             </SectionCard>
           )}
@@ -1607,7 +1599,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                 )}
                 {clustersList.length === 0 ? (
                   <p className="text-sm text-slate-500 dark:text-slate-400">
-                    No clusters saved yet. Add one below.
+                    {tr('admin.clusters.noneSaved')}
                   </p>
                 ) : (
                   <div className="flex flex-col gap-2">
@@ -1737,8 +1729,8 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                               const ok = await confirm({
                                 title: tr("common.deleteCluster", { name: c.name }),
                                 message:
-                                  'The cluster entry and its stored credentials are removed. If this cluster is active, deactivate it first.',
-                                confirmText: 'Delete',
+                                  tr('admin.clusters.deleteConfirm'),
+                                confirmText: tr('actions.delete'),
                                 variant: 'danger',
                               });
                               if (!ok) return;
@@ -1749,7 +1741,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                                 const refreshed = await listClustersAdmin();
                                 setClustersList(refreshed.items ?? []);
                               } catch (err) {
-                                setClustersStatus({ status: 'error', message: (err as Error).message || 'Delete failed.' });
+                                setClustersStatus({ status: 'error', message: (err as Error).message || tr('common.deleteFailed') });
                               } finally {
                                 setClusterBusy(null);
                               }
@@ -1873,7 +1865,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                       setClustersList(refreshed.items ?? []);
                       setClustersStatus({ status: 'success', message: tr('common.clusterAdded') });
                     } catch (err) {
-                      setClustersStatus({ status: 'error', message: (err as Error).message || 'Create failed.' });
+                      setClustersStatus({ status: 'error', message: (err as Error).message || tr('common.createFailed') });
                     } finally {
                       setClusterBusy(null);
                     }
@@ -2038,15 +2030,14 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
           {tab === 'customization' && (
             <SectionCard title={tr('admin.cards.loginLogo')}>
               <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">
-                Upload a logo to display on the login screen. Recommended PNG/SVG with transparent
-                background.
+                {tr('admin.customization.intro')}
               </p>
 
               {logoPreviewUrl && (
                 <div className="mb-4 w-full max-w-xs overflow-hidden rounded-lg border border-slate-200 dark:border-slate-800 p-2">
                   <img
                     src={logoPreviewUrl}
-                    alt="Current logo"
+                    alt={tr('admin.customization.logo')}
                     onError={() => setLogoPreviewUrl('')}
                     className="h-auto w-full max-w-[320px] object-contain"
                   />
@@ -2055,7 +2046,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
 
               <div className="flex flex-wrap items-center gap-3">
                 <label className="inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/60 dark:bg-slate-900">
-                  Select Logo
+                  {tr('admin.customization.select')}
                   <input
                     type="file"
                     className="hidden"
@@ -2064,13 +2055,13 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   />
                 </label>
                 <span className="text-sm text-slate-500 dark:text-slate-400">
-                  {logoFile ? logoFile.name : 'No file selected'}
+                  {logoFile ? logoFile.name : tr('common.noFileSelected')}
                 </span>
                 <Button variant="primary" size="sm" onClick={handleUploadLogo} disabled={!logoFile}>
-                  Upload
+                  {tr('admin.customization.upload')}
                 </Button>
                 <Button variant="danger" size="sm" onClick={handleRemoveLogo}>
-                  Remove Logo
+                  {tr('admin.customization.remove')}
                 </Button>
               </div>
 
@@ -2250,7 +2241,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
             await refresh();
             setEditingUser(null);
           } catch (err) {
-            setError((err as Error).message || 'Save failed.');
+            setError((err as Error).message || tr('common.saveFailed'));
           } finally {
             setSavingDrawer(false);
           }
@@ -2264,7 +2255,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
             footer={
               <>
                 <Button variant="outline" size="sm" onClick={() => setEditingUser(null)}>
-                  Cancel
+                  {tr('actions.cancel')}
                 </Button>
                 <Button variant="primary" size="sm" disabled={savingDrawer} onClick={submit}>
                   {savingDrawer ? tr('yamlEditor.saving') : tr('actions.save')}
@@ -2311,7 +2302,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   })
                 }
                 placeholder={tr("common.assignGroups")}
-                noOptionsText="No groups found"
+                noOptionsText={tr('admin.groups.noGroups')}
               />
               {apiKeysOn && (
                 <UserApiAccessField
@@ -2336,7 +2327,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
             await handleCreateGroup();
             setShowCreateGroup(false);
           } catch (err) {
-            setError((err as Error).message || 'Create failed.');
+            setError((err as Error).message || tr('common.createFailed'));
           } finally {
             setSavingDrawer(false);
           }
@@ -2350,7 +2341,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
             footer={
               <>
                 <Button variant="outline" size="sm" onClick={() => setShowCreateGroup(false)}>
-                  Cancel
+                  {tr('actions.cancel')}
                 </Button>
                 <Button
                   variant="primary"
@@ -2358,7 +2349,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   disabled={savingDrawer || !newGroup}
                   onClick={submit}
                 >
-                  {savingDrawer ? 'Creating…' : 'Create group'}
+                  {savingDrawer ? tr('admin.newUserMenu.creating') : tr('admin.groups.create')}
                 </Button>
               </>
             }
@@ -2393,7 +2384,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
             await refresh();
             setEditingGroup(null);
           } catch (err) {
-            setError((err as Error).message || 'Save failed.');
+            setError((err as Error).message || tr('common.saveFailed'));
           } finally {
             setSavingDrawer(false);
           }
@@ -2407,7 +2398,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
             footer={
               <>
                 <Button variant="outline" size="sm" onClick={() => setEditingGroup(null)}>
-                  Cancel
+                  {tr('actions.cancel')}
                 </Button>
                 <Button variant="primary" size="sm" disabled={savingDrawer} onClick={submit}>
                   {savingDrawer ? tr('yamlEditor.saving') : tr('actions.save')}
@@ -2441,8 +2432,8 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                     roleIds: value.map((v) => Number(v.id)),
                   })
                 }
-                placeholder="Assign roles…"
-                noOptionsText="No roles found"
+                placeholder={tr('admin.groups.assignRoles')}
+                noOptionsText={tr('admin.groups.noRoles')}
               />
               <button type="submit" className="hidden" aria-hidden="true" />
             </form>
@@ -2460,7 +2451,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
             await handleCreateRole();
             setShowCreateRole(false);
           } catch (err) {
-            setError((err as Error).message || 'Create failed.');
+            setError((err as Error).message || tr('common.createFailed'));
           } finally {
             setSavingDrawer(false);
           }
@@ -2474,7 +2465,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
             footer={
               <>
                 <Button variant="outline" size="sm" onClick={() => setShowCreateRole(false)}>
-                  Cancel
+                  {tr('actions.cancel')}
                 </Button>
                 <Button
                   variant="primary"
@@ -2482,7 +2473,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                   disabled={savingDrawer || !newRole.name}
                   onClick={submit}
                 >
-                  {savingDrawer ? 'Creating…' : 'Create role'}
+                  {savingDrawer ? tr('admin.newUserMenu.creating') : tr('admin.roles.create')}
                 </Button>
               </>
             }
@@ -2527,7 +2518,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
             await refresh();
             setEditingRole(null);
           } catch (err) {
-            setError((err as Error).message || 'Save failed.');
+            setError((err as Error).message || tr('common.saveFailed'));
           } finally {
             setSavingDrawer(false);
           }
@@ -2541,7 +2532,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
             footer={
               <>
                 <Button variant="outline" size="sm" onClick={() => setEditingRole(null)}>
-                  Cancel
+                  {tr('actions.cancel')}
                 </Button>
                 <Button variant="primary" size="sm" disabled={savingDrawer} onClick={submit}>
                   {savingDrawer ? tr('yamlEditor.saving') : tr('actions.save')}

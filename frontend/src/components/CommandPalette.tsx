@@ -90,7 +90,7 @@ export const CommandPalette: React.FC<Props> = ({ user, namespaces, onPickNamesp
     const navs: Command[] = [
       {
         id: 'nav:dashboard',
-        label: 'Go to Dashboard',
+        label: t('palette.goToDashboard'),
         kind: 'nav',
         icon: Home,
         onRun: () => navigate('/'),
@@ -99,21 +99,21 @@ export const CommandPalette: React.FC<Props> = ({ user, namespaces, onPickNamesp
     if (user.isAdmin) {
       navs.unshift({
         id: 'nav:overview',
-        label: 'Go to Overview',
+        label: t('palette.goToOverview'),
         kind: 'nav',
         icon: Gauge,
         onRun: () => navigate('/overview'),
       });
       navs.splice(1, 0, {
         id: 'nav:nodes',
-        label: 'Go to Nodes',
+        label: t('palette.goToNodes'),
         kind: 'nav',
         icon: Server,
         onRun: () => navigate('/nodes'),
       });
       navs.push({
         id: 'nav:admin',
-        label: 'Go to Admin',
+        label: t('palette.goToAdmin'),
         kind: 'nav',
         icon: Settings,
         onRun: () => navigate('/admin'),
@@ -129,21 +129,21 @@ export const CommandPalette: React.FC<Props> = ({ user, namespaces, onPickNamesp
     const themes: Command[] = [
       {
         id: 'theme:light',
-        label: 'Theme: Light',
+        label: t('palette.themeLight'),
         kind: 'theme',
         icon: ShieldCheck,
         onRun: () => setMode('light'),
       },
       {
         id: 'theme:dark',
-        label: 'Theme: Dark',
+        label: t('palette.themeDark'),
         kind: 'theme',
         icon: ShieldCheck,
         onRun: () => setMode('dark'),
       },
       {
         id: 'theme:system',
-        label: 'Theme: System',
+        label: t('palette.themeSystem'),
         kind: 'theme',
         icon: ShieldCheck,
         onRun: () => setMode('system'),
@@ -152,7 +152,7 @@ export const CommandPalette: React.FC<Props> = ({ user, namespaces, onPickNamesp
     const nss: Command[] = namespaces.map((ns) => ({
       id: 'ns:' + ns,
       label: ns,
-      hint: 'Switch namespace',
+      hint: t('palette.switchNamespace'),
       kind: 'namespace',
       icon: Boxes,
       onRun: () => {
@@ -257,7 +257,7 @@ export const CommandPalette: React.FC<Props> = ({ user, namespaces, onPickNamesp
       <div
         className="relative z-10 w-full max-w-xl animate-slide-up overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-elevated dark:border-slate-800 dark:bg-slate-900"
         role="dialog"
-        aria-label="Command palette"
+        aria-label={t('palette.title')}
       >
         <div className="flex items-center gap-2 border-b border-slate-200 px-3 py-2 dark:border-slate-800">
           <Search size={16} className="text-slate-400" />
@@ -269,7 +269,7 @@ export const CommandPalette: React.FC<Props> = ({ user, namespaces, onPickNamesp
               setCursor(0);
             }}
             onKeyDown={handleKey}
-            placeholder="Type a command or namespace…"
+            placeholder={t('palette.placeholder')}
             className="w-full border-0 bg-transparent py-1.5 text-sm outline-none placeholder:text-slate-400 dark:text-slate-100"
           />
           <kbd className="rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
@@ -278,19 +278,19 @@ export const CommandPalette: React.FC<Props> = ({ user, namespaces, onPickNamesp
         </div>
         <div className="max-h-[50vh] overflow-auto py-1">
           {flat.length === 0 && (
-            <p className="px-3 py-6 text-center text-sm text-slate-500 dark:text-slate-400">No results.</p>
+            <p className="px-3 py-6 text-center text-sm text-slate-500 dark:text-slate-400">{t('palette.noResults')}</p>
           )}
-          {section('Navigate', grouped.nav)}
-          {section('Theme', grouped.theme)}
-          {section('Namespaces', grouped.namespace)}
+          {section(t('palette.sectionNavigate'), grouped.nav)}
+          {section(t('palette.sectionTheme'), grouped.theme)}
+          {section(t('palette.sectionNamespaces'), grouped.namespace)}
         </div>
         <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50/60 px-3 py-1.5 text-[10px] text-slate-500 dark:text-slate-400 dark:border-slate-800 dark:bg-slate-900/60">
-          <span>↑↓ Navigate · ↵ Select</span>
+          <span>{t('palette.footerKeys')}</span>
           <span>
             <kbd className="rounded border border-slate-200 bg-white px-1 dark:border-slate-700 dark:bg-slate-800">
               ⌘K
             </kbd>{' '}
-            toggle
+            {t('palette.footerToggle')}
           </span>
         </div>
       </div>

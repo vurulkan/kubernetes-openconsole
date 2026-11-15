@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   Boxes,
@@ -20,7 +20,6 @@ import {
 } from 'lucide-react';
 import Layout from '../components/Layout';
 import LiveEventsPanel from '../components/LiveEventsPanel';
-import PodExecModal from '../components/PodExecModal';
 import { ContainerPicker } from '../components/ContainerPicker';
 import { LogViewer, type LogTarget } from '../components/LogViewer';
 import SecretModal from '../components/SecretModal';
@@ -74,6 +73,9 @@ import {
   type WorkloadKind,
 } from '../services/api';
 import { useNavigate } from 'react-router-dom';
+
+// xterm is loaded with the first shell, not with the page.
+const PodExecModal = lazy(() => import('../components/PodExecModal'));
 
 const resourceOrder = [
   'pods',
@@ -757,7 +759,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   };
 
   return (
-    <Layout user={user} panel={namespacePanel} panelTitle="Namespaces" liveEvents={{ open: eventsOpen, connected: eventsLive }}>
+    <Layout user={user} panel={namespacePanel} panelTitle={t('nav.namespaces')} liveEvents={{ open: eventsOpen, connected: eventsLive }}>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400">
@@ -971,10 +973,10 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
           <>
             <Button variant="outline" size="sm" onClick={refreshModal}>
               <RefreshCw size={14} />
-              Refresh
+              {t('actions.refresh')}
             </Button>
             <Button variant="primary" size="sm" onClick={closeModal}>
-              Close
+              {t('actions.close')}
             </Button>
           </>
         }
@@ -990,7 +992,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
               className="flex-1 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-4 font-mono text-xs leading-5 text-slate-100 shadow-inner"
               style={{ whiteSpace: 'pre' }}
             >
-              {modalContent || 'No data'}
+              {modalContent || t('common.noData')}
             </pre>
           </div>
         )}
@@ -1080,7 +1082,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                     setRestartTarget(null);
                     await loadResources();
                   } catch (err) {
-                    setActionError((err as Error).message || 'Restart failed.');
+                    setActionError((err as Error).message || t('dashboard.restartFailed'));
                   } finally {
                     setActionBusy(null);
                   }
@@ -1119,15 +1121,19 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
           }}
         />
       )}
-      <PodExecModal
-        key={execTarget ? `${execTarget.name}/${execTarget.container}` : ''}
-        open={execTarget !== null}
-        onClose={() => setExecTarget(null)}
-        namespace={selectedNamespace ?? ''}
-        pod={execTarget?.name ?? ''}
-        containers={execTarget?.containers ?? []}
-        container={execTarget?.container}
-      />
+      {execTarget && (
+        <Suspense fallback={null}>
+          <PodExecModal
+            key={`${execTarget.name}/${execTarget.container}`}
+            open
+            onClose={() => setExecTarget(null)}
+            namespace={selectedNamespace ?? ''}
+            pod={execTarget.name}
+            containers={execTarget.containers}
+            container={execTarget.container}
+          />
+        </Suspense>
+      )}
 
       {/* ── Scale modal ───────────────────────────────────────────── */}
       {scaleTarget && (
@@ -1144,7 +1150,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                 onClick={() => setScaleTarget(null)}
                 disabled={scaleBusy}
               >
-                Cancel
+                {t('actions.cancel')}
               </Button>
               <Button
                 variant="primary"
@@ -1166,13 +1172,13 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                     setScaleTarget(null);
                     await loadResources();
                   } catch (err) {
-                    setActionError((err as Error).message || 'Scale failed.');
+                    setActionError((err as Error).message || t('dashboard.scaleFailed'));
                   } finally {
                     setScaleBusy(false);
                   }
                 }}
               >
-                {scaleBusy ? 'Applying…' : 'Apply'}
+                {scaleBusy ? t('dashboard.scaleModal.applying') : t('dashboard.scaleModal.apply')}
               </Button>
             </>
           }
@@ -1181,7 +1187,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
             <div className="flex items-center justify-between gap-4 rounded-lg bg-slate-50 dark:bg-slate-800/40 px-3 py-2">
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                  Current
+                  {t('dashboard.columns.current')}
                 </p>
                 <p className="font-mono text-lg font-semibold text-slate-900 dark:text-slate-100">
                   {scaleTarget.current}
@@ -1190,7 +1196,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
               <span className="text-slate-400">→</span>
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-brand-600 dark:text-brand-300">
-                  Target
+                  {t('dashboard.columns.target')}
                 </p>
                 <div className="mt-0.5 flex items-center gap-1.5">
                   <Button

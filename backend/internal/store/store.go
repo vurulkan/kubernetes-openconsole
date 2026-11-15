@@ -504,8 +504,12 @@ func (s *Store) GetLDAPConfig(ctx context.Context) (models.LDAPConfig, error) {
 		return cfg, err
 	}
 	cfg.BindPassword = password
-	if baseDNs != "" {
-		cfg.UserBaseDNs = strings.Split(baseDNs, ",")
+	// One DN per line. A DN has commas of its own, so a value stored before
+	// 2.23.x (joined with commas) reads back as the single DN it usually was.
+	for _, dn := range strings.Split(baseDNs, "\n") {
+		if dn = strings.TrimSpace(dn); dn != "" {
+			cfg.UserBaseDNs = append(cfg.UserBaseDNs, dn)
+		}
 	}
 	return cfg, nil
 }
@@ -539,7 +543,7 @@ func (s *Store) UpdateLDAPConfig(ctx context.Context, cfg models.LDAPConfig) err
 	if cfg.SkipVerify {
 		skipVerify = 1
 	}
-	baseDNs := strings.Join(cfg.UserBaseDNs, ",")
+	baseDNs := strings.Join(cfg.UserBaseDNs, "\n")
 	autoProvision := 0
 	if cfg.AutoProvision {
 		autoProvision = 1

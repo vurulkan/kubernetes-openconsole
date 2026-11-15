@@ -85,10 +85,10 @@ export const RolesSection: React.FC<Props> = ({
       width: '110px',
       cell: (r) => (
         <div className="flex justify-end gap-1">
-          <IconButton label="Edit role" onClick={() => onEdit(r)}>
+          <IconButton label={t('admin.roles.edit')} onClick={() => onEdit(r)}>
             <Pencil size={14} />
           </IconButton>
-          <IconButton label="Delete role" variant="danger" onClick={() => onDelete(r)}>
+          <IconButton label={t('admin.roles.delete')} variant="danger" onClick={() => onDelete(r)}>
             <Trash2 size={14} />
           </IconButton>
         </div>
