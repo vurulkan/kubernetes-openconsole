@@ -5,6 +5,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { getFeatures, User } from '../services/api';
 import { useTheme } from './ThemeProvider';
 import { PALETTE_EVENT_NAME } from '../hooks/useGlobalShortcuts';
+import { useDialogFocus } from '../hooks/useDialogFocus';
 
 type CommandKind = 'nav' | 'namespace' | 'theme';
 
@@ -34,7 +35,6 @@ export const CommandPalette: React.FC<Props> = ({ user, namespaces, onPickNamesp
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [cursor, setCursor] = useState(0);
-  const inputRef = useRef<HTMLInputElement | null>(null);
   const navigate = useNavigate();
   const { t } = useTranslation();
   const [apiKeysOn, setApiKeysOn] = useState(true);
@@ -74,11 +74,9 @@ export const CommandPalette: React.FC<Props> = ({ user, namespaces, onPickNamesp
     return () => window.removeEventListener(PALETTE_EVENT_NAME, open as EventListener);
   }, []);
 
-  useEffect(() => {
-    if (!open) return;
-    const t = setTimeout(() => inputRef.current?.focus(), 10);
-    return () => clearTimeout(t);
-  }, [open]);
+  // Focus goes to the search box, stays in the palette, and returns on close.
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useDialogFocus(dialogRef, open);
 
   const close = () => {
     setOpen(false);
@@ -256,13 +254,15 @@ export const CommandPalette: React.FC<Props> = ({ user, namespaces, onPickNamesp
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={close} />
       <div
         className="relative z-10 w-full max-w-xl animate-slide-up overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-elevated dark:border-slate-800 dark:bg-slate-900"
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
+        aria-modal="true"
         aria-label={t('palette.title')}
       >
         <div className="flex items-center gap-2 border-b border-slate-200 px-3 py-2 dark:border-slate-800">
           <Search size={16} className="text-slate-400" />
           <input
-            ref={inputRef}
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);

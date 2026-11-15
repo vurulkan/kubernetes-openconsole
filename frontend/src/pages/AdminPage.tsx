@@ -1901,7 +1901,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                       if (!editCluster) return;
                       setClusterBusy(editCluster.id);
                       setClustersStatus(null);
-                      setEditCluster({ ...editCluster, error: '' });
+                      setEditCluster((c) => c && { ...c, error: '' });
                       try {
                         await updateClusterRow(editCluster.id, {
                           name: editCluster.name,
@@ -1920,7 +1920,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                         setEditCluster(null);
                       } catch (err) {
                         // Shown in the dialog, which stays open for a fix.
-                        setEditCluster({ ...editCluster, error: (err as Error).message || tr('common.updateFailed') });
+                        setEditCluster((c) => c && { ...c, error: (err as Error).message || tr('common.updateFailed') });
                       } finally {
                         setClusterBusy(null);
                       }

@@ -421,8 +421,9 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   // (and shows the error); the next good answer clears the error.
   const loadSeq = useRef(0);
   const loadResources = useCallback(async (auto = false) => {
-    if (!selectedNamespace || !activeTab) return;
+    // Numbered first: even a load that has nothing to fetch retires the one in flight.
     const seq = ++loadSeq.current;
+    if (!selectedNamespace || !activeTab) return;
     const current = () => seq === loadSeq.current;
     setLoading(true);
     try {
