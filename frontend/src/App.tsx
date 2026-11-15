@@ -55,11 +55,13 @@ const App: React.FC = () => {
       if (idle ? isIdle(idle) : exp !== null && Date.now() >= exp) endSession();
     }, 15_000);
     // Clicks and keys are activity; while they go on without requests (typing
-    // in a shell), one request a minute keeps the server's deadline moving.
+    // in a shell), a request every minute (a quarter of a shorter timeout)
+    // keeps the server's deadline moving.
     let lastPing = Date.now();
+    const pingEvery = Math.min(60_000, (tokenIdleSeconds() ?? 3600) * 250);
     const onInput = () => {
       noteActivity();
-      if (Date.now() - lastPing < 60_000) return;
+      if (Date.now() - lastPing < pingEvery) return;
       lastPing = Date.now();
       void getMe().catch(() => undefined);
     };
