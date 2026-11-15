@@ -383,14 +383,12 @@ export const ResourceCardsView: React.FC<ResourceViewProps & { actionBusy: strin
             <div className="mt-auto flex flex-wrap gap-2 pt-1">
               {activeTab === 'pods' && (
                 <>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => openLogModal(selectedNamespace, name)}
-                  >
-                    <Terminal size={13} />
-                    {t('dashboard.actions.logs')}
-                  </Button>
+                  {openLogModal && (
+                    <Button variant="outline" size="sm" onClick={() => openLogModal(selectedNamespace, name)}>
+                      <Terminal size={13} />
+                      {t('dashboard.actions.logs')}
+                    </Button>
+                  )}
                   <Button
                     variant="outline"
                     size="sm"
@@ -421,14 +419,12 @@ export const ResourceCardsView: React.FC<ResourceViewProps & { actionBusy: strin
                     <FileCode2 size={13} />
                     {t('dashboard.actions.yaml')}
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => openDeploymentLogs(selectedNamespace, name)}
-                  >
-                    <Terminal size={13} />
-                    {t('dashboard.actions.logs')}
-                  </Button>
+                  {openDeploymentLogs && (
+                    <Button variant="outline" size="sm" onClick={() => openDeploymentLogs(selectedNamespace, name)}>
+                      <Terminal size={13} />
+                      {t('dashboard.actions.logs')}
+                    </Button>
+                  )}
                   <Button
                     variant="outline"
                     size="sm"
@@ -583,14 +579,12 @@ export const ResourceCardsView: React.FC<ResourceViewProps & { actionBusy: strin
                     <FileCode2 size={13} />
                     {t('dashboard.actions.yaml')}
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => openJobLogs(selectedNamespace, name)}
-                  >
-                    <Terminal size={13} />
-                    {t('dashboard.actions.logs')}
-                  </Button>
+                  {openJobLogs && (
+                    <Button variant="outline" size="sm" onClick={() => openJobLogs(selectedNamespace, name)}>
+                      <Terminal size={13} />
+                      {t('dashboard.actions.logs')}
+                    </Button>
+                  )}
                 </>
               )}
             </div>

@@ -1,4 +1,5 @@
 import React, { Suspense, lazy } from 'react';
+import { useTranslation } from 'react-i18next';
 
 // Monaco is the heaviest frontend dependency we have; lazy-loading it keeps
 // Dashboard first-paint untouched for the (common) read-only path. The chunk
@@ -25,11 +26,15 @@ const commonEditorOptions = {
   contextmenu: false,
 };
 
-const Fallback = (
-  <div className="flex h-full items-center justify-center text-xs text-slate-500 dark:text-slate-400">
-    Loading editor…
-  </div>
-);
+const Loading: React.FC = () => {
+  const { t } = useTranslation();
+  return (
+    <div className="flex h-full items-center justify-center text-xs text-slate-500 dark:text-slate-400">
+      {t('yamlEditor.loadingEditor')}
+    </div>
+  );
+};
+const Fallback = <Loading />;
 
 export const YamlEditor: React.FC<YamlEditorProps> = ({
   value,

@@ -166,6 +166,8 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   const canScaleDeployments = (allowedResources.deployments ?? []).includes('scale');
   const canScaleStatefulSets = (allowedResources.statefulsets ?? []).includes('scale');
   const canExecPods = (allowedResources.pods ?? []).includes('exec');
+  // Pod, workload and job logs all need pods:logs; without it no Logs button.
+  const canPodLogs = (allowedResources.pods ?? []).includes('logs');
   const canRevealSecrets = (allowedResources.secrets ?? []).includes('reveal');
   const canEditSecrets = (allowedResources.secrets ?? []).includes('edit');
   // Secret whose keys modal is open (null = closed).
@@ -731,15 +733,15 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
     canScaleStatefulSets,
     openYamlModal,
     openEventsModal,
-    openLogModal,
+    openLogModal: canPodLogs ? openLogModal : undefined,
     onOpen: openDetail,
     metrics,
     failingByOwner,
     openConfigMapDataModal,
     openSecretModal: (name) => setSecretTarget(name),
     canEditSecrets,
-    openDeploymentLogs,
-    openJobLogs,
+    openDeploymentLogs: canPodLogs ? openDeploymentLogs : undefined,
+    openJobLogs: canPodLogs ? openJobLogs : undefined,
     onExec: openShell,
     onRestart: (name) => setRestartTarget(name),
     onScale: (name, current) => {
@@ -1013,7 +1015,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
           namespace={selectedNamespace ?? ''}
           canExec={canExecPods}
           onClose={() => setDetail(null)}
-          onLogs={(name, previous) => openLogModal(selectedNamespace ?? '', name, previous)}
+          onLogs={canPodLogs ? (name, previous) => openLogModal(selectedNamespace ?? '', name, previous) : undefined}
           onShell={openShell}
           onYaml={(name) => openYamlModal('pods', selectedNamespace ?? '', name)}
           metrics={metrics}
@@ -1035,7 +1037,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
           metrics={metrics}
           onClose={() => setDetail(null)}
           onOpenPod={(pod) => setDetail({ kind: 'pods', name: pod.metadata?.name, obj: pod })}
-          onLogs={(name) => openDeploymentLogs(selectedNamespace ?? '', name)}
+          onLogs={canPodLogs ? (name) => openDeploymentLogs(selectedNamespace ?? '', name) : undefined}
           onYaml={(name) => openYamlModal(detail.kind, selectedNamespace ?? '', name)}
           onRestart={(name) => setRestartTarget(name)}
           onScale={(name, current) => {

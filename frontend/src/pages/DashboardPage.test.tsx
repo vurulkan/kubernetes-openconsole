@@ -61,6 +61,24 @@ describe('DashboardPage views', () => {
   });
 });
 
+describe('DashboardPage permissions', () => {
+  it('shows Logs only with pods:logs', async () => {
+    mockFetch([['GET /api/namespaces/shop/pods', () => ({ items: [pod('web-1')] })], ...base]);
+    const { unmount } = renderPage();
+    await screen.findByText('web-1');
+    expect(screen.queryByRole('button', { name: 'Logs' })).toBeNull();
+    unmount();
+
+    mockFetch([
+      ['GET /api/namespaces/shop/permissions', () => ({ resources: { pods: ['list', 'logs'] } })],
+      ['GET /api/namespaces/shop/pods', () => ({ items: [pod('web-1')] })],
+      ...base,
+    ]);
+    renderPage();
+    expect(await screen.findByRole('button', { name: 'Logs' })).toBeInTheDocument();
+  });
+});
+
 describe('DashboardPage loading', () => {
   it('keeps the list when an automatic refresh fails, and clears the error on the next good one', async () => {
     vi.useFakeTimers({ toFake: ['setInterval'] });

@@ -647,7 +647,7 @@ export const createCluster = (payload: ClusterCreatePayload) =>
 
 export const updateClusterRow = (
   id: number,
-  payload: ClusterCreatePayload & { replaceSecrets?: boolean }
+  payload: ClusterCreatePayload & { replaceSecrets?: boolean; removeCaCert?: boolean }
 ) =>
   apiRequest<{ status: string }>(`/api/admin/clusters/${id}`, {
     method: 'PUT',

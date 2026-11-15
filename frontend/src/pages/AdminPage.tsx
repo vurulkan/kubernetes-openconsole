@@ -417,6 +417,8 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     token: string;
     server: string;
     caCertBase64: string;
+    removeCaCert: boolean;
+    error: string;
   } | null>(null);
   const [newGroup, setNewGroup] = useState('');
   const [newRole, setNewRole] = useState<{ name: string; description: string; apiAccess: ApiAccess }>({
@@ -1710,6 +1712,8 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                                 token: '',
                                 server: c.server ?? '',
                                 caCertBase64: '',
+                                removeCaCert: false,
+                                error: '',
                               })
                             }
                           >
@@ -1888,12 +1892,12 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
             <Modal
               open={editCluster !== null}
               onClose={() => setEditCluster(null)}
-              title={`Edit cluster · ${editCluster.name}`}
+              title={tr('common.editClusterTitle', { name: editCluster.name })}
               size="md"
               footer={
                 <>
                   <Button variant="outline" size="sm" onClick={() => setEditCluster(null)}>
-                    Cancel
+                    {tr('actions.cancel')}
                   </Button>
                   <Button
                     variant="primary"
@@ -1903,6 +1907,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                       if (!editCluster) return;
                       setClusterBusy(editCluster.id);
                       setClustersStatus(null);
+                      setEditCluster({ ...editCluster, error: '' });
                       try {
                         await updateClusterRow(editCluster.id, {
                           name: editCluster.name,
@@ -1913,19 +1918,21 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                           token: editCluster.replaceSecrets ? editCluster.token || undefined : undefined,
                           server: editCluster.replaceSecrets ? editCluster.server || undefined : undefined,
                           caCertBase64: editCluster.replaceSecrets ? editCluster.caCertBase64 || undefined : undefined,
+                          removeCaCert: editCluster.replaceSecrets && editCluster.removeCaCert,
                         });
                         const refreshed = await listClustersAdmin();
                         setClustersList(refreshed.items ?? []);
                         setClustersStatus({ status: 'success', message: tr('common.clusterUpdated') });
                         setEditCluster(null);
                       } catch (err) {
-                        setClustersStatus({ status: 'error', message: (err as Error).message || 'Update failed.' });
+                        // Shown in the dialog, which stays open for a fix.
+                        setEditCluster({ ...editCluster, error: (err as Error).message || tr('common.updateFailed') });
                       } finally {
                         setClusterBusy(null);
                       }
                     }}
                   >
-                    Save Changes
+                    {tr('common.saveChanges')}
                   </Button>
                 </>
               }
@@ -1961,7 +1968,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                     {editCluster.method === 'kubeconfig' && (
                       <div className="flex flex-col gap-1">
                         <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                          New Kubeconfig
+                          {tr('common.newKubeconfig')}
                         </span>
                         <label className="inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">
                           {tr('common.uploadKubeconfig')}
@@ -2004,14 +2011,25 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
                         <Input
                           label={tr("common.caCert")}
                           value={editCluster.caCertBase64}
+                          disabled={editCluster.removeCaCert}
+                          aria-describedby="edit-cluster-ca-hint"
                           onChange={(e) =>
                             setEditCluster({ ...editCluster, caCertBase64: e.target.value })
                           }
+                        />
+                        <p id="edit-cluster-ca-hint" className="-mt-2 text-xs text-slate-500 dark:text-slate-400">
+                          {tr('common.caKeepHint')}
+                        </p>
+                        <Checkbox
+                          checked={editCluster.removeCaCert}
+                          onChange={(v) => setEditCluster({ ...editCluster, removeCaCert: v, caCertBase64: '' })}
+                          label={tr('common.removeCa')}
                         />
                       </>
                     )}
                   </>
                 )}
+                {editCluster.error && <Alert severity="error">{editCluster.error}</Alert>}
               </div>
             </Modal>
           )}

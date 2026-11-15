@@ -1256,6 +1256,8 @@ const en = {
     copy: 'Copy',
   },
   yamlEditor: {
+    applyFailed: 'The change could not be applied.',
+    loadFailed: 'The YAML could not be loaded.',
     titleView: '{{kind}} YAML — {{name}}',
     editing: 'editing',
     readOnlyBadge: 'Read-only',
@@ -1284,6 +1286,12 @@ const en = {
     or: 'or',
   },
   common: {
+    updateFailed: 'The change could not be saved.',
+    saveChanges: 'Save changes',
+    removeCa: 'Remove the stored CA (the API server has a publicly trusted certificate)',
+    caKeepHint: 'Leave empty to keep the stored CA.',
+    newKubeconfig: 'New kubeconfig',
+    editClusterTitle: 'Edit cluster · {{name}}',
     actionsColumn: 'Actions',
     columns: 'Columns',
     resetColumns: 'Reset to default',
@@ -2589,6 +2597,8 @@ const tr = {
     copy: 'Kopyala',
   },
   yamlEditor: {
+    applyFailed: 'Değişiklik uygulanamadı.',
+    loadFailed: 'YAML yüklenemedi.',
     titleView: '{{kind}} YAML — {{name}}',
     editing: 'düzenleniyor',
     readOnlyBadge: 'Sadece okuma',
@@ -2617,6 +2627,12 @@ const tr = {
     or: 'ya da',
   },
   common: {
+    updateFailed: 'Değişiklik kaydedilemedi.',
+    saveChanges: 'Değişiklikleri kaydet',
+    removeCa: 'Kayıtlı CA\'yı kaldır (API sunucusunun sertifikası herkesçe güvenilen bir CA\'dan)',
+    caKeepHint: 'Boş bırakırsanız kayıtlı CA kalır.',
+    newKubeconfig: 'Yeni kubeconfig',
+    editClusterTitle: 'Cluster\'ı düzenle · {{name}}',
     actionsColumn: 'Aksiyonlar',
     columns: 'Sütunlar',
     resetColumns: 'Varsayılana dön',

@@ -47,7 +47,8 @@ export type ResourceViewProps = {
   canScaleStatefulSets: boolean;
   openYamlModal: (type: string, ns: string, name: string) => void | Promise<void>;
   openEventsModal: (type: 'pods' | 'deployments', ns: string, name: string) => void | Promise<void>;
-  openLogModal: (ns: string, name: string) => void;
+  /** Undefined without pods:logs: the Logs buttons are hidden. */
+  openLogModal?: (ns: string, name: string) => void;
   /** Opens the detail drawer (pods, deployments); Enter on a selected row does the same. */
   onOpen: (item: Item) => void;
   /** Pod CPU / memory; the usage columns show only when metrics-server answered. */
@@ -57,8 +58,8 @@ export type ResourceViewProps = {
   openConfigMapDataModal: (ns: string, name: string) => void | Promise<void>;
   openSecretModal: (name: string) => void;
   canEditSecrets: boolean;
-  openDeploymentLogs: (ns: string, name: string) => void;
-  openJobLogs: (ns: string, name: string) => void;
+  openDeploymentLogs?: (ns: string, name: string) => void;
+  openJobLogs?: (ns: string, name: string) => void;
   onExec: (pod: Record<string, unknown>, anchor: HTMLElement) => void;
   onRestart: (name: string) => void;
   onScale: (name: string, current: number) => void;
@@ -188,7 +189,7 @@ export const ResourceListView: React.FC<ResourceViewProps> = ({
               <span className="inline-flex items-center gap-2">
                 <PodStatusBadge namespace={selectedNamespace} podName={nameOf(it)} status={st} />
                 {st.total > 1 && st.label !== 'Running' && (
-                  <span className="font-mono text-xs text-slate-500 dark:text-slate-400" title="Ready">
+                  <span className="font-mono text-xs text-slate-500 dark:text-slate-400" title={t('dashboard.detail.ready')}>
                     {st.ready}/{st.total}
                   </span>
                 )}
@@ -239,14 +240,16 @@ export const ResourceListView: React.FC<ResourceViewProps> = ({
             const name = nameOf(it);
             return (
               <div className="flex justify-end gap-1">
-                <IconButton label="Logs" onClick={() => openLogModal(selectedNamespace, name)}>
-                  <Terminal size={13} />
-                </IconButton>
-                <IconButton label="Events" onClick={() => openEventsModal('pods', selectedNamespace, name)}>
+                {openLogModal && (
+                  <IconButton label={t('dashboard.actions.logs')} onClick={() => openLogModal(selectedNamespace, name)}>
+                    <Terminal size={13} />
+                  </IconButton>
+                )}
+                <IconButton label={t('dashboard.actions.events')} onClick={() => openEventsModal('pods', selectedNamespace, name)}>
                   <Activity size={13} />
                 </IconButton>
                 {canExecPods && (
-                  <IconButton label="Shell" onClick={(e) => onExec(it, e.currentTarget)}>
+                  <IconButton label={t('dashboard.actions.shell')} onClick={(e) => onExec(it, e.currentTarget)}>
                     <Terminal size={13} />
                   </IconButton>
                 )}
@@ -315,22 +318,24 @@ export const ResourceListView: React.FC<ResourceViewProps> = ({
             const desired = ((it.spec as any)?.replicas as number) ?? 0;
             return (
               <div className="flex justify-end gap-1">
-                <IconButton label="YAML" onClick={() => openYamlModal('deployments', selectedNamespace, name)}>
+                <IconButton label={t('dashboard.actions.yaml')} onClick={() => openYamlModal('deployments', selectedNamespace, name)}>
                   <FileCode2 size={13} />
                 </IconButton>
-                <IconButton label="Logs" onClick={() => openDeploymentLogs(selectedNamespace, name)}>
-                  <Terminal size={13} />
-                </IconButton>
-                <IconButton label="Events" onClick={() => openEventsModal('deployments', selectedNamespace, name)}>
+                {openDeploymentLogs && (
+                  <IconButton label={t('dashboard.actions.logs')} onClick={() => openDeploymentLogs(selectedNamespace, name)}>
+                    <Terminal size={13} />
+                  </IconButton>
+                )}
+                <IconButton label={t('dashboard.actions.events')} onClick={() => openEventsModal('deployments', selectedNamespace, name)}>
                   <Activity size={13} />
                 </IconButton>
                 {canScaleDeployments && (
-                  <IconButton label="Scale" onClick={() => onScale(name, desired)}>
+                  <IconButton label={t('dashboard.actions.scale')} onClick={() => onScale(name, desired)}>
                     <Scaling size={13} />
                   </IconButton>
                 )}
                 {canRestartDeployments && (
-                  <IconButton label="Restart" onClick={() => onRestart(name)}>
+                  <IconButton label={t('dashboard.actions.restart')} onClick={() => onRestart(name)}>
                     <RotateCcw size={13} />
                   </IconButton>
                 )}
@@ -385,7 +390,7 @@ export const ResourceListView: React.FC<ResourceViewProps> = ({
           width: '60px',
           cell: (it) => (
             <div className="flex justify-end gap-1">
-              <IconButton label="YAML" onClick={() => openYamlModal('services', selectedNamespace, nameOf(it))}>
+              <IconButton label={t('dashboard.actions.yaml')} onClick={() => openYamlModal('services', selectedNamespace, nameOf(it))}>
                 <FileCode2 size={13} />
               </IconButton>
             </div>
@@ -421,13 +426,13 @@ export const ResourceListView: React.FC<ResourceViewProps> = ({
           cell: (it) => (
             <div className="flex justify-end gap-1">
               <IconButton
-                label="Data"
+                label={t('dashboard.actions.data')}
                 onClick={() => openConfigMapDataModal(selectedNamespace, nameOf(it))}
               >
                 <FileText size={13} />
               </IconButton>
               <IconButton
-                label="YAML"
+                label={t('dashboard.actions.yaml')}
                 onClick={() => openYamlModal('configmaps', selectedNamespace, nameOf(it))}
               >
                 <FileCode2 size={13} />
@@ -473,7 +478,7 @@ export const ResourceListView: React.FC<ResourceViewProps> = ({
                 <KeyRound size={13} />
               </IconButton>
               {canEditSecrets && (
-                <IconButton label="YAML" onClick={() => openYamlModal('secrets', selectedNamespace, nameOf(it))}>
+                <IconButton label={t('dashboard.actions.yaml')} onClick={() => openYamlModal('secrets', selectedNamespace, nameOf(it))}>
                   <FileCode2 size={13} />
                 </IconButton>
               )}
@@ -522,7 +527,7 @@ export const ResourceListView: React.FC<ResourceViewProps> = ({
           width: '60px',
           cell: (it) => (
             <div className="flex justify-end gap-1">
-              <IconButton label="YAML" onClick={() => openYamlModal('ingresses', selectedNamespace, nameOf(it))}>
+              <IconButton label={t('dashboard.actions.yaml')} onClick={() => openYamlModal('ingresses', selectedNamespace, nameOf(it))}>
                 <FileCode2 size={13} />
               </IconButton>
             </div>
@@ -578,7 +583,7 @@ export const ResourceListView: React.FC<ResourceViewProps> = ({
           width: '60px',
           cell: (it) => (
             <div className="flex justify-end gap-1">
-              <IconButton label="YAML" onClick={() => openYamlModal('cronjobs', selectedNamespace, nameOf(it))}>
+              <IconButton label={t('dashboard.actions.yaml')} onClick={() => openYamlModal('cronjobs', selectedNamespace, nameOf(it))}>
                 <FileCode2 size={13} />
               </IconButton>
             </div>
@@ -636,12 +641,14 @@ export const ResourceListView: React.FC<ResourceViewProps> = ({
           width: '100px',
           cell: (it) => (
             <div className="flex justify-end gap-1">
-              <IconButton label="YAML" onClick={() => openYamlModal('jobs', selectedNamespace, nameOf(it))}>
+              <IconButton label={t('dashboard.actions.yaml')} onClick={() => openYamlModal('jobs', selectedNamespace, nameOf(it))}>
                 <FileCode2 size={13} />
               </IconButton>
-              <IconButton label="Logs" onClick={() => openJobLogs(selectedNamespace, nameOf(it))}>
-                <Terminal size={13} />
-              </IconButton>
+              {openJobLogs && (
+                <IconButton label={t('dashboard.actions.logs')} onClick={() => openJobLogs(selectedNamespace, nameOf(it))}>
+                  <Terminal size={13} />
+                </IconButton>
+              )}
             </div>
           ),
         },
@@ -695,7 +702,7 @@ export const ResourceListView: React.FC<ResourceViewProps> = ({
           width: '70px',
           cell: (it) => (
             <div className="flex justify-end gap-1">
-              <IconButton label="YAML" onClick={() => openYamlModal('daemonsets', selectedNamespace, nameOf(it))}>
+              <IconButton label={t('dashboard.actions.yaml')} onClick={() => openYamlModal('daemonsets', selectedNamespace, nameOf(it))}>
                 <FileCode2 size={13} />
               </IconButton>
             </div>
@@ -754,11 +761,11 @@ export const ResourceListView: React.FC<ResourceViewProps> = ({
             const desired = ((it.spec as any)?.replicas as number) ?? 0;
             return (
               <div className="flex justify-end gap-1">
-                <IconButton label="YAML" onClick={() => openYamlModal('statefulsets', selectedNamespace, name)}>
+                <IconButton label={t('dashboard.actions.yaml')} onClick={() => openYamlModal('statefulsets', selectedNamespace, name)}>
                   <FileCode2 size={13} />
                 </IconButton>
                 {canScaleStatefulSets && (
-                  <IconButton label="Scale" onClick={() => onScaleStatefulSet(name, desired)}>
+                  <IconButton label={t('dashboard.actions.scale')} onClick={() => onScaleStatefulSet(name, desired)}>
                     <Scaling size={13} />
                   </IconButton>
                 )}
@@ -828,7 +835,7 @@ export const ResourceListView: React.FC<ResourceViewProps> = ({
           width: '70px',
           cell: (it) => (
             <div className="flex justify-end gap-1">
-              <IconButton label="YAML" onClick={() => openYamlModal('hpas', selectedNamespace, nameOf(it))}>
+              <IconButton label={t('dashboard.actions.yaml')} onClick={() => openYamlModal('hpas', selectedNamespace, nameOf(it))}>
                 <FileCode2 size={13} />
               </IconButton>
             </div>
