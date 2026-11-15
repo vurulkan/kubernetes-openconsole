@@ -28,7 +28,7 @@ import { RoleApiAccessField, UserApiAccessField } from './admin/ApiAccessParts';
 import { PrometheusSettingsModal } from './admin/PrometheusSettings';
 import { useScopedShortcuts } from '../hooks/useScopedShortcuts';
 import { confirm } from '../components/ConfirmDialog';
-import { AuditEntryRow } from '../components/AuditEntryRow';
+import { AuditSection, emptyAuditFilters, type AuditFilters } from './admin/AuditSection';
 import {
   User,
   ClusterListItem,
@@ -40,10 +40,6 @@ import {
   deactivateCluster,
   listUsers,
   createUser,
-  getAuditFacets,
-  AuditEntry,
-  AuditFacets,
-  AuditQuery,
   updateUser,
   deleteUser,
   setUserGroups,
@@ -78,8 +74,6 @@ import {
   getCluster,
   updateCluster,
   validateCluster,
-  listAuditLogs,
-  exportAuditLogs,
   listNamespaces,
   checkHealth,
   hasToken,
@@ -110,16 +104,6 @@ import {
 } from 'lucide-react';
 
 // ─── Tab definitions ──────────────────────────────────────────────────────────
-
-const emptyAuditFacets: AuditFacets = {
-  actions: [],
-  users: [],
-  namespaces: [],
-  verbs: [],
-  resourceTypes: [],
-  clusters: [],
-  apiKeys: [],
-};
 
 const ADMIN_TABS: Array<{
   label: string;
@@ -312,22 +296,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     ready: false,
     lastError: '',
   });
-  const [auditLogs, setAuditLogs] = useState<AuditEntry[]>([]);
-  const [auditTotal, setAuditTotal] = useState(0);
-  const [auditOffset, setAuditOffset] = useState(0);
-  const [auditUserFilter, setAuditUserFilter] = useState('');
-  const [auditActionFilter, setAuditActionFilter] = useState('');
-  const [auditActionExact, setAuditActionExact] = useState(false);
-  const [auditOutcome, setAuditOutcome] = useState<AuditQuery['outcome']>('');
-  const [auditVerb, setAuditVerb] = useState('');
-  const [auditResourceType, setAuditResourceType] = useState('');
-  const [auditCluster, setAuditCluster] = useState('');
-  const [auditSource, setAuditSource] = useState<AuditQuery['source']>('');
-  const [auditApiKey, setAuditApiKey] = useState('');
-  const [auditFacets, setAuditFacets] = useState<AuditFacets>(emptyAuditFacets);
-  const [auditNamespaceFilter, setAuditNamespaceFilter] = useState('');
-  const [auditStartDate, setAuditStartDate] = useState('');
-  const [auditEndDate, setAuditEndDate] = useState('');
+  const [auditFilters, setAuditFilters] = useState<AuditFilters>(emptyAuditFilters);
   const [clusterValidation, setClusterValidation] = useState<{
     status: 'success' | 'error';
     message: string;
@@ -516,21 +485,6 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     }
   };
 
-  const auditQuery: AuditQuery = {
-    user: auditUserFilter,
-    action: auditActionFilter,
-    actionExact: auditActionExact,
-    verb: auditVerb,
-    outcome: auditOutcome,
-    resourceType: auditResourceType,
-    cluster: auditCluster,
-    source: auditSource,
-    apiKey: auditApiKey,
-    namespace: auditNamespaceFilter,
-    start: auditStartDate,
-    end: auditEndDate,
-  };
-
   const refresh = async () => {
     setError(null);
     const results = await Promise.allSettled([
@@ -541,7 +495,6 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
       getAzureAD(),
       getSession(),
       getCluster(),
-      listAuditLogs(50, auditOffset, auditQuery),
       listNamespaces(true),
     ]);
 
@@ -553,7 +506,6 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
       azureAdResult,
       sessionResult,
       clusterResult,
-      auditResult,
       namespaceResult,
     ] = results;
 
@@ -618,11 +570,6 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
         lastError: c.lastError ?? '',
       });
     }
-    if (auditResult.status === 'fulfilled') {
-      setAuditLogs(auditResult.value.items ?? []);
-      setAuditTotal(auditResult.value.total ?? 0);
-      setAuditOffset(auditResult.value.offset ?? 0);
-    }
     if (namespaceResult.status === 'fulfilled') {
       setNamespaceOptions(namespaceResult.value.namespaces ?? []);
     } else {
@@ -675,29 +622,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
 
   useEffect(() => {
     void refresh();
-  }, [
-    auditOffset,
-    auditUserFilter,
-    auditActionFilter,
-    auditActionExact,
-    auditOutcome,
-    auditVerb,
-    auditResourceType,
-    auditCluster,
-    auditSource,
-    auditApiKey,
-    auditNamespaceFilter,
-    auditStartDate,
-    auditEndDate,
-  ]);
-
-  // Suggestions for the audit filters, reloaded each time the tab opens.
-  useEffect(() => {
-    if (tab !== 'audit') return;
-    getAuditFacets()
-      .then(setAuditFacets)
-      .catch(() => setAuditFacets(emptyAuditFacets));
-  }, [tab]);
+  }, []);
 
   const handleCreateUser = async () => {
     if (!newUser.username || (newUser.source === 'local' && !newUser.password)) return;
@@ -890,14 +815,6 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
         status: 'error',
         message: (err as Error).message || 'Azure AD test failed.',
       });
-    }
-  };
-
-  const handleAuditExport = async () => {
-    try {
-      await exportAuditLogs(auditQuery);
-    } catch (err) {
-      setError((err as Error).message);
     }
   };
 
@@ -2150,177 +2067,7 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
           {/* ─────────────────────────── AUDIT LOGS ─────────────────── */}
           {tab === 'audit' && (
             <SectionCard title={tr('admin.sections.audit')}>
-              <div className="mb-4 flex flex-wrap items-end gap-3">
-                <Combobox
-                  label={tr('admin.audit.filterUser')}
-                  value={auditUserFilter}
-                  options={auditFacets.users}
-                  onChange={(v) => {
-                    setAuditOffset(0);
-                    setAuditUserFilter(v);
-                  }}
-                  className="w-44"
-                />
-                <Combobox
-                  label={tr('admin.audit.filterAction')}
-                  value={auditActionFilter}
-                  options={auditFacets.actions}
-                  families
-                  placeholder={tr('admin.audit.actionPlaceholder')}
-                  onChange={(v, mode) => {
-                    setAuditOffset(0);
-                    setAuditActionFilter(v);
-                    setAuditActionExact(mode === 'exact');
-                  }}
-                  className="w-64"
-                />
-                <NativeSelect
-                  label={tr('admin.audit.filterOutcome')}
-                  value={auditOutcome}
-                  onChange={(e) => {
-                    setAuditOffset(0);
-                    setAuditOutcome(e.target.value as AuditQuery['outcome']);
-                  }}
-                >
-                  <option value="">{tr('admin.audit.outcomeAny')}</option>
-                  <option value="success">success</option>
-                  <option value="denied">denied</option>
-                  <option value="failed">failed</option>
-                  <option value="rate_limited">rate_limited</option>
-                  <option value="locked">locked</option>
-                </NativeSelect>
-                <NativeSelect
-                  label={tr('admin.audit.filterVerb')}
-                  value={auditVerb}
-                  onChange={(e) => {
-                    setAuditOffset(0);
-                    setAuditVerb(e.target.value);
-                  }}
-                >
-                  <option value="">{tr('admin.audit.outcomeAny')}</option>
-                  {auditFacets.verbs.map((v) => (
-                    <option key={v} value={v}>
-                      {v}
-                    </option>
-                  ))}
-                </NativeSelect>
-                <NativeSelect
-                  label={tr('admin.audit.filterResourceType')}
-                  value={auditResourceType}
-                  onChange={(e) => {
-                    setAuditOffset(0);
-                    setAuditResourceType(e.target.value);
-                  }}
-                >
-                  <option value="">{tr('admin.audit.outcomeAny')}</option>
-                  {auditFacets.resourceTypes.map((v) => (
-                    <option key={v} value={v}>
-                      {v}
-                    </option>
-                  ))}
-                </NativeSelect>
-                <NativeSelect
-                  label={tr('admin.audit.cluster')}
-                  value={auditCluster}
-                  onChange={(e) => {
-                    setAuditOffset(0);
-                    setAuditCluster(e.target.value);
-                  }}
-                >
-                  <option value="">{tr('admin.audit.outcomeAny')}</option>
-                  {auditFacets.clusters.map((v) => (
-                    <option key={v} value={v}>
-                      {v}
-                    </option>
-                  ))}
-                </NativeSelect>
-                <NativeSelect
-                  label={tr('admin.audit.filterSource')}
-                  value={auditSource}
-                  onChange={(e) => {
-                    setAuditOffset(0);
-                    setAuditSource(e.target.value as AuditQuery['source']);
-                    if (e.target.value !== 'api_key') setAuditApiKey('');
-                  }}
-                >
-                  <option value="">{tr('admin.audit.outcomeAny')}</option>
-                  <option value="web">{tr('admin.audit.sourceWeb')}</option>
-                  <option value="api_key">{tr('admin.audit.sourceApiKey')}</option>
-                </NativeSelect>
-                {auditSource === 'api_key' && (
-                  <Combobox
-                    label={tr('admin.audit.filterApiKey')}
-                    value={auditApiKey}
-                    options={auditFacets.apiKeys ?? []}
-                    onChange={(v) => {
-                      setAuditOffset(0);
-                      setAuditApiKey(v);
-                    }}
-                    className="w-44"
-                  />
-                )}
-                <Combobox
-                  label={tr('admin.audit.filterNamespace')}
-                  value={auditNamespaceFilter}
-                  options={auditFacets.namespaces}
-                  onChange={(v) => {
-                    setAuditOffset(0);
-                    setAuditNamespaceFilter(v);
-                  }}
-                  className="w-44"
-                />
-                <Input
-                  label={tr("admin.audit.filterStart")}
-                  type="date"
-                  value={auditStartDate}
-                  onChange={(e) => {
-                    setAuditOffset(0);
-                    setAuditStartDate(e.target.value);
-                  }}
-                />
-                <Input
-                  label={tr("admin.audit.filterEnd")}
-                  type="date"
-                  value={auditEndDate}
-                  onChange={(e) => {
-                    setAuditOffset(0);
-                    setAuditEndDate(e.target.value);
-                  }}
-                />
-                <div className="flex items-end gap-3">
-                  <span className="text-xs text-slate-500 dark:text-slate-400">
-                    {tr('admin.audit.pageOf', { from: auditOffset + 1, to: Math.min(auditOffset + 50, auditTotal), total: auditTotal })}
-                  </span>
-                  <Button variant="outline" size="sm" onClick={handleAuditExport}>
-                    {tr('admin.audit.exportCsv')}
-                  </Button>
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-2">
-                {auditLogs.map((entry) => (
-                  <AuditEntryRow key={entry.id} entry={entry} />
-                ))}
-              </div>
-
-              <div className="mt-4 flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={auditOffset === 0}
-                  onClick={() => setAuditOffset(Math.max(0, auditOffset - 50))}
-                >
-                  {tr('admin.audit.prev')}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={auditOffset + 50 >= auditTotal}
-                  onClick={() => setAuditOffset(auditOffset + 50)}
-                >
-                  {tr('admin.audit.next')}
-                </Button>
-              </div>
+              <AuditSection filters={auditFilters} onChange={setAuditFilters} />
             </SectionCard>
           )}
 

@@ -35,7 +35,7 @@ function containersOf(it: Item): ContainerInfo[] {
 }
 const TONE_ORDER = { error: 0, warn: 1, idle: 2, ok: 3 } as const;
 
-type Props = {
+export type ResourceViewProps = {
   activeTab: string;
   items: Item[];
   selectedNamespace: string;
@@ -68,7 +68,7 @@ type Props = {
 const nameOf = (item: Item) => ((item.metadata as any)?.name as string) ?? 'Unnamed';
 const createdAt = (item: Item) => (item.metadata as any)?.creationTimestamp as string | undefined;
 
-export const ResourceListView: React.FC<Props> = ({
+export const ResourceListView: React.FC<ResourceViewProps> = ({
   activeTab,
   items,
   selectedNamespace,

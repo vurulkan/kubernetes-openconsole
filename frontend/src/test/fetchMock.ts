@@ -14,7 +14,7 @@ export function mockFetch(routes: Array<[string, Handler]>) {
     calls.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
     const route = routes.find(([pattern]) => `${method} ${url}`.includes(pattern));
     if (!route) return new Response(JSON.stringify({ error: 'unmocked ' + method + ' ' + url }), { status: 404 });
-    const data = route[1](url, init);
+    const data = await route[1](url, init);
     if (data instanceof Response) return data;
     return new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } });
   });

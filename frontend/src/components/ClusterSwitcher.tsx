@@ -40,15 +40,24 @@ export const ClusterSwitcher: React.FC<Props> = () => {
       // another tab switched.
       const tab = tabClusterId();
       setClusters((result.items ?? []).map((c) => (tab ? { ...c, selected: c.id === tab } : c)));
-    } catch (err) {
-      setClusters([]);
+    } catch {
+      // A failed background refresh keeps the list it had.
+      if (!auto) setClusters([]);
     }
   };
 
   useEffect(() => {
     void refresh();
-    const t = setInterval(() => void refresh(true), 30_000);
-    return () => clearInterval(t);
+    // Not while the browser tab is in the background; at once when it comes back.
+    const tick = () => {
+      if (document.visibilityState === 'visible') void refresh(true);
+    };
+    const t = setInterval(tick, 30_000);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', tick);
+    };
   }, []);
 
   // Outside-click must consider BOTH the trigger button (in header) and the
