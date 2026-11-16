@@ -133,6 +133,7 @@ func (s *Server) handleSecretReveal(w http.ResponseWriter, r *http.Request) {
 		Key string `json:"key"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Key == "" {
+		s.recordSecretAudit(r, namespace, name, audit.VerbReveal, audit.Failed, reasonInvalid, nil)
 		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "key is required")
 		return
 	}

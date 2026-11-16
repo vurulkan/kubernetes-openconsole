@@ -112,6 +112,10 @@ func (s *Server) handlePodExecCommand(w http.ResponseWriter, r *http.Request) {
 		s.recordExecAudit(r, namespace, podName, outcome, reason, details)
 		writeError(w, status, reason)
 	}
+	invalid := func(detail string) {
+		s.recordExecAudit(r, namespace, podName, audit.Failed, reasonInvalid, details)
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, detail)
+	}
 
 	if !s.featureAllows("pods", "exec") {
 		refuse(http.StatusForbidden, audit.Denied, reasonFeatureDisabled)
@@ -124,11 +128,11 @@ func (s *Server) handlePodExecCommand(w http.ResponseWriter, r *http.Request) {
 
 	var req execCommandRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
-		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "the body must be JSON: {\"command\": [\"cat\", \"/etc/os-release\"], \"container\": \"…\", \"timeoutSeconds\": 30}")
+		invalid("the body must be JSON: {\"command\": [\"cat\", \"/etc/os-release\"], \"container\": \"…\", \"timeoutSeconds\": 30}")
 		return
 	}
 	if len(req.Command) == 0 || strings.TrimSpace(req.Command[0]) == "" {
-		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "command must be a non-empty array, e.g. [\"cat\", \"/etc/os-release\"]; it is not run in a shell")
+		invalid("command must be a non-empty array, e.g. [\"cat\", \"/etc/os-release\"]; it is not run in a shell")
 		return
 	}
 	details["program"] = req.Command[0]
@@ -137,7 +141,7 @@ func (s *Server) handlePodExecCommand(w http.ResponseWriter, r *http.Request) {
 		timeout = *req.TimeoutSeconds
 	}
 	if timeout < 1 || timeout > execCommandMaxTimeout {
-		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "timeoutSeconds must be between 1 and "+strconv.Itoa(execCommandMaxTimeout))
+		invalid("timeoutSeconds must be between 1 and " + strconv.Itoa(execCommandMaxTimeout))
 		return
 	}
 	// The command may run longer than the server's WriteTimeout (60 s).

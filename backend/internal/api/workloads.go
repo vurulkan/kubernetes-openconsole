@@ -108,6 +108,7 @@ func (s *Server) handleStatefulSetScale(w http.ResponseWriter, r *http.Request) 
 		Replicas int32 `json:"replicas"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		s.recordStatefulSetScaleAudit(r, namespace, name, audit.Failed, reasonInvalid, nil)
 		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
@@ -118,6 +119,7 @@ func (s *Server) handleStatefulSetScale(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if body.Replicas < 0 || body.Replicas > max {
+		s.recordStatefulSetScaleAudit(r, namespace, name, audit.Failed, reasonInvalid, audit.D{"replicas_to": body.Replicas})
 		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, fmt.Sprintf("replicas must be between 0 and %d", max))
 		return
 	}

@@ -97,6 +97,7 @@ func (s *Server) handleDeploymentScale(w http.ResponseWriter, r *http.Request) {
 		Replicas int32 `json:"replicas"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		s.recordDeployAudit(r, namespace, name, audit.VerbScale, audit.Failed, reasonInvalid, nil)
 		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
@@ -107,6 +108,7 @@ func (s *Server) handleDeploymentScale(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if body.Replicas < 0 || body.Replicas > max {
+		s.recordDeployAudit(r, namespace, name, audit.VerbScale, audit.Failed, reasonInvalid, audit.D{"replicas_to": body.Replicas})
 		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, fmt.Sprintf("replicas must be between 0 and %d", max))
 		return
 	}
