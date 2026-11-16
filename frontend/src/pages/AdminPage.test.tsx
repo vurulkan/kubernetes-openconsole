@@ -64,3 +64,31 @@ describe('AdminPage clusters', () => {
     expect(within(dialog).getByLabelText('Description')).toHaveValue('typed meanwhile');
   });
 });
+
+describe('AdminPage memberships', () => {
+  it('shows users’ groups and groups’ roles from the two lists, without a request per user or group', async () => {
+    localStorage.setItem('adminActiveTab', 'users');
+    const calls = mockFetch([
+      ['GET /api/admin/users/1/groups', () => ({ groupIds: [5] })],
+      ['GET /api/admin/groups/5/roles', () => ({ roleIds: [9] })],
+      ['GET /api/admin/users', () => ({ items: [{ ...admin, groupIds: [5] }] })],
+      ['GET /api/admin/groups', () => ({ items: [{ id: 5, name: 'ops', roleIds: [9] }] })],
+      ['GET /api/admin/roles', () => ({ items: [{ id: 9, name: 'viewer', description: '' }] })],
+    ]);
+    const view = render(
+      <MemoryRouter>
+        <AdminPage user={admin} />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText('ops')).toBeInTheDocument();
+    view.unmount();
+    localStorage.setItem('adminActiveTab', 'groups');
+    render(
+      <MemoryRouter>
+        <AdminPage user={admin} />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText('viewer')).toBeInTheDocument();
+    expect(calls.filter((c) => /\/api\/admin\/(users\/\d+\/groups|groups\/\d+\/roles)/.test(c.url))).toEqual([]);
+  });
+});

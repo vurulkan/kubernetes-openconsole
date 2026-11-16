@@ -12,6 +12,8 @@ export type User = {
   activeClusterId?: number;
   /** Replaces the role modes for this user's API keys; "" = by roles. */
   apiAccessOverride?: ApiAccessOverride;
+  /** The user's groups (in the admin user list only). */
+  groupIds?: number[];
 };
 
 /** What a role's grants give API keys. */
@@ -66,14 +68,6 @@ export type AzureADConfig = {
   clientSecret: string;
   redirectUrl: string;
   passwordConfigured?: boolean;
-};
-
-export type KubeClusterStatus = {
-  method: string;
-  server: string;
-  active: boolean;
-  ready?: boolean;
-  lastError?: string;
 };
 
 export const hasToken = () => Boolean(getToken());
@@ -225,40 +219,6 @@ const formRequest = async <T>(path: string, formData: FormData): Promise<T> => {
   }
 
   return response.json() as Promise<T>;
-};
-
-const xhrRequest = async <T>(path: string, payload: unknown): Promise<T> => {
-  return new Promise((resolve, reject) => {
-    const request = new XMLHttpRequest();
-    request.open('POST', path, true);
-    request.setRequestHeader('Content-Type', 'application/json');
-    const token = getToken();
-    if (token) {
-      request.setRequestHeader('Authorization', `Bearer ${token}`);
-    }
-    request.onreadystatechange = () => {
-      if (request.readyState !== XMLHttpRequest.DONE) {
-        return;
-      }
-      checkSession(request.status);
-      if (request.status >= 200 && request.status < 300) {
-        try {
-          resolve(JSON.parse(request.responseText) as T);
-        } catch (error) {
-          resolve({} as T);
-        }
-      } else {
-        try {
-          const parsed = JSON.parse(request.responseText) as { error?: string };
-          reject(new Error(errorText(parsed.error || request.statusText)));
-        } catch {
-          reject(new Error(request.responseText || request.statusText));
-        }
-      }
-    };
-    request.onerror = () => reject(networkError());
-    request.send(JSON.stringify(payload));
-  });
 };
 
 export const login = (username: string, password: string) =>
@@ -746,10 +706,8 @@ export const setUserGroups = (id: number, groupIds: number[]) =>
     body: JSON.stringify({ groupIds })
   });
 
-export const getUserGroups = (id: number) =>
-  apiRequest<{ groupIds: number[] }>(`/api/admin/users/${id}/groups`);
-
-export const listGroups = () => apiRequest<{ items: Array<{ id: number; name: string }> }>('/api/admin/groups');
+/** Every group with the ids of its roles. */
+export const listGroups = () => apiRequest<{ items: Array<{ id: number; name: string; roleIds?: number[] }> }>('/api/admin/groups');
 
 export const createGroup = (name: string) =>
   apiRequest<{ id: number; name: string }>('/api/admin/groups', {
@@ -771,9 +729,6 @@ export const setGroupRoles = (id: number, roleIds: number[]) =>
     method: 'PUT',
     body: JSON.stringify({ roleIds })
   });
-
-export const getGroupRoles = (id: number) =>
-  apiRequest<{ roleIds: number[] }>(`/api/admin/groups/${id}/roles`);
 
 export const listRoles = () => apiRequest<{ items: Role[] }>('/api/admin/roles');
 
@@ -858,34 +813,6 @@ export const getSession = () => apiRequest<SessionSettings>('/api/admin/session'
 export const updateSession = (payload: SessionSettings) =>
   apiRequest('/api/admin/session', {
     method: 'PUT',
-    body: JSON.stringify(payload)
-  });
-
-export const getCluster = () => apiRequest<KubeClusterStatus>('/api/admin/cluster');
-
-export const updateCluster = (payload: {
-  method: string;
-  kubeconfigBase64?: string;
-  token?: string;
-  server?: string;
-  caCertBase64?: string;
-}) =>
-  xhrRequest<{ status: string; active?: boolean; ready?: boolean; lastError?: string }>('/api/admin/cluster', payload).catch(() =>
-    apiRequest<{ status: string; active?: boolean; ready?: boolean; lastError?: string }>('/api/admin/cluster', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    })
-  );
-
-export const validateCluster = (payload: {
-  method: string;
-  kubeconfigBase64?: string;
-  token?: string;
-  server?: string;
-  caCertBase64?: string;
-}) =>
-  apiRequest('/api/admin/cluster/validate', {
-    method: 'POST',
     body: JSON.stringify(payload)
   });
 

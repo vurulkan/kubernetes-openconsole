@@ -43,13 +43,11 @@ import {
   updateUser,
   deleteUser,
   setUserGroups,
-  getUserGroups,
   listGroups,
   createGroup,
   updateGroup,
   deleteGroup,
   setGroupRoles,
-  getGroupRoles,
   listRoles,
   createRole,
   updateRole,
@@ -71,9 +69,6 @@ import {
   type ApiAccess,
   type ApiAccessOverride,
   type Role,
-  getCluster,
-  updateCluster,
-  validateCluster,
   listNamespaces,
   checkHealth,
   hasToken,
@@ -288,64 +283,13 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
   useEffect(() => {
     void getFeatures().then((f) => setApiKeysOn(f.api_keys !== false));
   }, []);
-  const [cluster, setCluster] = useState({
-    method: '',
-    server: '',
-    active: false,
-    ready: false,
-    lastError: '',
-  });
   const [auditFilters, setAuditFilters] = useState<AuditFilters>(emptyAuditFilters);
-  const [clusterValidation, setClusterValidation] = useState<{
-    status: 'success' | 'error';
-    message: string;
-  } | null>(null);
-  const [kubeconfigFileName, setKubeconfigFileName] = useState('');
-  const [caCertFileName, setCaCertFileName] = useState('');
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreviewUrl, setLogoPreviewUrl] = useState('/api/customization/logo');
   const [logoStatus, setLogoStatus] = useState<{
     status: 'success' | 'error';
     message: string;
   } | null>(null);
-  const [lastAppliedCluster, setLastAppliedCluster] = useState(() => {
-    const stored = localStorage.getItem('lastAppliedCluster');
-    if (stored) {
-      try {
-        return JSON.parse(stored) as {
-          method: string;
-          server: string;
-          kubeconfigFileName: string;
-          caCertFileName: string;
-          appliedAt: string;
-          status: string;
-          error: string;
-          requestId?: string;
-        };
-      } catch (err) {
-        return {
-          method: '',
-          server: '',
-          kubeconfigFileName: '',
-          caCertFileName: '',
-          appliedAt: '',
-          status: '',
-          error: '',
-          requestId: '',
-        };
-      }
-    }
-    return {
-      method: '',
-      server: '',
-      kubeconfigFileName: '',
-      caCertFileName: '',
-      appliedAt: '',
-      status: '',
-      error: '',
-      requestId: '',
-    };
-  });
   const [newUser, setNewUser] = useState<{
     username: string;
     password: string;
@@ -425,13 +369,6 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     description: '',
     apiAccess: 'safe_read',
   });
-  const [clusterConfig, setClusterConfig] = useState({
-    method: 'kubeconfig',
-    kubeconfigBase64: '',
-    token: '',
-    server: '',
-    caCertBase64: '',
-  });
 
   // ─── Effects ────────────────────────────────────────────────────────────────
 
@@ -455,10 +392,6 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
   useEffect(() => {
     localStorage.setItem('adminActiveTab', tab);
   }, [tab]);
-
-  useEffect(() => {
-    localStorage.setItem('lastAppliedCluster', JSON.stringify(lastAppliedCluster));
-  }, [lastAppliedCluster]);
 
   useEffect(() => {
     if (tab === 'roles') {
@@ -495,7 +428,6 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
       getLDAP(),
       getAzureAD(),
       getSession(),
-      getCluster(),
       listNamespaces(true),
     ]);
 
@@ -506,7 +438,6 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
       ldapResult,
       azureAdResult,
       sessionResult,
-      clusterResult,
       namespaceResult,
     ] = results;
 
@@ -561,16 +492,6 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
       setApiKeyMaxDays(sessionResult.value.apiKeyMaxDays);
       setApiKeyAllowNoExpiry(sessionResult.value.apiKeyAllowNoExpiry);
     }
-    if (clusterResult.status === 'fulfilled') {
-      const c = clusterResult.value;
-      setCluster({
-        method: c.method,
-        server: c.server,
-        active: c.active,
-        ready: c.ready ?? false,
-        lastError: c.lastError ?? '',
-      });
-    }
     if (namespaceResult.status === 'fulfilled') {
       setNamespaceOptions(namespaceResult.value.namespaces ?? []);
     } else {
@@ -582,42 +503,23 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     );
     if (failedCritical) setError(tr('admin.loadFailed'));
 
+    // The lists carry the memberships (groupIds / roleIds): no request per user or group.
     if (usersResult.status === 'fulfilled' && groupsResult.status === 'fulfilled') {
       const groupMap = new Map(groupsItems.map((g) => [g.id, g.name]));
-      const selections = await Promise.all(
-        usersItems.map(async (u) => {
-          try {
-            const result = await getUserGroups(u.id);
-            const selected = (result.groupIds ?? []).map((id) => ({
-              id,
-              name: groupMap.get(id) ?? `Group ${id}`,
-            }));
-            return [u.id, selected] as const;
-          } catch (err) {
-            return [u.id, []] as const;
-          }
-        })
+      setUserGroupsState(
+        Object.fromEntries(
+          usersItems.map((u) => [u.id, (u.groupIds ?? []).map((id) => ({ id, name: groupMap.get(id) ?? `Group ${id}` }))]),
+        ),
       );
-      setUserGroupsState(Object.fromEntries(selections));
     }
 
     if (groupsResult.status === 'fulfilled' && rolesResult.status === 'fulfilled') {
       const roleMap = new Map(rolesItems.map((r) => [r.id, r.name]));
-      const selections = await Promise.all(
-        groupsItems.map(async (g) => {
-          try {
-            const result = await getGroupRoles(g.id);
-            const selected = (result.roleIds ?? []).map((id) => ({
-              id,
-              name: roleMap.get(id) ?? `Role ${id}`,
-            }));
-            return [g.id, selected] as const;
-          } catch (err) {
-            return [g.id, []] as const;
-          }
-        })
+      setGroupRolesState(
+        Object.fromEntries(
+          groupsItems.map((g) => [g.id, (g.roleIds ?? []).map((id) => ({ id, name: roleMap.get(id) ?? `Role ${id}` }))]),
+        ),
       );
-      setGroupRolesState(Object.fromEntries(selections));
     }
   };
 
@@ -748,27 +650,6 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
     setPermissionMatrix(DEFAULT_PERMISSION_MATRIX);
   };
 
-  const handleFileUpload = (
-    file: File | null,
-    key: 'kubeconfigBase64' | 'caCertBase64'
-  ) => {
-    if (!file) {
-      setClusterConfig({ ...clusterConfig, [key]: '' });
-      if (key === 'kubeconfigBase64') setKubeconfigFileName('');
-      else setCaCertFileName('');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result?.toString() ?? '';
-      const base64 = result.includes(',') ? result.split(',')[1] : result;
-      setClusterConfig({ ...clusterConfig, [key]: base64 });
-      if (key === 'kubeconfigBase64') setKubeconfigFileName(file.name);
-      else setCaCertFileName(file.name);
-    };
-    reader.readAsDataURL(file);
-  };
-
   const handleSaveLDAP = async () => {
     await updateLDAP({
       ...ldapConfig,
@@ -823,92 +704,6 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
   const handleSaveSession = async () => {
     await updateSession({ sessionMinutes, apiKeyMaxDays, apiKeyAllowNoExpiry });
     await refresh();
-  };
-
-  const isClusterConfigValid = () => {
-    if (clusterConfig.method === 'kubeconfig') return clusterConfig.kubeconfigBase64.length > 0;
-    if (clusterConfig.method === 'token')
-      return clusterConfig.token.length > 0 && clusterConfig.server.length > 0;
-    return false;
-  };
-
-  const handleSaveCluster = async () => {
-    setClusterValidation(null);
-    if (!isClusterConfigValid()) {
-      setClusterValidation({
-        status: 'error',
-        message: tr('common.clusterNeedsFields'),
-      });
-      return;
-    }
-    const requestId = `${Date.now()}`;
-    const pending = {
-      method: clusterConfig.method,
-      server: clusterConfig.server,
-      kubeconfigFileName,
-      caCertFileName,
-      appliedAt: new Date().toISOString(),
-      status: 'sending',
-      error: '',
-      requestId,
-    };
-    setLastAppliedCluster(pending);
-    const timeout = setTimeout(() => {
-      setLastAppliedCluster((prev) => {
-        if (prev.requestId !== requestId || prev.status === 'applied') return prev;
-        return { ...prev, status: 'failed', error: tr('admin.clusters.timedOut') };
-      });
-    }, 15000);
-    try {
-      const result = await updateCluster(clusterConfig);
-      if (result.status === 'starting') {
-        setClusterValidation({
-          status: 'success',
-          message: tr('common.clusterSyncing'),
-        });
-      }
-      setLastAppliedCluster((prev) => ({ ...prev, status: 'applied', error: '' }));
-      if (
-        typeof result.active === 'boolean' ||
-        typeof result.ready === 'boolean' ||
-        result.lastError
-      ) {
-        setCluster((prev) => ({
-          ...prev,
-          active: result.active ?? prev.active,
-          ready: result.ready ?? prev.ready,
-          lastError: result.lastError ?? prev.lastError,
-        }));
-      }
-      await refresh();
-    } catch (err) {
-      const message =
-        (err as Error).message || tr('admin.clusters.applyFailed');
-      setClusterValidation({ status: 'error', message });
-      setLastAppliedCluster((prev) => ({ ...prev, status: 'failed', error: message }));
-    } finally {
-      clearTimeout(timeout);
-    }
-  };
-
-  const handleValidateCluster = async () => {
-    setClusterValidation(null);
-    if (!isClusterConfigValid()) {
-      setClusterValidation({
-        status: 'error',
-        message: tr('common.clusterValidateNeeds'),
-      });
-      return;
-    }
-    try {
-      await validateCluster(clusterConfig);
-      setClusterValidation({ status: 'success', message: tr('common.clusterValidated') });
-    } catch (err) {
-      setClusterValidation({
-        status: 'error',
-        message: (err as Error).message || tr('admin.clusters.validationFailed'),
-      });
-    }
   };
 
   const handleUploadLogo = async () => {
