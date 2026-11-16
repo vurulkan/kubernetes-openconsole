@@ -14,6 +14,26 @@ export function formatBytes(bytes: number): string {
   return `${value >= 10 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${UNITS[unit]}`;
 }
 
+const p2 = (n: number) => String(n).padStart(2, '0');
+
+/**
+ * Every date and time in the UI, whatever the language or the browser's region:
+ * ISO 8601 in local time, 24 h ("2026-11-16 23:37:51"), like the audit log.
+ * Unparseable input renders as a dash.
+ */
+export function formatDateTime(value: string | number | Date, seconds = true): string {
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return '—';
+  return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${formatClock(d, seconds)}`;
+}
+
+/** The time of day only, 24 h: "23:37" (or "23:37:51"). */
+export function formatClock(value: string | number | Date, seconds = false): string {
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return '—';
+  return `${p2(d.getHours())}:${p2(d.getMinutes())}${seconds ? `:${p2(d.getSeconds())}` : ''}`;
+}
+
 /** 83_000 → "1m 23s"; 3_725_000 → "1h 2m". */
 export function formatDuration(ms: number): string {
   if (!Number.isFinite(ms) || ms < 0) return '—';

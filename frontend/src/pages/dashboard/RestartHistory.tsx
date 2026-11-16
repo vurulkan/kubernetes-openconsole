@@ -5,9 +5,10 @@ import type { ContainerTermination } from '../../services/api';
 import { ageShort } from '../../utils/age';
 import { exitCodeHint, exitLabel } from '../../utils/podStatus';
 import { Empty } from './DetailParts';
+import { formatDateTime } from '../../utils/format';
 
 const DAY = 24 * 60 * 60 * 1000;
-const clock = (iso: string) => new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+const clock = (iso: string) => formatDateTime(iso, false);
 const isCrash = (t: ContainerTermination) => t.reason === 'OOMKilled' || (t.exitCode !== 0 && t.exitCode !== 143);
 
 /**

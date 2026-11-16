@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatBytes, formatCpu, formatDuration, formatMem, parseCpu, parseMem } from './format';
+import { formatBytes, formatClock, formatCpu, formatDateTime, formatDuration, formatMem, parseCpu, parseMem } from './format';
 
 describe('formatBytes', () => {
   it.each([
@@ -59,4 +59,20 @@ describe('Kubernetes quantities', () => {
     [512, '512B'],
     [NaN, '—'],
   ])('formatMem %s → %s', (b, out) => expect(formatMem(b)).toBe(out));
+});
+
+describe('formatDateTime / formatClock', () => {
+  // One format whatever the language or the browser's region (2.23.2): ISO 8601, local time, 24 h.
+  const d = new Date(2026, 10, 6, 9, 5, 7); // 6 Nov 2026 09:05:07 local
+  it('writes year-month-day and a 24 h clock', () => {
+    expect(formatDateTime(d)).toBe('2026-11-06 09:05:07');
+    expect(formatDateTime(d.toISOString())).toBe('2026-11-06 09:05:07');
+    expect(formatDateTime(d.getTime(), false)).toBe('2026-11-06 09:05');
+    expect(formatClock(new Date(2026, 10, 6, 23, 37, 51))).toBe('23:37');
+    expect(formatClock(d, true)).toBe('09:05:07');
+  });
+  it('dashes what is not a date', () => {
+    expect(formatDateTime('nope')).toBe('—');
+    expect(formatClock('')).toBe('—');
+  });
 });

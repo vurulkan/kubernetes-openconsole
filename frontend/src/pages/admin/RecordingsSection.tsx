@@ -17,7 +17,7 @@ import {
   SessionRecording,
   updateRecordingSettings,
 } from '../../services/api';
-import { formatBytes, formatDuration } from '../../utils/format';
+import { formatBytes, formatDuration, formatDateTime } from '../../utils/format';
 
 const PAGE_SIZE = 50;
 
@@ -226,7 +226,7 @@ export const RecordingsSection: React.FC = () => {
       message: t('recordings.deleteBody', {
         user: row.user,
         target: `${row.namespace}/${row.pod}`,
-        started: new Date(row.startedAt).toLocaleString(),
+        started: formatDateTime(row.startedAt),
       }),
       confirmText: t('actions.delete'),
       variant: 'danger',
@@ -285,7 +285,7 @@ export const RecordingsSection: React.FC = () => {
       align: 'right',
       cell: (row) => (
         <span className="font-mono text-[11px] text-slate-600 dark:text-slate-300" title={row.startedAt}>
-          {new Date(row.startedAt).toLocaleString()}
+          {formatDateTime(row.startedAt)}
         </span>
       ),
     },

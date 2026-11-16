@@ -164,6 +164,13 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "a WebSocket upgrade is required")
 		return
 	}
+	if wsOriginRefused(r) {
+		// Before a recording is opened: a refused cross-site shell leaves no empty recording.
+		wsOriginOK(r) // logs ws.origin_mismatch
+		s.recordExecAudit(r, namespace, pod, audit.Denied, reasonOriginNotAllowed, audit.D{"container": container, "command": command})
+		writeError(w, http.StatusForbidden, problem.Forbidden)
+		return
+	}
 	// Built before a recording is opened, so a failure leaves none behind.
 	req := client.CoreV1().RESTClient().Post().
 		Resource("pods").

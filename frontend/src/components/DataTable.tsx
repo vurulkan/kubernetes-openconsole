@@ -261,7 +261,7 @@ export function DataTable<T>({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="overflow-auto rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/60">
+      <div className="overflow-auto rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
         <table className="w-full text-sm">
           <thead className="bg-slate-50/70 dark:bg-slate-800/40">
             <tr>
@@ -285,7 +285,9 @@ export function DataTable<T>({
                 return (
                   <th
                     key={c.key}
-                    className={`px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 ${alignClass(c.align)}`}
+                    className={`px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 ${alignClass(c.align)} ${
+                      c.header === '' ? STICKY_HEAD : ''
+                    }`}
                     style={c.width ? { width: c.width } : undefined}
                   >
                     {c.header === '' ? (
@@ -351,7 +353,7 @@ export function DataTable<T>({
                   }}
                   aria-selected={keyboardNav ? selected : undefined}
                   onClick={onRowClick ? () => onRowClick(row) : undefined}
-                  className={`transition-colors ${
+                  className={`group transition-colors ${
                     onRowClick
                       ? 'cursor-pointer hover:bg-brand-50/40 dark:hover:bg-brand-500/10'
                       : ''
@@ -362,7 +364,9 @@ export function DataTable<T>({
                   {shown.map((c) => (
                     <td
                       key={c.key}
-                      className={`px-4 py-2.5 align-middle ${alignClass(c.align)} ${c.className ?? ''}`}
+                      className={`px-4 py-2.5 align-middle ${alignClass(c.align)} ${c.className ?? ''} ${
+                        c.header === '' ? stickyCell(!!onRowClick, selected) : ''
+                      }`}
                     >
                       {c.cell(row)}
                     </td>
@@ -415,6 +419,18 @@ export function DataTable<T>({
 }
 
 export default DataTable;
+
+// The actions column (header '') stays at the right edge while a wide table scrolls
+// sideways, so its buttons and the column picker are always in reach and opening the
+// picker never scrolls the table. Opaque backgrounds equal to the row's own colour
+// (translucent row colours composited over the table's white / slate-900).
+const STICKY_HEAD = 'sticky right-0 z-[1] bg-slate-50 dark:bg-[#151e31]';
+const stickyCell = (clickable: boolean, selected: boolean) =>
+  `sticky right-0 z-[1] ${
+    selected
+      ? 'bg-[#f5f7ff] dark:bg-[#171f3e]'
+      : `bg-white dark:bg-slate-900 ${clickable ? 'group-hover:bg-[#f8faff] dark:group-hover:bg-[#171f3e]' : ''}`
+  }`;
 
 /** The column picker: a checkbox menu under the ⋮ button (MenuPopover). */
 function ColumnMenu<T>({

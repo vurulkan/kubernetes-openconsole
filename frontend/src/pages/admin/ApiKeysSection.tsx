@@ -7,6 +7,7 @@ import { Column, DataTable, IconButton } from '../../components/DataTable';
 import { Alert, Badge, Button, Checkbox, NativeSelect } from '../../components/ui';
 import { adminRevokeApiKey, exportApiKeysCsv, listAllApiKeys, type AdminApiKey, type User } from '../../services/api';
 import { ExpiryBadge, dangerous } from '../apikeys/ApiKeyParts';
+import { formatDateTime } from '../../utils/format';
 
 type Status = '' | AdminApiKey['status'];
 
@@ -123,7 +124,7 @@ export const ApiKeysSection: React.FC<{ users: User[] }> = ({ users }) => {
       cell: (k) =>
         k.lastUsedAt ? (
           <span className="text-xs text-slate-600 dark:text-slate-300">
-            {new Date(k.lastUsedAt).toLocaleString()}
+            {formatDateTime(k.lastUsedAt)}
             {k.lastUsedIp && <span className="block font-mono text-[11px] text-slate-500 dark:text-slate-400">{k.lastUsedIp}</span>}
           </span>
         ) : (

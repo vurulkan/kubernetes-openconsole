@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, DatabaseBackup, Download, RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { Alert, Button } from '../../components/ui';
 import { Column, DataTable, IconButton } from '../../components/DataTable';
 import {
@@ -10,12 +11,18 @@ import {
   downloadBackup,
   listBackups,
 } from '../../services/api';
-import { formatBytes, formatDuration } from '../../utils/format';
+import { formatBytes, formatDateTime } from '../../utils/format';
 
 // Admin → Backups: copies of the database the server makes on a schedule,
 // before an upgrade, and on demand here. A copy holds every stored
 // credential, so downloading is off unless BACKUP_ALLOW_DOWNLOAD=true is set
 // on the Deployment (not here: an admin account alone can't turn it on).
+// "every 24 hours" / "24 saatte bir": whole hours, else minutes.
+const backupEvery = (t: TFunction, seconds: number) =>
+  seconds % 3600 === 0
+    ? t('backups.every.hours', { count: seconds / 3600 })
+    : t('backups.every.minutes', { count: Math.max(1, Math.round(seconds / 60)) });
+
 export const BackupsSection: React.FC = () => {
   const { t } = useTranslation();
   const [data, setData] = useState<BackupList | null>(null);
@@ -77,7 +84,7 @@ export const BackupsSection: React.FC = () => {
       header: t('backups.created'),
       cell: (row) => (
         <span className="font-mono text-[12px] text-slate-600 dark:text-slate-300">
-          {new Date(row.createdAt).toLocaleString()}
+          {formatDateTime(row.createdAt)}
         </span>
       ),
     },
@@ -107,7 +114,7 @@ export const BackupsSection: React.FC = () => {
 
   const schedule =
     data && data.intervalSeconds > 0
-      ? t('backups.schedule', { every: formatDuration(data.intervalSeconds * 1000), keep: data.keep, dir: data.dir })
+      ? t('backups.schedule', { every: backupEvery(t, data.intervalSeconds), keep: data.keep, dir: data.dir })
       : data
         ? t('backups.noSchedule', { keep: data.keep, dir: data.dir })
         : '';

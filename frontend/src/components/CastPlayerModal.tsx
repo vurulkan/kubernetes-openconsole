@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { Alert, Badge, Button, Modal, Spinner, Toggle } from './ui';
 import { confirm } from './ConfirmDialog';
 import { downloadRecordingCast, getRecordingCast, SessionRecording } from '../services/api';
-import { formatBytes, formatDuration } from '../utils/format';
+import { formatBytes, formatDuration, formatDateTime } from '../utils/format';
 
 type PlayerModule = typeof import('asciinema-player');
 type Player = ReturnType<PlayerModule['create']>;
@@ -189,7 +189,7 @@ export const CastPlayerModal: React.FC<Props> = ({ recording, onClose }) => {
               {recording.container && (
                 <span className="font-mono text-slate-500 dark:text-slate-400">{recording.container}</span>
               )}
-              <span>{new Date(recording.startedAt).toLocaleString()}</span>
+              <span>{formatDateTime(recording.startedAt)}</span>
               <span>· {formatDuration(recording.durationMs)}</span>
               <span>· {formatBytes(recording.sizeBytes)}</span>
               {recording.truncated && <Badge variant="warning">{t('recordings.truncated')}</Badge>}
