@@ -11,6 +11,7 @@ vi.mock('../components/PodExecModal', () => ({
 }));
 import DashboardPage from './DashboardPage';
 import { mockFetch } from '../test/fetchMock';
+import { expectNoA11yViolations } from '../test/a11y';
 import type { User } from '../services/api';
 
 const user = { id: 1, username: 'ops', isAdmin: false, isActive: true } as User;
@@ -363,10 +364,14 @@ describe('DashboardPage scale, restart and YAML', () => {
     ]);
     renderPage();
     fireEvent.click(await screen.findByRole('button', { name: 'Scale' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Scale · web' });
+    const dialog = await screen.findByRole('dialog', { name: 'Scale web' });
     const apply = within(dialog).getByRole('button', { name: 'Apply' });
     expect(apply).toBeDisabled();
-    const input = within(dialog).getByRole('spinbutton');
+    // The − / + buttons and the number field have names (WCAG 4.1.2).
+    within(dialog).getByRole('button', { name: 'Decrease replicas' });
+    within(dialog).getByRole('button', { name: 'Increase replicas' });
+    await expectNoA11yViolations(dialog);
+    const input = within(dialog).getByRole('spinbutton', { name: 'Target replicas' });
     expect(input).toHaveValue(2);
     fireEvent.change(input, { target: { value: '0' } });
     expect(within(dialog).getByText(/stops all pods/)).toBeInTheDocument();
@@ -386,11 +391,11 @@ describe('DashboardPage scale, restart and YAML', () => {
     ]);
     renderPage();
     fireEvent.click(await screen.findByRole('button', { name: 'Scale' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Scale · web' });
+    const dialog = await screen.findByRole('dialog', { name: 'Scale web' });
     fireEvent.change(within(dialog).getByRole('spinbutton'), { target: { value: '5' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Apply' }));
     expect(await screen.findByText('nope')).toBeInTheDocument();
-    expect(screen.getByRole('dialog', { name: 'Scale · web' })).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Scale web' })).toBeInTheDocument();
   });
 
   it('scales a StatefulSet through its own endpoint', async () => {
@@ -404,7 +409,7 @@ describe('DashboardPage scale, restart and YAML', () => {
     ]);
     renderPage();
     fireEvent.click(await screen.findByRole('button', { name: 'Scale' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Scale · db' });
+    const dialog = await screen.findByRole('dialog', { name: 'Scale db' });
     fireEvent.change(within(dialog).getByRole('spinbutton'), { target: { value: '1' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Apply' }));
     expect(await screen.findByText('Scaled db: 2 → 1 replicas.')).toBeInTheDocument();

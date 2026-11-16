@@ -199,7 +199,7 @@ export function useWorkloadActions(namespace: string | null, reload: () => Promi
     setActionError(null);
     try {
       await restartDeployment(namespace, name);
-      showActionNotice(`Restart triggered for ${name}.`);
+      showActionNotice(t('dashboard.restartTriggered', { name }));
       setRestartTarget(null);
       await reload();
     } catch (err) {
@@ -219,7 +219,7 @@ export function useWorkloadActions(namespace: string | null, reload: () => Promi
       } else {
         await scaleDeployment(namespace, scaleTarget.name, scaleReplicas);
       }
-      showActionNotice(`Scaled ${scaleTarget.name}: ${scaleTarget.current} → ${scaleReplicas} replicas.`);
+      showActionNotice(t('dashboard.scaled', { name: scaleTarget.name, from: scaleTarget.current, to: scaleReplicas }));
       setScaleTarget(null);
       await reload();
     } catch (err) {
@@ -299,7 +299,7 @@ export const WorkloadActionModals: React.FC<ActionModalsProps> = ({
         <Modal
           open={scaleTarget !== null}
           onClose={() => (scaleBusy ? undefined : closeScale())}
-          title={`Scale · ${scaleTarget.name}`}
+          title={t('dashboard.scaleModal.title', { name: scaleTarget.name })}
           size="sm"
           footer={
             <>
@@ -333,11 +333,17 @@ export const WorkloadActionModals: React.FC<ActionModalsProps> = ({
                   {t('dashboard.columns.target')}
                 </p>
                 <div className="mt-0.5 flex items-center gap-1.5">
-                  <Button variant="outline" size="sm" onClick={() => setScaleReplicas(Math.max(0, scaleReplicas - 1))}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    aria-label={t('dashboard.scaleModal.decrease')}
+                    onClick={() => setScaleReplicas(Math.max(0, scaleReplicas - 1))}
+                  >
                     <Minus size={12} />
                   </Button>
                   <input
                     type="number"
+                    aria-label={t('dashboard.scaleModal.target')}
                     min={0}
                     max={100}
                     value={scaleReplicas}
@@ -355,7 +361,12 @@ export const WorkloadActionModals: React.FC<ActionModalsProps> = ({
                     }}
                     className="w-16 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-center font-mono text-base font-semibold focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/15 dark:text-slate-100"
                   />
-                  <Button variant="outline" size="sm" onClick={() => setScaleReplicas(Math.min(100, scaleReplicas + 1))}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    aria-label={t('dashboard.scaleModal.increase')}
+                    onClick={() => setScaleReplicas(Math.min(100, scaleReplicas + 1))}
+                  >
                     <Plus size={12} />
                   </Button>
                 </div>
@@ -364,12 +375,12 @@ export const WorkloadActionModals: React.FC<ActionModalsProps> = ({
 
             {scaleReplicas === 0 && (
               <Alert severity="warning">
-                Scaling to <strong>0</strong> stops all pods — the deployment goes offline.
+                {t('dashboard.scaleModal.zeroWarning')}
               </Alert>
             )}
             {scaleReplicas > scaleTarget.current + 5 && (
               <Alert severity="info">
-                Large step: {scaleTarget.current} → {scaleReplicas}.
+                {t('dashboard.scaleModal.bigStep', { from: scaleTarget.current, to: scaleReplicas })}
               </Alert>
             )}
           </div>
