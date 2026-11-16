@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { FileCode2, RotateCcw, Scaling, Terminal } from 'lucide-react';
+import { FileCode2, RotateCcw, Scaling, ScrollText, Terminal } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Drawer } from '../../components/Drawer';
 import { Badge, Button, Spinner } from '../../components/ui';
@@ -166,7 +166,7 @@ export const WorkloadDrawer: React.FC<Props> = ({
           )}
           {kind === 'deployments' && onLogs && (
             <Button variant="primary" size="sm" onClick={() => onLogs(name)}>
-              <Terminal size={13} />
+              <ScrollText size={13} />
               {t('dashboard.actions.logs')}
             </Button>
           )}

@@ -9,6 +9,7 @@ import {
   RefreshCw,
   RotateCcw,
   Scaling,
+  ScrollText,
   Search as SearchIcon,
   Terminal,
 } from 'lucide-react';
@@ -386,7 +387,7 @@ export const ResourceCardsView: React.FC<ResourceViewProps & { actionBusy: strin
                 <>
                   {openLogModal && (
                     <Button variant="outline" size="sm" onClick={() => openLogModal(selectedNamespace, name)}>
-                      <Terminal size={13} />
+                      <ScrollText size={13} />
                       {t('dashboard.actions.logs')}
                     </Button>
                   )}
@@ -422,7 +423,7 @@ export const ResourceCardsView: React.FC<ResourceViewProps & { actionBusy: strin
                   </Button>
                   {openDeploymentLogs && (
                     <Button variant="outline" size="sm" onClick={() => openDeploymentLogs(selectedNamespace, name)}>
-                      <Terminal size={13} />
+                      <ScrollText size={13} />
                       {t('dashboard.actions.logs')}
                     </Button>
                   )}
@@ -582,7 +583,7 @@ export const ResourceCardsView: React.FC<ResourceViewProps & { actionBusy: strin
                   </Button>
                   {openJobLogs && (
                     <Button variant="outline" size="sm" onClick={() => openJobLogs(selectedNamespace, name)}>
-                      <Terminal size={13} />
+                      <ScrollText size={13} />
                       {t('dashboard.actions.logs')}
                     </Button>
                   )}
