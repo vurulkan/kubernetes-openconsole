@@ -36,7 +36,7 @@ export const UsersTab: React.FC<{
   onError: (msg: string | null) => void;
 }> = ({ filter, onFilter, newUsernames, onUsersAdded, apiKeysOn, onError }) => {
   const { t: tr } = useTranslation();
-  const { users, groups, userGroups, refresh } = useDirectory(KINDS, onError);
+  const { users, groups, userGroups, refresh, loaded } = useDirectory(KINDS, onError);
   const [ldapEnabled, setLdapEnabled] = useState(false);
   const [azureEnabled, setAzureEnabled] = useState(false);
   const [newUser, setNewUser] = useState<NewUser>(emptyUser());
@@ -67,6 +67,7 @@ export const UsersTab: React.FC<{
     if (names.length > 0) onUsersAdded(names);
   };
 
+  if (!loaded) return null;
   return (
     <>
       <UsersSection

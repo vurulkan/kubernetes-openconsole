@@ -17,6 +17,9 @@ export function useDirectory(kinds: readonly DirectoryKind[], onError: (msg: str
   const [users, setUsers] = useState<User[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
+  // False until the first load answers: the tables show nothing rather than
+  // an empty-list message for data that is still coming.
+  const [loaded, setLoaded] = useState(false);
 
   const load = useCallback(async () => {
     const results = await Promise.allSettled([
@@ -29,6 +32,7 @@ export function useDirectory(kinds: readonly DirectoryKind[], onError: (msg: str
     if (g.status === 'fulfilled' && g.value) setGroups(g.value.items ?? []);
     if (r.status === 'fulfilled' && r.value) setRoles(r.value.items ?? []);
     if (results.some((x) => x.status === 'rejected')) onError(t('admin.loadFailed'));
+    setLoaded(true);
   }, [kinds, onError, t]);
 
   useEffect(() => {
@@ -55,5 +59,5 @@ export function useDirectory(kinds: readonly DirectoryKind[], onError: (msg: str
     ) as Record<number, NamedRef[]>;
   }, [groups, roles]);
 
-  return { users, groups, roles, userGroups, groupRoles, refresh };
+  return { users, groups, roles, userGroups, groupRoles, refresh, loaded };
 }

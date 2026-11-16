@@ -15,7 +15,7 @@ export const GroupsTab: React.FC<{
   onError: (msg: string | null) => void;
 }> = ({ filter, onFilter, onError }) => {
   const { t: tr } = useTranslation();
-  const { users, groups, roles, userGroups, groupRoles, refresh } = useDirectory(KINDS, onError);
+  const { users, groups, roles, userGroups, groupRoles, refresh, loaded } = useDirectory(KINDS, onError);
   const [newGroup, setNewGroup] = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [editing, setEditing] = useState<null | { id: number; name: string; roleIds: number[] }>(null);
@@ -53,6 +53,7 @@ export const GroupsTab: React.FC<{
     }
   };
 
+  if (!loaded) return null;
   return (
     <>
       <GroupsSection

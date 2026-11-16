@@ -87,12 +87,19 @@ export const LdapSection: React.FC<{
   }, [load]);
 
   const save = async () => {
-    await updateLDAP({
-      ...config,
-      userBaseDns: config.userBaseDns.map((dn) => dn.trim()).filter(Boolean),
-      bindPassword: updatePassword || !(config.passwordConfigured ?? false) ? config.bindPassword : '',
-      passwordConfigured: config.passwordConfigured ?? false,
-    });
+    setTestStatus(null);
+    try {
+      await updateLDAP({
+        ...config,
+        userBaseDns: config.userBaseDns.map((dn) => dn.trim()).filter(Boolean),
+        bindPassword: updatePassword || !(config.passwordConfigured ?? false) ? config.bindPassword : '',
+        passwordConfigured: config.passwordConfigured ?? false,
+      });
+    } catch (err) {
+      // Shown where the test result goes, next to Save; the form keeps what was typed.
+      setTestStatus({ status: 'error', message: (err as Error).message });
+      return;
+    }
     await load();
   };
 
@@ -267,11 +274,17 @@ export const AzureAdSection: React.FC = () => {
   }, [load]);
 
   const save = async () => {
-    await updateAzureAD({
-      ...config,
-      clientSecret: updateSecret || !(config.passwordConfigured ?? false) ? config.clientSecret : '',
-      passwordConfigured: config.passwordConfigured ?? false,
-    });
+    setTestStatus(null);
+    try {
+      await updateAzureAD({
+        ...config,
+        clientSecret: updateSecret || !(config.passwordConfigured ?? false) ? config.clientSecret : '',
+        passwordConfigured: config.passwordConfigured ?? false,
+      });
+    } catch (err) {
+      setTestStatus({ status: 'error', message: (err as Error).message });
+      return;
+    }
     await load();
   };
 

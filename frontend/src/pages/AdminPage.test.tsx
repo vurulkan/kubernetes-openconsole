@@ -145,6 +145,23 @@ describe('AdminPage tabs', () => {
   });
 });
 
+describe('AdminPage loading', () => {
+  it('shows no "no users" message while the list is still loading', async () => {
+    let answer: (r: Response) => void = () => {};
+    mockFetch([
+      ['GET /api/admin/users', () => new Promise<Response>((resolve) => (answer = resolve))],
+      ['GET /api/admin/groups', () => ({ items: [] })],
+    ]);
+    renderAdmin('users');
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(screen.queryByText(/No users yet/)).toBeNull();
+    await act(async () => answer(new Response(JSON.stringify({ items: [] }), { status: 200 })));
+    expect(await screen.findByText(/No users yet/)).toBeInTheDocument();
+  });
+});
+
 describe('AdminPage users', () => {
   it('offers LDAP import and Azure AD users when they are on, and highlights a created user', async () => {
     let users = [admin];
@@ -209,6 +226,8 @@ describe('AdminPage roles, classic permissions view', () => {
     await screen.findByRole('option', { name: 'viewer' });
     fireEvent.change(screen.getByLabelText('Role'), { target: { value: '9' } });
     expect(await screen.findByText('pods:list')).toBeInTheDocument();
+    // Each grant's ✕ says which grant it removes.
+    expect(screen.getByRole('button', { name: 'Remove pods:get' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Remove row' }));
     await waitFor(() => expect(calls.filter((c) => c.method === 'DELETE').map((c) => c.url).sort()).toEqual(['/api/admin/permissions/1', '/api/admin/permissions/2']));
     // Back to the new view.
@@ -285,6 +304,20 @@ describe('AdminPage LDAP', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Test connection' }));
     expect(await screen.findByRole('alert')).toBeInTheDocument();
   });
+
+  it('says why a save failed instead of failing silently', async () => {
+    const problem = { type: 'about:blank', title: 'Bad Request', status: 400, error: 'invalid_input', detail: 'ldap CA certificate: no PEM certificate found' };
+    mockFetch([
+      ['PUT /api/admin/ldap', () => new Response(JSON.stringify(problem), { status: 400 })],
+      ['GET /api/admin/ldap', () => stored],
+      ['GET /api/admin/groups', () => ({ items: [] })],
+    ]);
+    renderAdmin('ldap');
+    await screen.findByDisplayValue('dc1.example.com');
+    fireEvent.click(screen.getByRole('button', { name: 'Save LDAP settings' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('(ldap CA certificate: no PEM certificate found)');
+    expect(screen.getByDisplayValue('dc1.example.com')).toBeInTheDocument();
+  });
 });
 
 describe('AdminPage Azure AD', () => {
@@ -330,6 +363,20 @@ describe('AdminPage session settings', () => {
     fireEvent.click(screen.getAllByRole('button', { name: 'Save' })[0]);
     await waitFor(() => expect(sent(calls, 'PUT', '/api/admin/session')).toHaveLength(1));
     expect(sent(calls, 'PUT', '/api/admin/session')[0].body).toEqual({ sessionMinutes: 30, apiKeyMaxDays: 90, apiKeyAllowNoExpiry: false });
+  });
+
+  it('says why a save failed, in the card whose Save was pressed', async () => {
+    const problem = { type: 'about:blank', title: 'Bad Request', status: 400, error: 'invalid_input', detail: 'sessionMinutes must be a positive number' };
+    mockFetch([
+      ['PUT /api/admin/session', () => new Response(JSON.stringify(problem), { status: 400 })],
+      ['GET /api/admin/session', () => ({ sessionMinutes: 60, apiKeyMaxDays: 90, apiKeyAllowNoExpiry: false })],
+      ['GET /api/features', () => ({ features: {} })],
+    ]);
+    renderAdmin('session');
+    await screen.findByLabelText('Sign out after inactivity (minutes)');
+    fireEvent.click(screen.getAllByRole('button', { name: 'Save' })[0]);
+    expect(await screen.findByRole('alert')).toHaveTextContent('A value was not accepted. (sessionMinutes must be a positive number)');
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
   });
 });
 

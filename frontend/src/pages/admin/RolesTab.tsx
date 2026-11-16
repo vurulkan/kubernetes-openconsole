@@ -34,7 +34,7 @@ export const RolesTab: React.FC<{
   onError: (msg: string | null) => void;
 }> = ({ filter, onFilter, onError }) => {
   const { t: tr } = useTranslation();
-  const { roles, groupRoles, refresh } = useDirectory(KINDS, onError);
+  const { roles, groupRoles, refresh, loaded } = useDirectory(KINDS, onError);
   const [clusters, setClusters] = useState<ClusterListItem[]>([]);
   const [namespaces, setNamespaces] = useState<string[]>([]);
   const [newRole, setNewRole] = useState<RoleForm>(emptyRole);
@@ -99,6 +99,7 @@ export const RolesTab: React.FC<{
     }
   };
 
+  if (!loaded) return null;
   return (
     <div className="flex flex-col gap-5">
       <RolesSection

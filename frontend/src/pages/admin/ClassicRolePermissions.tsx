@@ -272,7 +272,8 @@ export const ClassicRolePermissions: React.FC<{
                             <button
                               type="button"
                               onClick={() => handleRemovePermission(perm.id)}
-                              className="text-slate-300 transition-opacity group-hover:text-red-400 focus:outline-none"
+                              aria-label={tr('multiSelect.remove', { label: `${perm.resource}:${perm.action}` })}
+                              className="rounded text-slate-400 transition-opacity group-hover:text-red-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
                             >
                               <X size={10} />
                             </button>
