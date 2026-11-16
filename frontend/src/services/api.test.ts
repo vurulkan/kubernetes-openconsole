@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getMe, tokenExpiresAt } from './api';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import i18n from '../i18n';
+import { ERROR_CODES, getMe, tokenExpiresAt } from './api';
 
 const jwt = (payload: object) => `h.${btoa(JSON.stringify(payload)).replace(/=+$/, '')}.s`;
 
@@ -105,5 +108,26 @@ describe('error messages', () => {
   it('says in words when the cluster refused a read', async () => {
     fail('{"error":"cluster_forbidden"}');
     await expect(getMe()).rejects.toThrow(/ClusterRole/);
+  });
+
+  it('reads problem details: the code as a sentence, the detail after it', async () => {
+    fail('{"type":"about:blank","title":"Bad Request","status":400,"error":"weak_password","detail":"password must be at least 12 characters"}', 400);
+    await expect(getMe()).rejects.toThrow(/^The new password does not meet the password policy\. \(password must be at least 12 characters\)$/);
+    fail('{"type":"about:blank","title":"Bad Request","status":400,"error":"invalid_body"}', 400);
+    await expect(getMe()).rejects.toThrow(/^The request could not be read\./);
+    fail('{"error":"some_new_code","detail":"what happened"}', 400);
+    await expect(getMe()).rejects.toThrow(/^what happened$/);
+  });
+
+  it('has a sentence in English and Turkish for every code the server sends', () => {
+    const src = readFileSync(resolve(process.cwd(), '../backend/internal/problem/problem.go'), 'utf8');
+    const server = [...src.matchAll(/^\t\w+\s+= "([a-z_]+)"$/gm)].map((m) => m[1]);
+    expect(server.length).toBeGreaterThan(30);
+    expect([...ERROR_CODES].sort()).toEqual([...server].sort());
+    for (const lng of ['en', 'tr']) {
+      for (const code of ERROR_CODES) {
+        expect(i18n.exists(`apiErrors.${code}`, { lng }), `${lng} apiErrors.${code}`).toBe(true);
+      }
+    }
   });
 });

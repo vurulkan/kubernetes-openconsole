@@ -9,7 +9,7 @@ import { mockFetch } from '../test/fetchMock';
 import type { User } from '../services/api';
 
 const admin = { id: 1, username: 'root', isAdmin: true, isActive: true } as User;
-const x509 = { error: 'cluster validation failed: x509: certificate signed by unknown authority' };
+const x509 = { type: 'about:blank', title: 'Bad Request', status: 400, error: 'cluster_invalid', detail: 'x509: certificate signed by unknown authority' };
 
 afterEach(() => {
   vi.unstubAllGlobals();

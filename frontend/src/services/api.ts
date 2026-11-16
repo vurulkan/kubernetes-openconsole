@@ -132,42 +132,67 @@ const seeResponse = (response: Response, auto = false) => {
 // Another tab picked a cluster: the key other tabs watch (storage event).
 export const CLUSTER_PICK_KEY = 'clusterPick';
 
-// Reason codes the server sends as {"error": "<code>"} (or "<code>: <detail>"),
-// shown as a sentence in the UI language; any other message is shown as sent.
-const ERROR_CODES = [
+// Reason codes of the server's error answers (problem details: {"error":
+// "<code>", "detail": "<English text>"}; backend/internal/problem), shown as a
+// sentence in the UI language. api.test.ts checks the list against the server's.
+export const ERROR_CODES = [
+  'unauthorized',
+  'api_key_expired',
+  'api_key_revoked',
+  'password_change_required',
   'forbidden',
   'admin_only',
   'feature_disabled',
-  'rate_limited',
-  'not_found',
-  'backup_download_disabled',
-  'kubeconfig_unsupported',
-  'too_many_sessions',
   'api_key_not_allowed',
   'api_access_policy',
   'api_access_off',
+  'backup_download_disabled',
+  'rate_limited',
+  'too_many_sessions',
+  'not_found',
+  'method_not_allowed',
+  'invalid_id',
+  'invalid_body',
+  'invalid_input',
+  'body_too_large',
+  'conflict',
+  'wrong_password',
+  'weak_password',
+  'password_unchanged',
+  'cannot_delete_self',
+  'kubeconfig_unsupported',
+  'cluster_invalid',
   'cluster_forbidden',
   'cluster_timeout',
   'cluster_unreachable',
+  'cluster_error',
   'not_connected',
+  'not_configured',
+  'exec_failed',
+  'connection_failed',
+  'sign_in_failed',
+  'recording_unavailable',
+  'internal_error',
 ];
-export const errorText = (reason: string) => {
+/** A reason code (or "code: detail", as WebSocket frames still send) as a sentence; other text as is. */
+export const errorText = (reason: string, detail?: string) => {
   const m = /^([a-z_]+)(?:: (.+))?$/s.exec(reason);
-  if (!m || !ERROR_CODES.includes(m[1])) return reason;
+  if (!m || !ERROR_CODES.includes(m[1])) return detail || reason;
   const sentence = i18n.t(`apiErrors.${m[1]}`);
-  return m[2] ? `${sentence} (${m[2]})` : sentence;
+  const extra = detail || m[2];
+  return extra ? `${sentence} (${extra})` : sentence;
 };
 const networkError = () => new Error(i18n.t('apiErrors.network'));
 
 const responseError = async (response: Response) => {
   const text = await response.text();
-  let reason = '';
+  let body: { error?: string; detail?: string } = {};
   try {
-    reason = (JSON.parse(text) as { error?: string }).error ?? '';
+    body = JSON.parse(text) as typeof body;
   } catch {
     /* not JSON */
   }
-  return new Error(errorText(reason || text || response.statusText));
+  return new Error(errorText(body.error || text || response.statusText, body.detail));
 };
 
 const apiRequest = async <T>(path: string, options: RequestInit = {}): Promise<T> => {
