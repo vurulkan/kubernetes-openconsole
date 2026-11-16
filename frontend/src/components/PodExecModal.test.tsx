@@ -48,9 +48,9 @@ const { terms, FakeTerminal } = vi.hoisted(() => {
   }
   return { terms, FakeTerminal };
 });
-vi.mock('xterm', () => ({ Terminal: FakeTerminal }));
-vi.mock('xterm-addon-fit', () => ({ FitAddon: class { fit() {} } }));
-vi.mock('xterm/css/xterm.css', () => ({}));
+vi.mock('@xterm/xterm', () => ({ Terminal: FakeTerminal }));
+vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }));
+vi.mock('@xterm/xterm/css/xterm.css', () => ({}));
 const theme = vi.hoisted(() => ({ effective: 'light' }));
 vi.mock('./ThemeProvider', () => ({ useTheme: () => theme }));
 vi.mock('../services/api', () => ({
