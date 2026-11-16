@@ -6,6 +6,7 @@ import {
   KeyRound,
   RotateCcw,
   Scaling,
+  ScrollText,
   Terminal,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -277,7 +278,7 @@ export const ResourceListView: React.FC<ResourceViewProps> = (props) => {
               <div className="flex justify-end gap-1">
                 {canLogs && (
                   <IconButton label={t('dashboard.actions.logs')} onClick={() => latest.current.openLogModal?.(selectedNamespace, name)}>
-                    <Terminal size={13} />
+                    <ScrollText size={13} />
                   </IconButton>
                 )}
                 <IconButton label={t('dashboard.actions.events')} onClick={() => latest.current.openEventsModal('pods', selectedNamespace, name)}>
@@ -358,7 +359,7 @@ export const ResourceListView: React.FC<ResourceViewProps> = (props) => {
                 </IconButton>
                 {canDeploymentLogs && (
                   <IconButton label={t('dashboard.actions.logs')} onClick={() => latest.current.openDeploymentLogs?.(selectedNamespace, name)}>
-                    <Terminal size={13} />
+                    <ScrollText size={13} />
                   </IconButton>
                 )}
                 <IconButton label={t('dashboard.actions.events')} onClick={() => latest.current.openEventsModal('deployments', selectedNamespace, name)}>
@@ -681,7 +682,7 @@ export const ResourceListView: React.FC<ResourceViewProps> = (props) => {
               </IconButton>
               {canJobLogs && (
                 <IconButton label={t('dashboard.actions.logs')} onClick={() => latest.current.openJobLogs?.(selectedNamespace, nameOf(it))}>
-                  <Terminal size={13} />
+                  <ScrollText size={13} />
                 </IconButton>
               )}
             </div>
