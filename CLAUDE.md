@@ -13,8 +13,9 @@ working on the code.
 reference pages into `docs/reference/` (see "Generated reference" below).
 | Path | What |
 |---|---|
-| `internal/api` | HTTP + WebSocket handlers. `router.go` holds the routes, `requirePermission`, `accessFor` / `engineForRequest` (every permission check, API key included: `webAccess`, or `keyAccess` = web access through the admin's API access policy, which `ceilingFor` uses too), `denyReason` and `isAdminRequest` (the one admin check), most handlers; features split out (`apikeys.go` (API key sign-in, ceiling, expiry policy, `/api/me/api-keys`), `apikeys_admin.go` (admin key list / revoke, user API access preview), `workloads.go`, `deployment_actions.go`, `secrets.go`, `pod_exec.go` (shell socket), `pod_exec_command.go` (one command over REST), `logs.go` (pod / deployment / job log sockets, JSON frames, write deadline, at most 20 pods per workload; REST log `handlePodLogs`), `events_ws.go` (Live Events; `keepAlive` = the 25 s ping of every socket), `cluster_ctx.go` (the request's cluster: `X-OpenConsole-Cluster` from a tab, a key or a WebSocket ticket, else the stored pick), `kube_errors.go` (`writeReadError`: a failed cluster read → `cluster_forbidden` 403 / 404 / 502 / 503 / 504, logged), `openapi.yaml` + `openapi.go` (the hand-written API description, `GET /api/openapi.json`; `openapi_test.go` walks `routes()` against it), `ws_ticket.go`, `clientip.go` (client address: `X-Forwarded-For` only from `TRUSTED_PROXIES`), `origins.go` (CORS
+| `internal/api` | HTTP + WebSocket handlers. `router.go` = the `Server` and its routes; `access.go` = `requirePermission`, `accessFor` / `engineForRequest` (every permission check, API key included: `webAccess`, or `keyAccess` = web access through the admin's API access policy, which `ceilingFor` uses too), `denyReason` and `isAdminRequest` (the one admin check); `errors.go` `writeError` / `writeErrorDetail` (every error answer, see `internal/problem`); `audited.go` `adminWrite` (an admin write: admin check + one audit entry for every answer; the handler adds the name with `noteFor(r)`); `middleware.go` (request log, body limit, SPA, JSON 404 / 405 for unknown `/api` `/ws` paths), `auth_handlers.go` (sign-in, LDAP, Azure AD, sessions, password), `resources.go` (namespaces, list / get, `serveYAML` = every YAML view but Secrets), `admin_users.go` (users, groups, roles, grants), `identity_config.go` (LDAP / Azure / session settings), `audit_logs.go`, `logo.go`; more by feature (`apikeys.go` (API key sign-in, ceiling, expiry policy, `/api/me/api-keys`), `apikeys_admin.go` (admin key list / revoke, user API access preview), `workloads.go`, `deployment_actions.go`, `secrets.go`, `pod_exec.go` (shell socket), `pod_exec_command.go` (one command over REST), `logs.go` (pod / deployment / job log sockets, JSON frames, write deadline, at most 20 pods per workload; REST log `handlePodLogs`), `events_ws.go` (Live Events; `keepAlive` = the 25 s ping of every socket), `cluster_ctx.go` (the request's cluster: `X-OpenConsole-Cluster` from a tab, a key or a WebSocket ticket, else the stored pick), `kube_errors.go` (`writeReadError`: a failed cluster read → `cluster_forbidden` 403 / 404 / 502 / 503 / 504, logged), `openapi.yaml` + `openapi.go` (the hand-written API description, `GET /api/openapi.json`; `openapi_test.go` walks `routes()` against it), `ws_ticket.go`, `clientip.go` (client address: `X-Forwarded-For` only from `TRUSTED_PROXIES`), `origins.go` (CORS
 `ALLOWED_ORIGINS`, WebSocket `CheckOrigin` = `wsOriginOK`, `WS_ORIGIN_CHECK`), `overview.go` (admin overview, 15 s cache), `nodes.go` (admin node list / detail / history), `yaml_apply.go`, `clusters.go`, `views.go`, `exports.go`, …). `authz_test.go` = authorization suite |
+| `internal/problem` | the error body of every answer: RFC 9457 problem details + `error` = reason code (`Codes`, each with its meaning; `errors_test.go` fails on free text, on a code missing from `openapi.yaml`'s `Problem` schema or from the UI's `ERROR_CODES`) |
 | `internal/audit` | audit events: `Verb*` constants, `DetailKeys` registry (`event.go`), DB + console mirror (`logger.go`), 2.16 legacy upgrade (`legacy.go`). Handlers call `s.auditEvent` / `s.auditRead` / `s.auditReadDenied` (`api/audit_events.go`) |
 | `internal/rbac` | permission engine (role → namespace / resource / action, cluster-scoped grants); `Catalog` (every resource:action), `NewAdmin`, `WithKey` (API key scope ∩ the owner's grants); `policy.go` API key policy: `SafeRead` (the one definition of safe read-only, UI template included), `KeyCeiling` (role modes / user override), `NewAdminKeys` |
 | `internal/auth` | local passwords + policy, JWT sessions (inactivity timeout: `session_tokens.expires_at` moves on activity, polls and socket connects don't count; JWT `exp` = 12 h limit), LDAP, Azure AD |
@@ -46,7 +47,7 @@ reference pages into `docs/reference/` (see "Generated reference" below).
 `deploy/`: kustomize manifests; `rbac.yaml` / `rbac-readonly.yaml` = ClusterRole of the token users paste in;
 `elk/` = Elasticsearch ingest pipeline + mappings for the logs; `optional/` = not in the kustomization (NetworkPolicy). The Deployment uses `strategy: Recreate` (RWO + SQLite: never two pods). `.github/workflows/ci.yml` = tests + image publish.
 
-Large files (`AdminPage.tsx`, `router.go`, `DashboardPage.tsx`, `i18n.ts`, ~1500–2700 lines): grep for the
+Large files (`i18n.ts` ~2800 lines, `AdminPage.tsx`, `RolePermissionsPanel.tsx`): grep for the
 part you need and read that range. New screens and handlers go in their own files, not into these.
 
 ## Commands
@@ -85,7 +86,11 @@ Screenshots: Playwright's `chromium.launch` dies on this Mac; start Chrome yours
 ## When you add …
 
 - **an endpoint** → route in `router.go`, the operation in `internal/api/openapi.yaml` (tag, summary, `x-openconsole-permission` / `-admin` / `-api-key`; `TestOpenAPIMatchesRouter` fails without it), `requirePermission`, audit for success + denied + failed
-  (reads: `auditRead` / `auditReadDenied`), a case in `authz_test.go`, `services/api.ts`. Check permissions
+  (reads: `auditRead` / `auditReadDenied`; an admin write: wrap it in `adminWrite(verb, kind, h)` in the admin-writes group), a case in `authz_test.go`, `services/api.ts`.
+  Errors only through `writeError(w, status, problem.X)` / `writeErrorDetail(…, detail)`: a reason code, never free
+  text (English detail goes in `detail`). A new code → `problem.Codes` + the `Problem` enum in `openapi.yaml` +
+  `ERROR_CODES` and `apiErrors.*` (EN + TR). The API has no version prefix: never break it (rename / remove a
+  field or path, change a code's meaning); add instead. `info.version` in the served OpenAPI is the build's. Check permissions
   only through `requirePermission` / `s.can` / `engineForRequest` and admin through `isAdminRequest` (they
   know the API key; never `user.IsAdmin` for access), and add an API key case (allowed / refused) in
   `apikeys_test.go`; `/api/admin/*` routes are scanned there automatically. Something a key must never do:
@@ -94,8 +99,7 @@ Screenshots: Playwright's `chromium.launch` dies on this Mac; start Chrome yours
   A new verb → `audit.Verbs` + `VerbDocs`. Keep `Verb` / `ResourceType` / `Outcome` constants (or helper parameters
   called with constants): docgen reads the actions from the code and fails on what it can't follow.
   Never write secret values, YAML bodies, passwords or tokens into audit or logs.
-- **UI text** → key in both EN and TR in `i18n.ts` (the parity test fails otherwise; `i18nLiterals.test.ts` fails on English left in JSX). A new
-  server reason code the UI can show → `ERROR_CODES` in `services/api.ts` + `apiErrors.*`.
+- **UI text** → key in both EN and TR in `i18n.ts` (the parity test fails otherwise; `i18nLiterals.test.ts` fails on English left in JSX).
 - **an env var / feature flag** → `config.Vars` (or `api.AllFeatures` + `api.FeatureDocs`) + `deploy/deployment.yaml` comment.
 - **a metric** → `api.Metrics` (help text lives there only). **A permission** → `rbac.Catalog` + `rbac.ActionDocs` if
   the generic text doesn't fit. **A keyboard shortcut** → `frontend/src/shortcuts.json` (EN + TR text) + the binding.
@@ -109,7 +113,8 @@ Screenshots: Playwright's `chromium.launch` dies on this Mac; start Chrome yours
   `steps` for a one-time change such as a table rebuild; never edit a shipped step; store tests upgrade an old schema).
   A new encrypted column → `store.encryptedColumns`.
 - **any UI** → light + dark theme, TR + EN, keyboard reachable, axe clean (frontend tests run axe); a dialog uses `Modal` / `Drawer` or
-  `useDialogFocus`; a screen is lazy-loaded in `App.tsx`; hooks pass `npm run lint` (`eslint.config.js`: rules-of-hooks + exhaustive-deps).
+  `useDialogFocus`; a screen is lazy-loaded in `App.tsx`; hooks pass `npm run lint` (`eslint.config.js`: rules-of-hooks + exhaustive-deps;
+  react-hooks 7's React Compiler rules stay off: the app doesn't use the compiler and their fixes change behaviour).
 - **anything a user or operator notices** → the docs site (below); the README only if a highlight or the quick start
   changes.
 
