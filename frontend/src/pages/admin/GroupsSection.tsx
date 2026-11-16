@@ -95,10 +95,10 @@ export const GroupsSection: React.FC<Props> = ({
       width: '110px',
       cell: (g) => (
         <div className="flex justify-end gap-1">
-          <IconButton label="Edit group" onClick={() => onEdit(g)}>
+          <IconButton label={t('admin.groups.edit')} onClick={() => onEdit(g)}>
             <Pencil size={14} />
           </IconButton>
-          <IconButton label="Delete group" variant="danger" onClick={() => onDelete(g)}>
+          <IconButton label={t('admin.groups.delete')} variant="danger" onClick={() => onDelete(g)}>
             <Trash2 size={14} />
           </IconButton>
         </div>

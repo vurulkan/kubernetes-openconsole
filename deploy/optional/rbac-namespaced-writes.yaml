@@ -1,0 +1,56 @@
+# Optional: write rights only in the namespaces you choose.
+# rbac.yaml grants Secrets, pod shells and every write verb in every
+# namespace, kube-system included. To narrow that:
+#   1. apply rbac-readonly.yaml instead of rbac.yaml (reads stay cluster-wide:
+#      OpenConsole watches namespaces, pods, … across the cluster);
+#   2. apply this file, with one RoleBinding per namespace where OpenConsole
+#      may read Secrets, open shells, restart, scale or apply YAML.
+# Elsewhere those actions fail with 403 from Kubernetes, whatever the
+# OpenConsole roles say.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: openconsole-writes
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list, update]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [pods, services, configmaps]
+    verbs: [update]
+  - apiGroups: [apps]
+    resources: [deployments, daemonsets, statefulsets]
+    verbs: [update]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [patch]
+  - apiGroups: [apps]
+    resources: [deployments/scale, statefulsets/scale]
+    verbs: [get, update]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [update]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    verbs: [update]
+  - apiGroups: [batch]
+    resources: [cronjobs, jobs]
+    verbs: [update]
+---
+# One per namespace: copy it, change the namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: openconsole-writes
+  namespace: team-a
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: openconsole-writes
+subjects:
+  - kind: ServiceAccount
+    name: openconsole-reader
+    namespace: kubernetes-openconsole

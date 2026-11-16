@@ -40,7 +40,7 @@ const (
 	VerbPurge          = "purge"
 	VerbViewOverview   = "view_overview"
 	VerbRegenerate     = "regenerate"
-	VerbUse            = "use" // an API key presented (denied / rate limited only)
+	VerbUse            = "use" // an API key presented, or a cluster asked for per request (denied / rate limited only)
 )
 
 // Verbs lists every verb, for validation and the Admin → Audit filter.
@@ -76,6 +76,7 @@ const (
 	KindRecording  = "recording"
 	KindSavedView  = "saved_view"
 	KindAPIKey     = "api_key"
+	KindBackup     = "backup"
 )
 
 // kubeKinds maps the plural resource names used by RBAC grants and URLs to

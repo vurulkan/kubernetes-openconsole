@@ -3,6 +3,7 @@ import { Activity, Pause, Play, Radio, Trash2, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from './ui';
 import { wsUrl } from '../services/api';
+import { MAX_BACKOFF_MS } from '../utils/logStream';
 
 export type LiveEvent = {
   verb: string;
@@ -77,34 +78,58 @@ const LiveEventsPanel: React.FC<Props> = ({ namespace, open, onClose, initialFil
       setConnected(false);
       return;
     }
+    // A socket that drops (server restart, cluster credentials edited,
+    // network) reconnects with the log viewer's backoff.
     let ws: WebSocket | null = null;
     let cancelled = false;
-    void wsUrl('/ws/events', new URLSearchParams({ namespace: namespace ?? '' }))
-      .then((url) => {
-        if (cancelled) return;
-        const socket = new WebSocket(url);
-        ws = socket;
-        socketRef.current = socket;
-        socket.onopen = () => setConnected(true);
-        socket.onclose = () => setConnected(false);
-        socket.onerror = () => setConnected(false);
-        socket.onmessage = (msg) => {
-          if (pausedRef.current) return;
-          try {
-            const ev = JSON.parse(msg.data) as LiveEvent;
-            setEvents((prev) => {
-              const next = [ev, ...prev];
-              return next.length > MAX_EVENTS ? next.slice(0, MAX_EVENTS) : next;
-            });
-          } catch {
-            /* ignore malformed */
-          }
-        };
-      })
-      .catch(() => setConnected(false));
+    let attempt = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const retry = () => {
+      if (cancelled) return;
+      timer = setTimeout(connect, Math.min(1000 * 2 ** attempt, MAX_BACKOFF_MS));
+      attempt++;
+    };
+    const connect = () => {
+      void wsUrl('/ws/events', new URLSearchParams({ namespace: namespace ?? '' }), attempt > 0)
+        .then((url) => {
+          if (cancelled) return;
+          const socket = new WebSocket(url);
+          ws = socket;
+          socketRef.current = socket;
+          socket.onopen = () => {
+            attempt = 0;
+            setConnected(true);
+          };
+          socket.onclose = () => {
+            setConnected(false);
+            if (socket === ws) retry();
+          };
+          socket.onerror = () => setConnected(false);
+          socket.onmessage = (msg) => {
+            if (pausedRef.current) return;
+            try {
+              const ev = JSON.parse(msg.data) as LiveEvent;
+              setEvents((prev) => {
+                const next = [ev, ...prev];
+                return next.length > MAX_EVENTS ? next.slice(0, MAX_EVENTS) : next;
+              });
+            } catch {
+              /* ignore malformed */
+            }
+          };
+        })
+        .catch(() => {
+          setConnected(false);
+          retry();
+        });
+    };
+    connect();
     return () => {
       cancelled = true;
-      ws?.close();
+      clearTimeout(timer);
+      const socket = ws;
+      ws = null;
+      socket?.close();
       socketRef.current = null;
       setConnected(false);
     };
@@ -121,7 +146,7 @@ const LiveEventsPanel: React.FC<Props> = ({ namespace, open, onClose, initialFil
   return (
     <aside
       className="fixed right-0 top-14 bottom-0 z-40 flex w-full sm:w-96 flex-col border-l border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900"
-      aria-label="Live events"
+      aria-label={t('dashboard.events.panelLabel')}
     >
       <header className="flex items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-slate-800">
         <div className="flex items-center gap-2">
@@ -143,7 +168,7 @@ const LiveEventsPanel: React.FC<Props> = ({ namespace, open, onClose, initialFil
           type="button"
           onClick={onClose}
           className="rounded-md p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-          aria-label="Close"
+          aria-label={t('actions.close')}
         >
           <X size={16} />
         </button>

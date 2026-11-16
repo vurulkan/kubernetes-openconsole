@@ -13,6 +13,7 @@ import (
 
 	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/problem"
 )
 
 // Saved views: named Dashboard filters stored per user (so they follow the
@@ -25,12 +26,12 @@ const maxViewNameLength = 80
 func (s *Server) handleListViews(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.userForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return
 	}
 	views, err := s.store.ListViewsFor(r.Context(), user.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load views")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to load views")
 		return
 	}
 	type item struct {
@@ -47,7 +48,7 @@ func (s *Server) handleListViews(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSaveView(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.userForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return
 	}
 	if s.denyAPIKey(w, r, models.AuditLog{Verb: audit.VerbCreate, ResourceType: audit.KindSavedView}) {
@@ -62,12 +63,12 @@ func (s *Server) handleSaveView(w http.ResponseWriter, r *http.Request) {
 		Shared    bool   `json:"shared"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid body")
+		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
 	body.Name = strings.TrimSpace(body.Name)
 	if body.Name == "" || utf8.RuneCountInString(body.Name) > maxViewNameLength {
-		writeError(w, http.StatusBadRequest, "name is required (max "+strconv.Itoa(maxViewNameLength)+" characters)")
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "name is required (max "+strconv.Itoa(maxViewNameLength)+" characters)")
 		return
 	}
 	if body.ViewMode != "list" {
@@ -84,7 +85,7 @@ func (s *Server) handleSaveView(w http.ResponseWriter, r *http.Request) {
 		Shared:    body.Shared,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to save view")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to save view")
 		return
 	}
 	s.recordViewAudit(r, audit.VerbCreate, audit.Success, body.Name, audit.D{"shared": body.Shared})
@@ -101,11 +102,11 @@ func (s *Server) handleShareView(w http.ResponseWriter, r *http.Request) {
 		Shared bool `json:"shared"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid body")
+		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
 	if err := s.store.SetViewShared(r.Context(), view.ID, body.Shared); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to update view")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to update view")
 		return
 	}
 	s.recordViewAudit(r, audit.VerbShare, audit.Success, view.Name, audit.D{"shared": body.Shared, "owner": view.Owner})
@@ -118,7 +119,7 @@ func (s *Server) handleDeleteView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.store.DeleteView(r.Context(), view.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to delete view")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to delete view")
 		return
 	}
 	s.recordViewAudit(r, audit.VerbDelete, audit.Success, view.Name, audit.D{"owner": view.Owner})
@@ -130,7 +131,7 @@ func (s *Server) handleDeleteView(w http.ResponseWriter, r *http.Request) {
 func (s *Server) viewForWrite(w http.ResponseWriter, r *http.Request, verb string, adminMayAct bool) (*models.User, *models.SavedView, bool) {
 	user, ok := s.userForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return nil, nil, false
 	}
 	if s.denyAPIKey(w, r, models.AuditLog{Verb: verb, ResourceType: audit.KindSavedView, ResourceName: chi.URLParam(r, "id")}) {
@@ -138,27 +139,27 @@ func (s *Server) viewForWrite(w http.ResponseWriter, r *http.Request, verb strin
 	}
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+		writeError(w, http.StatusBadRequest, problem.InvalidID)
 		return nil, nil, false
 	}
 	view, err := s.store.GetView(r.Context(), id)
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "view not found")
+		writeErrorDetail(w, http.StatusNotFound, problem.NotFound, "view not found")
 		return nil, nil, false
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load view")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to load view")
 		return nil, nil, false
 	}
 	owner := view.UserID == user.ID
 	if !owner && !(adminMayAct && user.IsAdmin && view.Shared) {
 		// Someone else's view: don't reveal private ones exist.
 		if !view.Shared {
-			writeError(w, http.StatusNotFound, "view not found")
+			writeErrorDetail(w, http.StatusNotFound, problem.NotFound, "view not found")
 			return nil, nil, false
 		}
 		s.recordViewAudit(r, verb, audit.Denied, view.Name, audit.D{"owner": view.Owner})
-		writeError(w, http.StatusForbidden, "only the owner can change this view")
+		writeErrorDetail(w, http.StatusForbidden, problem.Forbidden, "only the owner can change this view")
 		return nil, nil, false
 	}
 	return user, view, true

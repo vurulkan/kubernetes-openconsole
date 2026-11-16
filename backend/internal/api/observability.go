@@ -22,20 +22,18 @@ func securityHeaders(next http.Handler) http.Handler {
 		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		h.Set("Permissions-Policy", "geolocation=(), camera=(), microphone=(), payment=(), interest-cohort=()")
 		if h.Get("Content-Security-Policy") == "" {
-			// Monaco editor (YAML edit modal, 2.6.0+) loads its chunks from
-			// jsdelivr by default. If an operator deploys in an air-gapped
-			// network, point @monaco-editor/react.loader.config() at a
-			// self-hosted path and tighten this CSP back to 'self'.
-			// 'wasm-unsafe-eval' lets the bundled asciinema-player compile its
-			// WebAssembly terminal (recording playback, 2.11.0+); it does not
-			// allow JS eval.
+			// Everything is served from the image ('self'): the Monaco
+			// editor is bundled (frontend/src/components/monacoSetup.ts), so
+			// it also works air-gapped. 'wasm-unsafe-eval' lets the bundled
+			// asciinema-player compile its WebAssembly terminal (recording
+			// playback, 2.11.0+); it does not allow JS eval.
 			h.Set("Content-Security-Policy",
 				"default-src 'self'; "+
-					"script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; "+
-					"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; "+
-					"font-src 'self' https://fonts.gstatic.com data:; "+
+					"script-src 'self' 'wasm-unsafe-eval'; "+
+					"style-src 'self' 'unsafe-inline'; "+
+					"font-src 'self' data:; "+
 					"img-src 'self' data: blob:; "+
-					"connect-src 'self' ws: wss: https://cdn.jsdelivr.net; "+
+					"connect-src 'self' ws: wss:; "+
 					"worker-src 'self' blob:; "+
 					"frame-ancestors 'none'; "+
 					"base-uri 'self'; "+
@@ -49,62 +47,101 @@ func securityHeaders(next http.Handler) http.Handler {
 
 type loginAttempt struct {
 	fails    int
+	last     time.Time // last failure
 	lockedAt time.Time
 }
 
+// loginGate counts failed sign-ins under two keys: the client address + user
+// name, and the user name alone with a higher limit, so a client that keeps
+// changing its address (or sits behind a shared one) still runs into a lock.
 type loginGate struct {
-	mu       sync.Mutex
-	byIPUser map[string]*loginAttempt
+	mu        sync.Mutex
+	attempts  map[string]*loginAttempt
+	lastSweep time.Time
 }
 
-var loginGateSingleton = &loginGate{byIPUser: map[string]*loginAttempt{}}
+var loginGateSingleton = &loginGate{attempts: map[string]*loginAttempt{}}
 
 // Thresholds. Picked small enough to deter credential stuffing but large
-// enough to not frustrate a typo-prone human.
+// enough to not frustrate a typo-prone human. Failures older than the window
+// are forgotten.
 const (
-	loginFailsBeforeLock = 5
-	loginLockWindow      = 5 * time.Minute
+	loginFailsBeforeLock     = 5  // per address + user
+	loginUserFailsBeforeLock = 20 // per user, any address
+	loginLockWindow          = 5 * time.Minute
 )
 
-// checkLogin returns (allowed, retryAfterSeconds). It should be called BEFORE
+type gateKey struct {
+	key   string
+	limit int
+}
+
+// loginGateKeys are the counters a sign-in by username from ip touches.
+func loginGateKeys(ip, username string) []gateKey {
+	u := strings.ToLower(strings.TrimSpace(username))
+	return []gateKey{{"ip|" + ip + "|" + u, loginFailsBeforeLock}, {"user|" + u, loginUserFailsBeforeLock}}
+}
+
+// check returns (allowed, retryAfterSeconds). It should be called BEFORE
 // the credential check.
-func (g *loginGate) check(ipUser string) (bool, int) {
+func (g *loginGate) check(keys []gateKey) (bool, int) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	a, ok := g.byIPUser[ipUser]
-	if !ok {
-		return true, 0
+	retry := 0
+	for _, k := range keys {
+		a, ok := g.attempts[k.key]
+		if !ok || a.fails < k.limit {
+			continue
+		}
+		remain := loginLockWindow - time.Since(a.lockedAt)
+		if remain <= 0 {
+			delete(g.attempts, k.key)
+			continue
+		}
+		retry = max(retry, int(remain.Seconds())+1)
 	}
-	if a.fails < loginFailsBeforeLock {
-		return true, 0
-	}
-	// Locked: check if window elapsed.
-	remain := loginLockWindow - time.Since(a.lockedAt)
-	if remain <= 0 {
-		delete(g.byIPUser, ipUser)
-		return true, 0
-	}
-	return false, int(remain.Seconds()) + 1
+	return retry == 0, retry
 }
 
-func (g *loginGate) recordFailure(ipUser string) {
+func (g *loginGate) recordFailure(keys []gateKey) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	a, ok := g.byIPUser[ipUser]
-	if !ok {
-		a = &loginAttempt{}
-		g.byIPUser[ipUser] = a
-	}
-	a.fails++
-	if a.fails == loginFailsBeforeLock {
-		a.lockedAt = time.Now()
+	now := time.Now()
+	g.sweep(now)
+	for _, k := range keys {
+		a, ok := g.attempts[k.key]
+		if !ok || now.Sub(a.last) > loginLockWindow {
+			a = &loginAttempt{}
+			g.attempts[k.key] = a
+		}
+		a.fails++
+		a.last = now
+		if a.fails == k.limit {
+			a.lockedAt = now
+		}
 	}
 }
 
-func (g *loginGate) recordSuccess(ipUser string) {
+// sweep drops counters with no failure for a lock window (a lock ends by
+// then too), at most once a minute, so names nobody retries don't pile up.
+func (g *loginGate) sweep(now time.Time) {
+	if now.Sub(g.lastSweep) < time.Minute {
+		return
+	}
+	g.lastSweep = now
+	for k, a := range g.attempts {
+		if now.Sub(a.last) > loginLockWindow {
+			delete(g.attempts, k)
+		}
+	}
+}
+
+func (g *loginGate) recordSuccess(keys []gateKey) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	delete(g.byIPUser, ipUser)
+	for _, k := range keys {
+		delete(g.attempts, k.key)
+	}
 }
 
 // LoginGate exposes the singleton for handler use.
@@ -120,6 +157,7 @@ type httpMetrics struct {
 	durationSumMs       atomic.Int64
 	durationCount       atomic.Int64
 	auditEventsTotal    atomic.Int64
+	auditWriteFailures  atomic.Int64
 	execSessionsTotal   atomic.Int64
 	wsLogStreamsStarted atomic.Int64
 	deployActionsTotal  atomic.Int64
@@ -168,6 +206,7 @@ func metricsRecordRequest(status int, durationMs int64) {
 
 // Public hooks so other files can bump counters.
 func MetricsAuditIncr()     { metricsStore.auditEventsTotal.Add(1) }
+func MetricsAuditFailed()   { metricsStore.auditWriteFailures.Add(1) }
 func MetricsExecIncr()      { metricsStore.execSessionsTotal.Add(1) }
 func MetricsLogStreamIncr() { metricsStore.wsLogStreamsStarted.Add(1) }
 func MetricsDeployAction()  { metricsStore.deployActionsTotal.Add(1) }
@@ -187,6 +226,7 @@ var Metrics = []MetricDoc{
 	{"openconsole_http_request_duration_ms_sum", "counter", "Sum of request durations in milliseconds.", nil},
 	{"openconsole_http_request_duration_ms_count", "counter", "Count of observed requests used for duration stats.", nil},
 	{"openconsole_audit_events_total", "counter", "Audit log entries recorded.", nil},
+	{"openconsole_audit_write_failures_total", "counter", "Audit events that could not be written to the database (full or locked volume); each one is also an error log line.", nil},
 	{"openconsole_pod_exec_sessions_total", "counter", "Pod exec sessions started.", nil},
 	{"openconsole_pod_log_streams_total", "counter", "Pod log WebSocket streams started.", nil},
 	{"openconsole_deployment_actions_total", "counter", "Deployment restart or scale actions attempted.", nil},
@@ -219,6 +259,7 @@ func handleMetrics(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	writeMetric(w, "openconsole_http_requests_total", metricsStore.requestsTotal.Load(), "")
 
+	metricHeader(w, "openconsole_http_requests_status_total")
 	metricsStore.requestsByStatus.Range(func(key, value any) bool {
 		bucket := key.(string)
 		count := value.(*atomic.Int64).Load()
@@ -233,6 +274,7 @@ func handleMetrics(w http.ResponseWriter, _ *http.Request) {
 	writeMetric(w, "openconsole_http_request_duration_ms_count", count, "")
 
 	writeMetric(w, "openconsole_audit_events_total", metricsStore.auditEventsTotal.Load(), "")
+	writeMetric(w, "openconsole_audit_write_failures_total", metricsStore.auditWriteFailures.Load(), "")
 	writeMetric(w, "openconsole_pod_exec_sessions_total", metricsStore.execSessionsTotal.Load(), "")
 	writeMetric(w, "openconsole_pod_log_streams_total", metricsStore.wsLogStreamsStarted.Load(), "")
 	writeMetric(w, "openconsole_deployment_actions_total", metricsStore.deployActionsTotal.Load(), "")

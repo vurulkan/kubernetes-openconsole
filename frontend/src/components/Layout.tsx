@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { Button } from './ui';
 import { ThemeToggle } from './ThemeProvider';
 import ClusterSwitcher from './ClusterSwitcher';
+import ClusterChangedBanner from './ClusterChangedBanner';
 import LocaleSwitcher from './LocaleSwitcher';
 import { dispatchOpenShortcuts, dispatchToggleEvents } from '../hooks/useGlobalShortcuts';
 import { docsUrl, getFeatures, getVersion, PROJECT_URL, User } from '../services/api';
@@ -22,21 +23,22 @@ type Props = {
 };
 
 type RailItem = {
-  key: string;
-  label: string;
+  key: 'overview' | 'nodes' | 'dashboard' | 'admin';
   icon: React.ComponentType<{ size?: number | string; className?: string }>;
   path: string;
   adminOnly?: boolean;
 };
 
 const RAIL: RailItem[] = [
-  { key: 'overview', label: 'Overview', icon: Gauge, path: '/overview', adminOnly: true },
-  { key: 'nodes', label: 'Nodes', icon: Server, path: '/nodes', adminOnly: true },
-  { key: 'dashboard', label: 'Dashboard', icon: Home, path: '/' },
-  { key: 'admin', label: 'Admin', icon: Settings, path: '/admin', adminOnly: true },
+  { key: 'overview', icon: Gauge, path: '/overview', adminOnly: true },
+  { key: 'nodes', icon: Server, path: '/nodes', adminOnly: true },
+  { key: 'dashboard', icon: Home, path: '/' },
+  { key: 'admin', icon: Settings, path: '/admin', adminOnly: true },
 ];
 
-const LogoMark: React.FC<{ compact?: boolean }> = ({ compact = false }) => (
+const LogoMark: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
+  const { t } = useTranslation();
+  return (
   <div className="flex items-center gap-2.5">
     <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-brand-500 to-brand-700 shadow-[0_0_0_1px_rgba(255,255,255,0.08)_inset,0_8px_16px_-6px_rgba(79,70,229,0.6)]">
       <svg
@@ -57,15 +59,16 @@ const LogoMark: React.FC<{ compact?: boolean }> = ({ compact = false }) => (
     {!compact && (
       <div className="flex flex-col leading-tight">
         <span className="text-[13px] font-semibold tracking-tight text-slate-900 dark:text-slate-100">
-          Kubernetes OpenConsole
+          OpenConsole for Kubernetes
         </span>
         <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
-          Cluster Visibility
+          {t('nav.tagline')}
         </span>
       </div>
     )}
   </div>
-);
+  );
+};
 
 const Layout: React.FC<Props> = ({ user, panel, panelTitle, liveEvents, children }) => {
   const navigate = useNavigate();
@@ -86,7 +89,7 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, liveEvents, children
       ? [{ key: 'password', label: t('nav.changePassword'), icon: LockKeyhole, path: '/change-password' }]
       : []),
   ];
-  const RAIL_LABELS: Record<string, string> = {
+  const RAIL_LABELS: Record<RailItem['key'], string> = {
     overview: t('nav.overview'),
     nodes: t('nav.nodes'),
     dashboard: t('nav.dashboard'),
@@ -111,7 +114,7 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, liveEvents, children
         <button
           className="rounded-lg p-1.5 text-slate-500 dark:text-slate-400 transition-colors hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100 dark:text-slate-100 focus:outline-none lg:hidden"
           onClick={() => setDrawerOpen(true)}
-          aria-label="Open navigation"
+          aria-label={t('nav.openNavigation')}
         >
           <Menu size={20} />
         </button>
@@ -148,7 +151,7 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, liveEvents, children
           <button
             type="button"
             onClick={() => dispatchOpenShortcuts()}
-            title="View keyboard shortcuts (?)"
+            title={t('nav.shortcutsTitle')}
             className="hidden items-center gap-1.5 rounded-md border border-slate-200 bg-white/60 px-2 py-1 text-[10px] font-medium text-slate-500 transition-colors hover:border-slate-300 hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200 md:inline-flex"
           >
             <Keyboard size={12} className="shrink-0" />
@@ -172,12 +175,12 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, liveEvents, children
             type="button"
             aria-haspopup="menu"
             aria-expanded={userMenu !== null}
-            aria-label={t('nav.accountMenu', { name: user.username })}
             disabled={accountItems.length === 0}
             onClick={(e) => setUserMenu(userMenu ? null : e.currentTarget)}
             className="hidden cursor-pointer items-center gap-2 rounded-lg py-1 pl-1 pr-2 transition-colors hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 disabled:cursor-default disabled:hover:bg-transparent dark:hover:bg-slate-800 sm:flex"
           >
-            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-50 dark:bg-brand-500/15 text-xs font-semibold text-brand-700 dark:text-brand-200 ring-1 ring-inset ring-brand-200 dark:ring-brand-500/30">
+            {/* Named by the visible text (WCAG 2.5.3); aria-haspopup says it opens a menu. */}
+            <span aria-hidden="true" className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-50 dark:bg-brand-500/15 text-xs font-semibold text-brand-700 dark:text-brand-200 ring-1 ring-inset ring-brand-200 dark:ring-brand-500/30">
               {(user.username ?? '?').slice(0, 1).toUpperCase()}
             </span>
             <span className="flex flex-col text-left leading-tight">
@@ -251,8 +254,8 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, liveEvents, children
                     ? 'bg-brand-600/20 text-brand-200 ring-1 ring-inset ring-brand-500/40'
                     : 'text-slate-500 dark:text-slate-400 hover:bg-slate-800/80 hover:text-white'
                 }`}
-                aria-label={RAIL_LABELS[item.key] ?? item.label}
-                title={RAIL_LABELS[item.key] ?? item.label}
+                aria-label={RAIL_LABELS[item.key]}
+                title={RAIL_LABELS[item.key]}
               >
                 {active && (
                   <span className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-0.5 rounded-r bg-brand-400" />
@@ -280,7 +283,7 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, liveEvents, children
               <item.icon size={18} />
             </button>
           ))}
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg text-emerald-400" title="Permissioned cluster access">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg text-emerald-400" title={t('nav.permissioned')}>
             <ShieldCheck size={18} />
           </div>
           <a
@@ -328,12 +331,12 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, liveEvents, children
         <aside aria-label={panelTitle || t('nav.section')} className="fixed bottom-0 left-[64px] top-14 z-50 flex w-[260px] flex-col border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 lg:hidden">
           <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 px-4 py-3">
             <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
-              {panelTitle ?? 'Menu'}
+              {panelTitle ?? t('nav.menu')}
             </span>
             <button
               onClick={closeDrawer}
               className="rounded p-1 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800"
-              aria-label="Close"
+              aria-label={t('actions.close')}
             >
               <X size={16} />
             </button>
@@ -346,7 +349,10 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, liveEvents, children
 
       {/* ── Main content ───────────────────────────────────────────── */}
       <main className={`min-h-screen pt-14 pl-[64px] ${panel !== undefined ? 'lg:pl-[304px]' : ''}`}>
-        <div className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8">{children}</div>
+        <div className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8">
+          <ClusterChangedBanner />
+          {children}
+        </div>
       </main>
     </div>
   );

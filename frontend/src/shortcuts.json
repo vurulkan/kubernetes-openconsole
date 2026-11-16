@@ -28,7 +28,8 @@
     {"keys": ["↑", "↓"], "join": "or", "text": {"en": "Saved Views open: move the focus", "tr": "Kayıtlı Görünümler açıkken: odağı taşı"}},
     {"keys": ["↵"], "text": {"en": "Saved Views open: restore the focused view", "tr": "Kayıtlı Görünümler açıkken: odaktaki görünümü aç"}},
     {"keys": ["1…9"], "text": {"en": "Saved Views open: restore the view with that number", "tr": "Kayıtlı Görünümler açıkken: o sıradaki görünümü aç"}},
-    {"keys": ["Esc"], "text": {"en": "Close Saved Views", "tr": "Kayıtlı Görünümler menüsünü kapat"}}
+    {"keys": ["Esc"], "text": {"en": "Close Saved Views", "tr": "Kayıtlı Görünümler menüsünü kapat"}},
+    {"keys": ["Ctrl", "]"], "text": {"en": "Shell: leave the terminal, then Esc closes it (Ctrl+Ü on a Turkish Q keyboard)", "tr": "Shell: terminalden çık, ardından Esc kapatır (Türkçe Q klavyede Ctrl+Ü)"}}
   ]},
   {"id": "cluster", "title": {"en": "Cluster switcher", "tr": "Cluster seçici"}, "rows": [
     {"keys": ["1", "9"], "join": "or", "text": {"en": "Pick by index (1–9)", "tr": "İndeksle seç (1–9)"}},

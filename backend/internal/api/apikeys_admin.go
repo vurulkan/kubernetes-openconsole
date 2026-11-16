@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/csv"
 	"encoding/json"
 	"net/http"
 	"slices"
@@ -13,6 +12,7 @@ import (
 
 	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/problem"
 	"k8s-dashboard/backend/internal/rbac"
 )
 
@@ -80,7 +80,7 @@ func (s *Server) handleAdminListAPIKeys(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		e.Outcome, e.Reason, e.Details = audit.Failed, failReason(err), failDetails(err, nil)
 		s.auditEvent(r, e)
-		writeError(w, http.StatusInternalServerError, "could not list API keys")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "could not list API keys")
 		return
 	}
 	e.Details = audit.D{"count": len(items)}
@@ -97,7 +97,7 @@ func (s *Server) handleExportAPIKeys(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		e.Outcome, e.Reason, e.Details = audit.Failed, failReason(err), failDetails(err, nil)
 		s.auditEvent(r, e)
-		writeError(w, http.StatusInternalServerError, "could not list API keys")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "could not list API keys")
 		return
 	}
 	at := func(t *time.Time) string {
@@ -108,7 +108,7 @@ func (s *Server) handleExportAPIKeys(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", "attachment; filename=api-keys.csv")
-	cw := csv.NewWriter(w)
+	cw := newCSVWriter(w)
 	_ = cw.Write([]string{"owner", "name", "prefix", "status", "outside_expiry_policy", "admin_scope", "scope",
 		"created_at", "last_used_at", "last_used_ip", "expires_at", "revoked_at"})
 	for _, k := range items {
@@ -129,7 +129,7 @@ func (s *Server) handleAdminRevokeAPIKey(w http.ResponseWriter, r *http.Request)
 	}
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+		writeError(w, http.StatusBadRequest, problem.InvalidID)
 		return
 	}
 	var body struct {
@@ -137,18 +137,18 @@ func (s *Server) handleAdminRevokeAPIKey(w http.ResponseWriter, r *http.Request)
 	}
 	if r.ContentLength != 0 {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid body")
+			writeError(w, http.StatusBadRequest, problem.InvalidBody)
 			return
 		}
 	}
 	body.Comment = strings.TrimSpace(body.Comment)
 	if len(body.Comment) > 500 {
-		writeError(w, http.StatusBadRequest, "the comment is too long (at most 500 characters)")
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "the comment is too long (at most 500 characters)")
 		return
 	}
 	k, err := s.store.GetAPIKey(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "API key not found")
+		writeErrorDetail(w, http.StatusNotFound, problem.NotFound, "API key not found")
 		return
 	}
 	owner := "id:" + strconv.Itoa(k.UserID)
@@ -163,13 +163,13 @@ func (s *Server) handleAdminRevokeAPIKey(w http.ResponseWriter, r *http.Request)
 	if keyStatus(*k, time.Now()) != "active" {
 		e.Outcome, e.Reason = audit.Failed, "not_active"
 		s.auditEvent(r, e)
-		writeError(w, http.StatusConflict, "the key is already revoked or expired")
+		writeErrorDetail(w, http.StatusConflict, problem.Conflict, "the key is already revoked or expired")
 		return
 	}
 	if err := s.store.RevokeAPIKey(r.Context(), k.ID); err != nil {
 		e.Outcome, e.Reason, e.Details = audit.Failed, failReason(err), failDetails(err, e.Details)
 		s.auditEvent(r, e)
-		writeError(w, http.StatusInternalServerError, "could not revoke the key")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "could not revoke the key")
 		return
 	}
 	s.auditEvent(r, e)
@@ -185,12 +185,12 @@ func (s *Server) handleRevokeUserAPIKeys(w http.ResponseWriter, r *http.Request)
 	}
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+		writeError(w, http.StatusBadRequest, problem.InvalidID)
 		return
 	}
 	u, err := s.store.GetUserByID(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "user not found")
+		writeErrorDetail(w, http.StatusNotFound, problem.NotFound, "user not found")
 		return
 	}
 	e.Details = audit.D{"owner": u.Username, "all": true, "by_admin": true}
@@ -198,7 +198,7 @@ func (s *Server) handleRevokeUserAPIKeys(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		e.Outcome, e.Reason, e.Details = audit.Failed, failReason(err), failDetails(err, e.Details)
 		s.auditEvent(r, e)
-		writeError(w, http.StatusInternalServerError, "could not revoke the keys")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "could not revoke the keys")
 		return
 	}
 	e.Details["count"] = n
@@ -219,26 +219,26 @@ type previewNamespace struct {
 func (s *Server) handleUserAPIAccess(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+		writeError(w, http.StatusBadRequest, problem.InvalidID)
 		return
 	}
 	u, err := s.store.GetUserByID(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "user not found")
+		writeErrorDetail(w, http.StatusNotFound, problem.NotFound, "user not found")
 		return
 	}
 	e := models.AuditLog{Verb: audit.VerbGet, ResourceType: audit.KindUser, ResourceName: u.Username}
 	if q := r.URL.Query(); q.Has("override") {
 		u.APIAccessOverride = q.Get("override")
 		if u.APIAccessOverride != "" && !rbac.ValidMode(u.APIAccessOverride) {
-			writeError(w, http.StatusBadRequest, errAPIAccess)
+			writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, errAPIAccess)
 			return
 		}
 	}
 	fail := func(err error) {
 		e.Outcome, e.Reason, e.Details = audit.Failed, failReason(err), failDetails(err, nil)
 		s.auditEvent(r, e)
-		writeError(w, http.StatusInternalServerError, "could not compute the API access")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "could not compute the API access")
 	}
 	refused, err := s.keysRefused(r.Context(), u)
 	if err != nil {

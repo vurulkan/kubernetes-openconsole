@@ -57,15 +57,21 @@ export const YamlEditModal: React.FC<Props> = ({ target, onClose, onApplied, the
     setOriginalYaml('');
     setDraftYaml('');
     setLoading(true);
+    // A slow answer for the resource opened before this one must not land here.
+    let live = true;
     target
       .fetchYaml(target.namespace, target.name)
       .then((res) => {
+        if (!live) return;
         setOriginalYaml(res.yaml);
         setDraftYaml(res.yaml);
       })
-      .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load YAML'))
-      .finally(() => setLoading(false));
-  }, [target]);
+      .catch((err) => live && setError((err as Error).message || t('yamlEditor.loadFailed')))
+      .finally(() => live && setLoading(false));
+    return () => {
+      live = false;
+    };
+  }, [target, t]);
 
   const dirty = draftYaml !== originalYaml;
 
@@ -85,11 +91,11 @@ export const YamlEditModal: React.FC<Props> = ({ target, onClose, onApplied, the
       setOriginalYaml(yaml);
       setDraftYaml(yaml);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Reload failed');
+      setError((err as Error).message || t('yamlEditor.loadFailed'));
     } finally {
       setLoading(false);
     }
-  }, [target]);
+  }, [target, t]);
 
   const handleDryRun = useCallback(async () => {
     if (!target) return;
@@ -102,11 +108,11 @@ export const YamlEditModal: React.FC<Props> = ({ target, onClose, onApplied, the
       setNotice(t('yamlEditor.dryRunOk'));
     } catch (err) {
       setDryRunPreview(null);
-      setError(err instanceof Error ? err.message : 'Dry-run failed');
+      setError((err as Error).message || t('yamlEditor.applyFailed'));
     } finally {
       setApplying(false);
     }
-  }, [target, draftYaml]);
+  }, [target, draftYaml, t]);
 
   const handleApply = useCallback(async () => {
     if (!target) return;
@@ -132,11 +138,11 @@ export const YamlEditModal: React.FC<Props> = ({ target, onClose, onApplied, the
       setNotice(t('yamlEditor.applied'));
       if (onApplied) onApplied();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Apply failed');
+      setError((err as Error).message || t('yamlEditor.applyFailed'));
     } finally {
       setApplying(false);
     }
-  }, [target, draftYaml, dryRunPreview, onApplied]);
+  }, [target, draftYaml, dryRunPreview, onApplied, t]);
 
   const monacoTheme = theme === 'dark' ? 'vs-dark' : 'vs';
 

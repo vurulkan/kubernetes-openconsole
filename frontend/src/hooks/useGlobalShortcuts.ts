@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { isTypingTarget } from './useScopedShortcuts';
 
 type Options = {
   isAdmin: boolean;
@@ -33,13 +34,6 @@ export const EVENTS_PANEL_EVENT_NAME = EVENTS_PANEL_EVENT;
 export const CLUSTER_SWITCHER_EVENT_NAME = CLUSTER_SWITCHER_EVENT;
 export const SAVED_VIEWS_EVENT_NAME = SAVED_VIEWS_EVENT;
 
-const isTypingTarget = (el: EventTarget | null): boolean => {
-  if (!el || !(el instanceof HTMLElement)) return false;
-  const tag = el.tagName;
-  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
-  if (el.isContentEditable) return true;
-  return false;
-};
 
 const CHORD_TIMEOUT_MS = 900;
 

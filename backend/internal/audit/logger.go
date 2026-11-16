@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -12,8 +13,37 @@ import (
 )
 
 type Logger struct {
+	metricHook    func()
+	failureHook   func()
 	store         *store.Store
 	consoleMirror atomic.Bool
+	pending       sync.WaitGroup
+}
+
+// Go runs f (which records an event) in the background; Wait waits for it.
+func (l *Logger) Go(f func()) {
+	l.pending.Add(1)
+	go func() {
+		defer l.pending.Done()
+		f()
+	}()
+}
+
+// RecordAsync records e in the background (see Go).
+func (l *Logger) RecordAsync(e models.AuditLog) {
+	l.Go(func() { l.Record(context.Background(), e) })
+}
+
+// Wait blocks until every event started with Go is written, or ctx ends.
+// Called on shutdown, before the database is closed.
+func (l *Logger) Wait(ctx context.Context) {
+	done := make(chan struct{})
+	go func() { l.pending.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		slog.Warn("audit: shutdown before every event was written")
+	}
 }
 
 func New(store *store.Store) *Logger {
@@ -41,8 +71,14 @@ func (l *Logger) Record(ctx context.Context, entry models.AuditLog) {
 	if entry.Cluster != "" && entry.ClusterID == 0 {
 		entry.ClusterID = l.store.ClusterIDByName(ctx, entry.Cluster)
 	}
-	_ = l.store.AddAuditLog(ctx, entry)
-	if hook := auditMetricHook; hook != nil {
+	if err := l.store.AddAuditLog(ctx, entry); err != nil {
+		// The console line below still carries the event, when mirroring is on.
+		slog.Error("audit write failed", slog.String("event", entry.Action), slog.String("user", entry.User),
+			slog.String("request_id", entry.RequestID), slog.Any("error", err))
+		if hook := l.failureHook; hook != nil {
+			hook()
+		}
+	} else if hook := l.metricHook; hook != nil {
 		hook()
 	}
 
@@ -89,21 +125,38 @@ func consoleAttrs(e models.AuditLog) []slog.Attr {
 	return attrs
 }
 
-// auditMetricHook, if set, is invoked on every Record() so an outer package
-// can increment a counter without the audit package depending on it.
-var auditMetricHook func()
+// SetMetricHook installs a callback run on every stored event, so an outer
+// package can count them without the audit package depending on it. Call it
+// before recording.
+func (l *Logger) SetMetricHook(h func()) { l.metricHook = h }
 
-// SetMetricHook installs the counter callback.
-func SetMetricHook(h func()) { auditMetricHook = h }
+// SetFailureHook installs a callback run when an event could not be stored.
+func (l *Logger) SetFailureHook(h func()) { l.failureHook = h }
 
-// StartRetention purges audit entries older than retentionDays, and
-// successful API key reads older than keyReadDays (they are by far the
-// largest share: an agent reads a lot).
+// StartRetention purges audit entries older than retentionDays (0 = keep
+// everything), and successful API key reads older than keyReadDays (they are
+// by far the largest share: an agent reads a lot). It purges once right away,
+// so a pod that restarts more often than interval still purges, then every
+// interval.
 func (l *Logger) StartRetention(ctx context.Context, retentionDays, keyReadDays int, interval time.Duration) {
-	if retentionDays <= 0 {
+	if retentionDays <= 0 && keyReadDays <= 0 {
 		return
 	}
+	purge := func() {
+		now := time.Now().UTC()
+		if retentionDays > 0 {
+			if err := l.store.PurgeAuditLogs(ctx, now.Add(-time.Duration(retentionDays)*24*time.Hour)); err != nil {
+				slog.Warn("audit purge failed", slog.Any("error", err))
+			}
+		}
+		if keyReadDays > 0 {
+			if err := l.store.PurgeAPIKeyReads(ctx, now.Add(-time.Duration(keyReadDays)*24*time.Hour)); err != nil {
+				slog.Warn("audit purge (API key reads) failed", slog.Any("error", err))
+			}
+		}
+	}
 	go func() {
+		purge()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
@@ -111,11 +164,7 @@ func (l *Logger) StartRetention(ctx context.Context, retentionDays, keyReadDays 
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				cutoff := time.Now().UTC().Add(-time.Duration(retentionDays) * 24 * time.Hour)
-				_ = l.store.PurgeAuditLogs(context.Background(), cutoff)
-				if keyReadDays > 0 {
-					_ = l.store.PurgeAPIKeyReads(context.Background(), time.Now().UTC().Add(-time.Duration(keyReadDays)*24*time.Hour))
-				}
+				purge()
 			}
 		}
 	}()

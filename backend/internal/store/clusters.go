@@ -14,10 +14,10 @@ import (
 // drives kube.Manager at any given time. Secrets are stored encrypted with
 // the shared store key, same scheme as the legacy kube_credentials row.
 type Cluster struct {
-	ID          int                   `json:"id"`
-	Name        string                `json:"name"`
-	Description string                `json:"description"`
-	IsActive    bool                  `json:"isActive"`
+	ID          int                    `json:"id"`
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	IsActive    bool                   `json:"isActive"`
 	Credentials models.KubeCredentials `json:"-"`
 	// Server is surfaced so the UI can show "where does this point" without
 	// handing out the entire kubeconfig.
@@ -61,15 +61,15 @@ func (s *Store) GetCluster(ctx context.Context, id int) (*Cluster, error) {
 		return nil, err
 	}
 	c.IsActive = active == 1
-	kube, err := decrypt(s.key, encKube)
+	kube, err := s.decrypt(encKube)
 	if err != nil {
 		return nil, err
 	}
-	tok, err := decrypt(s.key, encToken)
+	tok, err := s.decrypt(encToken)
 	if err != nil {
 		return nil, err
 	}
-	ca, err := decrypt(s.key, encCA)
+	ca, err := s.decrypt(encCA)
 	if err != nil {
 		return nil, err
 	}
@@ -97,15 +97,15 @@ func (s *Store) CreateCluster(ctx context.Context, name, description string, cre
 	if name == "" {
 		return 0, fmt.Errorf("cluster name is required")
 	}
-	encKube, err := encrypt(s.key, string(creds.Kubeconfig))
+	encKube, err := s.encrypt(string(creds.Kubeconfig))
 	if err != nil {
 		return 0, err
 	}
-	encToken, err := encrypt(s.key, string(creds.Token))
+	encToken, err := s.encrypt(string(creds.Token))
 	if err != nil {
 		return 0, err
 	}
-	encCA, err := encrypt(s.key, string(creds.CACert))
+	encCA, err := s.encrypt(string(creds.CACert))
 	if err != nil {
 		return 0, err
 	}
@@ -123,15 +123,15 @@ func (s *Store) CreateCluster(ctx context.Context, name, description string, cre
 
 func (s *Store) UpdateCluster(ctx context.Context, id int, name, description string, creds models.KubeCredentials, replaceSecrets bool) error {
 	if replaceSecrets {
-		encKube, err := encrypt(s.key, string(creds.Kubeconfig))
+		encKube, err := s.encrypt(string(creds.Kubeconfig))
 		if err != nil {
 			return err
 		}
-		encToken, err := encrypt(s.key, string(creds.Token))
+		encToken, err := s.encrypt(string(creds.Token))
 		if err != nil {
 			return err
 		}
-		encCA, err := encrypt(s.key, string(creds.CACert))
+		encCA, err := s.encrypt(string(creds.CACert))
 		if err != nil {
 			return err
 		}
@@ -225,7 +225,7 @@ func (s *Store) GetPrometheus(ctx context.Context, clusterID int) (models.Promet
 	if enc == "" {
 		return cfg, nil
 	}
-	raw, err := decrypt(s.key, enc)
+	raw, err := s.decrypt(enc)
 	if err != nil {
 		return cfg, err
 	}
@@ -238,7 +238,7 @@ func (s *Store) SetPrometheus(ctx context.Context, clusterID int, cfg models.Pro
 	if err != nil {
 		return err
 	}
-	enc, err := encrypt(s.key, string(raw))
+	enc, err := s.encrypt(string(raw))
 	if err != nil {
 		return err
 	}

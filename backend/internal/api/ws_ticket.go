@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"k8s-dashboard/backend/internal/auth"
+	"k8s-dashboard/backend/internal/problem"
 )
 
 // handleWSTicket trades the caller's bearer token for a single-use ticket the
@@ -13,16 +14,25 @@ import (
 // permissions and audits; the ticket only proves who is calling.
 func (s *Server) handleWSTicket(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.FromContext(r.Context())
-	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+	user, active := s.userForRequest(r)
+	if !ok || !active {
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
+		return
+	}
+	if user.MustChangePassword && !user.IsAdmin {
+		writeError(w, http.StatusForbidden, reasonForbidden)
 		return
 	}
 	var body struct {
 		Path string `json:"path"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || !strings.HasPrefix(body.Path, "/ws/") {
-		writeError(w, http.StatusBadRequest, "path must be a /ws/ endpoint")
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "path must be a /ws/ endpoint")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"ticket": auth.IssueTicket(claims, body.Path)})
+	// The socket works on the cluster this request named (the tab's cluster),
+	// since a browser cannot set headers on a WebSocket.
+	withCluster := *claims
+	withCluster.Cluster = strings.TrimSpace(r.Header.Get(clusterHeader))
+	writeJSON(w, http.StatusOK, map[string]string{"ticket": auth.IssueTicket(&withCluster, body.Path)})
 }

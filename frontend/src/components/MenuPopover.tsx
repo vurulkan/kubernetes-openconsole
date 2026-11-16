@@ -36,15 +36,18 @@ export const MenuPopover: React.FC<{
     };
   }, [anchor]);
 
+  // Read through a ref: a new onClose from the parent doesn't re-run the effect.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     pushModalScope();
     menuRef.current?.querySelector<HTMLButtonElement>('button:not([disabled])')?.focus();
     const close = () => {
-      onClose();
+      onCloseRef.current();
       anchor.focus();
     };
     const onDown = (e: MouseEvent) => {
-      if (!menuRef.current?.contains(e.target as Node) && !anchor.contains(e.target as Node)) onClose();
+      if (!menuRef.current?.contains(e.target as Node) && !anchor.contains(e.target as Node)) onCloseRef.current();
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' && e.key !== 'Tab') return;
@@ -59,7 +62,6 @@ export const MenuPopover: React.FC<{
       document.removeEventListener('mousedown', onDown);
       document.removeEventListener('keydown', onKey, true);
     };
-    // onClose is stable for the menu's short life
   }, [anchor]);
 
   return createPortal(

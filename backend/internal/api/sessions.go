@@ -8,6 +8,7 @@ import (
 
 	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/problem"
 )
 
 // Admin-only endpoints for session management. Non-admin users don't currently
@@ -26,7 +27,7 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := s.store.ListSessions(r.Context(), userID, activeOnly)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list sessions")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to list sessions")
 		return
 	}
 	if rows == nil {
@@ -38,7 +39,7 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+		writeError(w, http.StatusBadRequest, problem.InvalidID)
 		return
 	}
 	// Fetch the row first so we can drop the throttle entry (keyed by jti) and
@@ -55,7 +56,7 @@ func (s *Server) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := s.store.RevokeSession(r.Context(), id); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to revoke")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to revoke")
 		return
 	}
 	if targetJTI != "" {
@@ -73,11 +74,11 @@ func (s *Server) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRevokeAllForUser(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+		writeError(w, http.StatusBadRequest, problem.InvalidID)
 		return
 	}
 	if err := s.store.RevokeAllForUser(r.Context(), id); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to revoke")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to revoke")
 		return
 	}
 	target := "id:" + strconv.Itoa(id)

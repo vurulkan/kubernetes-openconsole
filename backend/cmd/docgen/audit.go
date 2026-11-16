@@ -248,7 +248,9 @@ func (s *scanner) event(in *fn, lit *ast.CompositeLit) {
 	later, varName := s.laterAssignments(in, lit)
 
 	var kinds, verbs []string
+	paired := false // verbs[i] goes with kinds[i] only
 	if a, ok := fields["Action"]; ok {
+		paired = true
 		for _, v := range s.values(in, a, where+" Action", 0) {
 			i := strings.LastIndex(v, ".")
 			if i < 0 {
@@ -257,6 +259,10 @@ func (s *scanner) event(in *fn, lit *ast.CompositeLit) {
 			}
 			kinds, verbs = append(kinds, v[:i]), append(verbs, v[i+1:])
 		}
+	} else if v, k, ok := s.paramPairs(in, fields, later, where); ok {
+		// Verb and type are both parameters (adminWrite(verb, kind, …)): pair
+		// them per call site, not every verb with every type.
+		verbs, kinds, paired = v, k, true
 	} else {
 		verbs = s.field(in, fields, later, "Verb", where, nil)
 		kinds = s.field(in, fields, later, "ResourceType", where, nil)
@@ -277,7 +283,7 @@ func (s *scanner) event(in *fn, lit *ast.CompositeLit) {
 	}
 	for i := range verbs {
 		for j := range kinds {
-			if fields["Action"] != nil && i != j {
+			if paired && i != j {
 				continue
 			}
 			action := kinds[j] + "." + verbs[i]
@@ -289,6 +295,40 @@ func (s *scanner) event(in *fn, lit *ast.CompositeLit) {
 			}
 		}
 	}
+}
+
+// paramPairs returns (verb, type) pairs when the literal's Verb and
+// ResourceType are both parameters of in, one pair per call site.
+func (s *scanner) paramPairs(in *fn, fields map[string]ast.Expr, later map[string][]ast.Expr, where string) ([]string, []string, bool) {
+	index := func(name string) int {
+		id, ok := fields[name].(*ast.Ident)
+		if !ok || len(later[name]) > 0 {
+			return -1
+		}
+		for i, p := range in.params {
+			if p == id.Name {
+				return i
+			}
+		}
+		return -1
+	}
+	iv, ik := index("Verb"), index("ResourceType")
+	sites := s.calls[in.decl.Name.Name]
+	if iv < 0 || ik < 0 || len(sites) == 0 {
+		return nil, nil, false
+	}
+	var verbs, kinds []string
+	for _, c := range sites {
+		if iv >= len(c.args) || ik >= len(c.args) {
+			continue
+		}
+		for _, v := range s.values(c.caller, c.args[iv], where+" Verb", 1) {
+			for _, k := range s.values(c.caller, c.args[ik], where+" ResourceType", 1) {
+				verbs, kinds = append(verbs, v), append(kinds, k)
+			}
+		}
+	}
+	return verbs, kinds, true
 }
 
 // field returns the values of a literal field, plus later assignments; def

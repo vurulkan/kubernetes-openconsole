@@ -1,0 +1,13 @@
+# Keep the build context small and free of local state: a macOS
+# node_modules, a dev database (credentials + encryption key) or the git
+# history must never end up in the image or the build cache.
+.git
+.github
+.claude
+**/node_modules
+frontend/dist
+backend/data
+**/*.db
+**/*.db-*
+docs
+hack

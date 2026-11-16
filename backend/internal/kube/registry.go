@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -19,6 +20,7 @@ type Registry struct {
 	mu            sync.Mutex
 	managers      map[int]*Manager
 	onTermination func(clusterID int, t models.ContainerTermination)
+	warned        map[int]bool // clusters whose unsupported kubeconfig was logged
 }
 
 // OnTermination installs the receiver of container exits from every
@@ -59,6 +61,14 @@ func (r *Registry) Get(ctx context.Context, clusterID int) (*Manager, error) {
 		m.onTermination = func(t models.ContainerTermination) { r.onTermination(clusterID, t) }
 	}
 	if err := m.ApplyCredentials(creds); err != nil {
+		if errors.Is(err, ErrKubeconfigUnsupported) && !r.warned[clusterID] {
+			if r.warned == nil {
+				r.warned = map[int]bool{}
+			}
+			r.warned[clusterID] = true
+			slog.Warn("cluster not connected: its kubeconfig runs a program or reads a file; replace it with inline credentials",
+				slog.Int("cluster_id", clusterID), slog.String("error", err.Error()))
+		}
 		return nil, fmt.Errorf("connect cluster %d: %w", clusterID, err)
 	}
 	if err := m.Start(ctx); err != nil {
@@ -92,13 +102,13 @@ func (r *Registry) Invalidate(clusterID int) {
 	}
 }
 
-// Ready reports whether the cluster's Manager exists and is connected,
-// without connecting it.
+// Ready reports whether the cluster's Manager exists and is connected (see
+// Manager.Connected), without connecting it.
 func (r *Registry) Ready(clusterID int) bool {
 	r.mu.Lock()
 	m, ok := r.managers[clusterID]
 	r.mu.Unlock()
-	return ok && m.Ready()
+	return ok && m.Connected()
 }
 
 // Connected returns the ids of clusters with a live Manager.

@@ -35,6 +35,8 @@ type Client struct {
 	cfg  models.PrometheusConfig
 	kube kubernetes.Interface
 	http *http.Client
+	// AzureAuthority is the Entra ID host for Azure AD tokens; empty = the public cloud.
+	AzureAuthority string
 
 	tokenMu  sync.Mutex
 	token    string
@@ -174,7 +176,11 @@ func (c *Client) azureToken(ctx context.Context) (string, error) {
 		"client_secret": {c.cfg.AzureClientSecret},
 		"scope":         {"https://prometheus.monitor.azure.com/.default"},
 	}
-	endpoint := strings.TrimRight(auth.AzureAuthority, "/") + "/" + url.PathEscape(c.cfg.AzureTenantID) + "/oauth2/v2.0/token"
+	authority := c.AzureAuthority
+	if authority == "" {
+		authority = auth.DefaultAzureAuthority
+	}
+	endpoint := strings.TrimRight(authority, "/") + "/" + url.PathEscape(c.cfg.AzureTenantID) + "/oauth2/v2.0/token"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", err

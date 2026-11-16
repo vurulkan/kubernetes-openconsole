@@ -16,6 +16,7 @@ import (
 	"k8s-dashboard/backend/internal/kube"
 	logpkg "k8s-dashboard/backend/internal/logging"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/problem"
 )
 
 // Every user works on the cluster they picked in the header switcher
@@ -62,12 +63,26 @@ func (s *Server) clusterMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		ci := s.resolveCluster(r.Context(), user)
-		if claims.APIKey != nil && r.Header.Get(clusterHeader) != "" {
+		// The cluster named on the request (a browser tab's, an agent's call,
+		// or the one a WebSocket ticket carries) wins over the stored pick.
+		value := strings.TrimSpace(r.Header.Get(clusterHeader))
+		if value == "" {
+			value = claims.Cluster
+		}
+		if value != "" {
 			var status int
-			if ci, status = s.headerCluster(r, user, claims.APIKey); status != 0 {
-				writeError(w, status, "cluster "+strconv.Quote(r.Header.Get(clusterHeader))+" is unknown or not reachable with this key")
+			if ci, status = s.headerCluster(r, user, claims.APIKey, value); status != 0 {
+				code := problem.Forbidden
+				if status == http.StatusBadRequest {
+					code = problem.InvalidInput
+				}
+				writeErrorDetail(w, status, code, "cluster "+strconv.Quote(value)+" is unknown or not yours to use")
 				return
 			}
+		}
+		if ci.ID > 0 {
+			// The browser keeps this as its tab's cluster and sends it back.
+			w.Header().Set(clusterHeader, strconv.Itoa(ci.ID))
 		}
 		metricsRecordClusterRequest(ci.Name)
 		trace.SpanFromContext(r.Context()).SetAttributes(
@@ -120,11 +135,11 @@ func (s *Server) canUseCluster(ctx context.Context, user *models.User, clusterID
 	return err == nil && engine.CoversCluster(clusterID)
 }
 
-// headerCluster resolves X-OpenConsole-Cluster (name or id) on an API key
-// request: an agent picks the cluster per call and never changes the user's
-// web selection. Unknown → 400; one the key or its owner cannot use → 403.
-func (s *Server) headerCluster(r *http.Request, user *models.User, key *models.APIKey) (clusterInfo, int) {
-	value := strings.TrimSpace(r.Header.Get(clusterHeader))
+// headerCluster resolves X-OpenConsole-Cluster (name or id): an agent picks
+// the cluster per call, a browser tab sends the cluster it shows, so another
+// tab switching clusters never redirects this tab's actions; neither changes
+// the stored selection. Unknown → 400; one the key or its owner cannot use → 403.
+func (s *Server) headerCluster(r *http.Request, user *models.User, key *models.APIKey, value string) (clusterInfo, int) {
 	id, err := strconv.Atoi(value)
 	if err != nil {
 		id = s.store.ClusterIDByName(r.Context(), value)
@@ -134,8 +149,12 @@ func (s *Server) headerCluster(r *http.Request, user *models.User, key *models.A
 		return clusterInfo{}, http.StatusBadRequest
 	}
 	if !s.canUseCluster(r.Context(), user, id) {
-		s.auditEvent(r, models.AuditLog{Verb: audit.VerbUse, Outcome: audit.Denied, Reason: reasonForbidden,
-			ResourceType: audit.KindAPIKey, ResourceName: key.Name, Cluster: name, ClusterID: id})
+		e := models.AuditLog{Verb: audit.VerbUse, Outcome: audit.Denied, Reason: reasonForbidden,
+			ResourceType: audit.KindCluster, ResourceName: name, Cluster: name, ClusterID: id}
+		if key != nil {
+			e.ResourceType, e.ResourceName = audit.KindAPIKey, key.Name
+		}
+		s.auditEvent(r, e)
 		return clusterInfo{}, http.StatusForbidden
 	}
 	return clusterInfo{ID: id, Name: name}, 0
@@ -146,7 +165,7 @@ func (s *Server) headerCluster(r *http.Request, user *models.User, key *models.A
 func (s *Server) handleSelectCluster(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.userForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return
 	}
 	// An agent's pick must not change the user's web screen; keys send X-OpenConsole-Cluster instead.
@@ -157,31 +176,36 @@ func (s *Server) handleSelectCluster(w http.ResponseWriter, r *http.Request) {
 		ClusterID int `json:"clusterId"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ClusterID < 0 {
-		writeError(w, http.StatusBadRequest, "clusterId is required")
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "clusterId is required")
 		return
 	}
 	name := "default"
 	if body.ClusterID > 0 {
 		n, err := s.store.GetClusterName(r.Context(), body.ClusterID)
 		if err != nil {
-			writeError(w, http.StatusNotFound, "cluster not found")
+			writeErrorDetail(w, http.StatusNotFound, problem.NotFound, "cluster not found")
 			return
 		}
 		if !s.canUseCluster(r.Context(), user, body.ClusterID) {
 			s.recordClusterSelectAudit(r, n, body.ClusterID, audit.Denied, reasonForbidden)
-			writeError(w, http.StatusForbidden, "you have no permissions on this cluster")
+			writeErrorDetail(w, http.StatusForbidden, problem.Forbidden, "you have no permissions on this cluster")
 			return
 		}
-		// Connect now so a broken cluster fails here, not on the next page.
-		if _, err := s.clusters.Get(r.Context(), body.ClusterID); err != nil {
+		// Connect and ask the cluster once, so a broken cluster (unreachable,
+		// token refused) fails here, not on the next page.
+		m, err := s.clusters.Get(r.Context(), body.ClusterID)
+		if err == nil {
+			err = m.Check(r.Context())
+		}
+		if err != nil {
 			s.recordClusterSelectAudit(r, n, body.ClusterID, audit.Failed, "unreachable")
-			writeError(w, http.StatusBadGateway, "cannot connect to cluster: "+err.Error())
+			writeErrorDetail(w, http.StatusBadGateway, problem.ClusterUnreachable, "cannot connect to cluster: "+err.Error())
 			return
 		}
 		name = n
 	}
 	if err := s.store.SetUserActiveCluster(r.Context(), user.ID, body.ClusterID); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to save selection")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to save selection")
 		return
 	}
 	s.recordClusterSelectAudit(r, name, body.ClusterID, audit.Success, "")
@@ -209,12 +233,6 @@ func (s *Server) recordClusterSelectAudit(r *http.Request, cluster string, id in
 // DefaultClusterID is the cluster users get until they pick one (0 = none).
 func (s *Server) DefaultClusterID() int {
 	return int(s.defaultClusterID.Load())
-}
-
-// requestIDOf returns the request's correlation id (set by
-// requestIDMiddleware).
-func requestIDOf(r *http.Request) string {
-	return logpkg.RequestIDFrom(r.Context())
 }
 
 // clusterStatus maps every configured cluster's name to whether a live

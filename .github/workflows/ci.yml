@@ -9,9 +9,11 @@ on:
   pull_request:
     branches: [main]
 
+# Least privilege: every job reads the repo only; publish asks for its own
+# extra permissions below. Third-party actions are pinned by commit SHA (the
+# comment names the release); bump SHA and comment together.
 permissions:
   contents: read
-  packages: write
 
 jobs:
   frontend:
@@ -21,15 +23,23 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version: "20"
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+      # Scans only warn (the build goes on); an agent that sees the warning
+      # tells the maintainer and asks before fixing (CLAUDE.md).
+      - name: npm audit (runtime dependencies, warning only)
+        run: npm audit --omit=dev --audit-level=high || echo "::warning title=npm audit::high or critical advisories in runtime dependencies, see the step log"
       # vite build does not type-check; this does.
       - run: npx tsc --noEmit -p .
+      # React hooks rules (eslint.config.js).
+      - run: npm run lint
       # Unit + component tests, i18n parity, axe accessibility checks.
       - run: npm test
       - run: npm run build
@@ -41,15 +51,23 @@ jobs:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          go-version: "1.21"
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # go.mod's toolchain line (the same Go as the Dockerfile).
+          go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
       - run: go mod download
       - run: go vet ./...
       - run: go build ./...
       - run: go test -race ./...
+      # Unused code, deprecated calls, common bugs (fails the build).
+      - run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
+      - name: govulncheck (warning only)
+        run: |
+          go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./... || echo "::warning title=govulncheck::reachable vulnerabilities, see the step log"
       # The docs site's reference pages are generated from the code: a change
       # to env vars, permissions, audit actions, metrics, ClusterRole rules or
       # shortcuts must come with `go run ./cmd/docgen` (backend/cmd/docgen).
@@ -64,12 +82,13 @@ jobs:
     runs-on: ubuntu-latest
     needs: [frontend, backend]
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       # Both architectures, so an arm64 break shows up on the PR, not at release.
       - name: Build image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -77,6 +96,26 @@ jobs:
           tags: kubernetes-openconsole:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # The amd64 image again (from the cache) into the local daemon, for Trivy.
+      - name: Load amd64 image for scanning
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: kubernetes-openconsole:scan
+          cache-from: type=gha
+      - name: Trivy image scan (warning only)
+        id: trivy
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: kubernetes-openconsole:scan
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - if: steps.trivy.outcome == 'failure'
+        run: echo "::warning title=Trivy::HIGH / CRITICAL findings with a fix in the image, see the Trivy step log"
 
   publish:
     name: Publish image to GHCR
@@ -97,11 +136,12 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v4
-      # Only the runtime stage (apk add) runs under emulation for arm64; the
-      # Go and npm stages cross-compile on the runner.
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # No emulation needed: the Go and npm stages cross-compile on the
+      # runner and the distroless runtime stage only copies files.
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Compute image tags
         id: tags
         run: |
@@ -115,14 +155,14 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           printf 'tags<<EOF\n%s:%s\n%s:%s\nEOF\n' "$IMG" "$VERSION" "$IMG" "$MOVING" >> "$GITHUB_OUTPUT"
       - name: Login to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push
         id: push
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -134,21 +174,23 @@ jobs:
           provenance: false
           cache-from: type=gha
       - name: Generate SBOM (SPDX)
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           image: ${{ steps.tags.outputs.image }}@${{ steps.push.outputs.digest }}
           format: spdx-json
           output-file: sbom.spdx.json
           upload-artifact: false
           upload-release-assets: false
+      # actions/attest: without sbom-path it attests SLSA build provenance,
+      # with it the SBOM (replaces attest-build-provenance / attest-sbom).
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: ${{ steps.tags.outputs.image }}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: false
       - name: Attest SBOM
-        uses: actions/attest-sbom@v1
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: ${{ steps.tags.outputs.image }}
           subject-digest: ${{ steps.push.outputs.digest }}

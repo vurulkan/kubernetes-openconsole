@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"golang.org/x/time/rate"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -47,6 +46,8 @@ type testEnv struct {
 	http    *httptest.Server
 	alpha   *kube.Manager // the default cluster's connection
 	alphaID int
+	db      *db.DB
+	tmp     string
 }
 
 const secretValue = "s3cr3t-db-password"
@@ -128,7 +129,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	srv := NewServer(st, auditLogger, clusters, rec, filepath.Join(tmp, "public"), tmp, "UTC")
 	hs := httptest.NewServer(srv.Router())
 	t.Cleanup(hs.Close)
-	return &testEnv{t: t, client: client, store: st, server: srv, http: hs, alpha: alphaMgr, alphaID: alpha}
+	return &testEnv{t: t, client: client, store: st, server: srv, http: hs, alpha: alphaMgr, alphaID: alpha, db: database, tmp: tmp}
 }
 
 // user creates an account and returns a bearer token for it.
@@ -672,16 +673,13 @@ func closeAfterPendingWrites(db *sql.DB) {
 	}
 }
 
-// resetGlobalLimiters clears the process-wide login lockout and write-action
-// rate limits. Every test env starts a fresh DB whose user ids repeat (1, 2…),
-// so state left by an earlier test — or an earlier -count iteration — would
-// otherwise lock out or rate-limit unrelated tests.
+// resetGlobalLimiters clears the process-wide login lockout. Every test env
+// starts a fresh DB whose user ids repeat (1, 2…), so state left by an earlier
+// test — or an earlier -count iteration — would otherwise lock out unrelated
+// tests. (Write-action limits live on the Server.)
 func resetGlobalLimiters() {
-	deployActionsLimitersMu.Lock()
-	deployActionsLimiters = map[int]*rate.Limiter{}
-	deployActionsLimitersMu.Unlock()
 	g := LoginGate()
 	g.mu.Lock()
-	g.byIPUser = map[string]*loginAttempt{}
+	g.attempts = map[string]*loginAttempt{}
 	g.mu.Unlock()
 }

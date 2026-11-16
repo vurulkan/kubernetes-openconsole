@@ -1,7 +1,9 @@
 import React, { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { modalScopeDepth, popModalScope, pushModalScope } from '../hooks/useScopedShortcuts';
+import { useDialogFocus } from '../hooks/useDialogFocus';
 
 type DrawerProps = {
   open: boolean;
@@ -40,6 +42,9 @@ export const Drawer: React.FC<DrawerProps> = ({
   footer,
   width = 'md',
 }) => {
+  const { t } = useTranslation();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialogFocus(dialogRef, open);
   // Kept in a ref so a new onClose identity doesn't re-register the scope (and its depth) on every render.
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -65,7 +70,7 @@ export const Drawer: React.FC<DrawerProps> = ({
   if (!open) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-[70]" role="dialog" aria-modal="true" aria-label={title}>
+    <div ref={dialogRef} tabIndex={-1} className="fixed inset-0 z-[70]" role="dialog" aria-modal="true" aria-label={title}>
       <div
         className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm animate-fade-in"
         onClick={onClose}
@@ -87,8 +92,9 @@ export const Drawer: React.FC<DrawerProps> = ({
           <button
             type="button"
             onClick={onClose}
+            data-dialog-close
             className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/60 dark:hover:bg-slate-800 dark:hover:text-slate-100"
-            aria-label="Close"
+            aria-label={t('actions.close')}
           >
             <X size={18} />
           </button>

@@ -18,7 +18,8 @@ import { UsageBar, UsageHistoryPanel } from '../../components/Usage';
 import { ownerUsage, podResources, scaleResources } from '../../utils/resources';
 import { ageShort } from '../../utils/age';
 import { podOwner, podStatus } from '../../utils/podStatus';
-import { Conditions, Empty, Events, Fields, Section, type Item } from './DetailParts';
+import type { PodObject, WorkloadObject } from '../../utils/kubeTypes';
+import { Conditions, Empty, Events, Fields, Section } from './DetailParts';
 import { RestartHistory } from './RestartHistory';
 
 /** Owner kind of each drawer kind, as podOwner() writes it. */
@@ -30,13 +31,14 @@ export const KIND: Record<WorkloadKind, string> = {
 
 type Props = {
   kind: WorkloadKind;
-  workload: Item | null;
+  workload: WorkloadObject | null;
   namespace: string;
   canRestart: boolean;
   canScale: boolean;
   onClose: () => void;
-  onOpenPod: (pod: Item) => void;
-  onLogs: (name: string) => void;
+  onOpenPod: (pod: PodObject) => void;
+  /** Undefined without pods:logs: no Logs button. */
+  onLogs?: (name: string) => void;
   onYaml: (name: string) => void;
   onRestart: (name: string) => void;
   onScale: (name: string, current: number) => void;
@@ -44,7 +46,7 @@ type Props = {
 };
 
 /** Desired / updated / ready / available, which the three kinds name differently. */
-function rollout(kind: WorkloadKind, w: Item) {
+function rollout(kind: WorkloadKind, w: WorkloadObject) {
   const spec = w.spec ?? {};
   const st = w.status ?? {};
   if (kind === 'daemonsets') {
@@ -70,7 +72,7 @@ function rollout(kind: WorkloadKind, w: Item) {
     return {
       ...base,
       strategy: `${spec.updateStrategy?.type ?? 'RollingUpdate'}${partition ? ` (partition ${partition})` : ''}`,
-      revision: st.updateRevision as string | undefined,
+      revision: st.updateRevision,
     };
   }
   return {
@@ -78,7 +80,7 @@ function rollout(kind: WorkloadKind, w: Item) {
     strategy: spec.strategy?.type === 'RollingUpdate'
       ? `RollingUpdate (maxSurge ${spec.strategy.rollingUpdate?.maxSurge ?? '25%'}, maxUnavailable ${spec.strategy.rollingUpdate?.maxUnavailable ?? '25%'})`
       : spec.strategy?.type,
-    revision: w.metadata?.annotations?.['deployment.kubernetes.io/revision'] as string | undefined,
+    revision: w.metadata?.annotations?.['deployment.kubernetes.io/revision'],
   };
 }
 
@@ -98,10 +100,10 @@ export const WorkloadDrawer: React.FC<Props> = ({
   metrics,
 }) => {
   const { t } = useTranslation();
-  const name: string = workload?.metadata?.name ?? '';
+  const name = workload?.metadata?.name ?? '';
   const owner = `${KIND[kind]}/${name}`;
   const version = workload?.metadata?.resourceVersion;
-  const [pods, setPods] = useState<Item[] | null>(null);
+  const [pods, setPods] = useState<PodObject[] | null>(null);
   const [revisions, setRevisions] = useState<ReplicaSetRevision[] | null>(null);
   const [revisionsError, setRevisionsError] = useState<string | null>(null);
 
@@ -124,13 +126,13 @@ export const WorkloadDrawer: React.FC<Props> = ({
     return () => {
       live = false;
     };
-  }, [namespace, name, kind, workload]);
+  }, [namespace, name, kind, owner, workload]);
 
   if (!workload) return null;
   const spec = workload.spec ?? {};
   const st = workload.status ?? {};
   const r = rollout(kind, workload);
-  const stalled = (st.conditions ?? []).some((c: Item) => c.type === 'Progressing' && c.reason === 'ProgressDeadlineExceeded');
+  const stalled = (st.conditions ?? []).some((c) => c.type === 'Progressing' && c.reason === 'ProgressDeadlineExceeded');
   const failing = (pods ?? []).filter((p) => podStatus(p).tone === 'error').length;
   const used = metrics?.available ? ownerUsage(metrics.items, owner) : undefined;
   const budget = scaleResources(podResources(spec.template?.spec?.containers), used?.pods ?? 0);
@@ -162,7 +164,7 @@ export const WorkloadDrawer: React.FC<Props> = ({
               {t('dashboard.actions.restart')}
             </Button>
           )}
-          {kind === 'deployments' && (
+          {kind === 'deployments' && onLogs && (
             <Button variant="primary" size="sm" onClick={() => onLogs(name)}>
               <Terminal size={13} />
               {t('dashboard.actions.logs')}
@@ -206,7 +208,7 @@ export const WorkloadDrawer: React.FC<Props> = ({
               rows={[
                 [t('dashboard.detail.strategy'), r.strategy],
                 ...(r.revision ? ([[t('dashboard.detail.revision'), r.revision]] as Array<[string, React.ReactNode]>) : []),
-                [t('dashboard.detail.image'), (spec.template?.spec?.containers ?? []).map((c: Item) => c.image).join(', ')],
+                [t('dashboard.detail.image'), (spec.template?.spec?.containers ?? []).map((c) => c.image).join(', ')],
               ]}
             />
           </div>
@@ -251,7 +253,7 @@ export const WorkloadDrawer: React.FC<Props> = ({
                         <span className="ml-2 text-slate-500 dark:text-slate-400">{p.spec?.nodeName}</span>
                       </span>
                       <PodRestarts status={s} />
-                      <PodStatusBadge namespace={namespace} podName={p.metadata?.name} status={s} />
+                      <PodStatusBadge namespace={namespace} podName={p.metadata?.name ?? ''} status={s} />
                     </button>
                   </li>
                 );

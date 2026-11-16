@@ -50,12 +50,15 @@ The action is `<resource type>.<verb>`. Read from the handlers' code; an action 
 | `api_key.revoke` | `success`, `denied`, `failed` |
 | `api_key.update` | `success`, `denied`, `failed` |
 | `api_key.use` | `denied`, `rate_limited` |
+| `backup.create` | `success`, `failed` |
+| `backup.download` | `success`, `denied`, `failed` |
 | `cluster.activate` | `success` |
 | `cluster.create` | `success` |
 | `cluster.deactivate` | `success` |
 | `cluster.delete` | `success` |
 | `cluster.select` | `success`, `denied`, `failed` |
 | `cluster.update` | `success` |
+| `cluster.use` | `denied` |
 | `cluster.view_overview` | `success`, `denied`, `failed` |
 | `configmap.get` | `success`, `denied` |
 | `configmap.list` | `success`, `denied` |
@@ -68,10 +71,10 @@ The action is `<resource type>.<verb>`. Read from the handlers' code; an action 
 | `deployment.logs` | `success`, `denied`, `rate_limited` |
 | `deployment.restart` | `success`, `denied`, `failed`, `rate_limited` |
 | `deployment.scale` | `success`, `denied`, `failed`, `rate_limited` |
-| `group.create` | `success` |
-| `group.delete` | `success` |
+| `group.create` | `success`, `denied`, `failed` |
+| `group.delete` | `success`, `denied`, `failed` |
 | `group.export` | `success` |
-| `group.update` | `success` |
+| `group.update` | `success`, `denied`, `failed` |
 | `hpa.get` | `success`, `denied` |
 | `hpa.list` | `success`, `denied` |
 | `ingress.get` | `success`, `denied` |
@@ -83,8 +86,8 @@ The action is `<resource type>.<verb>`. Read from the handlers' code; an action 
 | `namespace.list` | `success` |
 | `node.get` | `success`, `denied`, `failed` |
 | `node.list` | `success`, `denied`, `failed` |
-| `permission.create` | `success` |
-| `permission.delete` | `success` |
+| `permission.create` | `success`, `denied`, `failed` |
+| `permission.delete` | `success`, `denied`, `failed` |
 | `pod.exec` | `success`, `denied`, `failed`, `rate_limited` |
 | `pod.get` | `success`, `denied` |
 | `pod.list` | `success`, `denied` |
@@ -95,9 +98,9 @@ The action is `<resource type>.<verb>`. Read from the handlers' code; an action 
 | `recording.evict` | `success` |
 | `recording.purge` | `success` |
 | `recording.view` | `success`, `denied`, `failed` |
-| `role.create` | `success` |
-| `role.delete` | `success` |
-| `role.update` | `success` |
+| `role.create` | `success`, `denied`, `failed` |
+| `role.delete` | `success`, `denied`, `failed` |
+| `role.update` | `success`, `denied`, `failed` |
 | `saved_view.create` | `success`, `denied` |
 | `saved_view.delete` | `success`, `denied` |
 | `saved_view.share` | `success`, `denied` |
@@ -108,20 +111,20 @@ The action is `<resource type>.<verb>`. Read from the handlers' code; an action 
 | `service.get` | `success`, `denied` |
 | `service.list` | `success`, `denied` |
 | `session.revoke` | `success` |
-| `settings.delete` | `success` |
+| `settings.delete` | `success`, `denied`, `failed` |
 | `settings.update` | `success`, `denied`, `failed` |
 | `statefulset.get` | `success`, `denied` |
 | `statefulset.list` | `success`, `denied` |
 | `statefulset.scale` | `success`, `denied`, `failed`, `rate_limited` |
 | `user.change_password` | `success`, `denied` |
-| `user.create` | `success` |
-| `user.delete` | `success` |
+| `user.create` | `success`, `denied`, `failed` |
+| `user.delete` | `success`, `denied`, `failed` |
 | `user.export` | `success` |
 | `user.get` | `success`, `failed` |
 | `user.import` | `success` |
 | `user.login` | `success`, `failed`, `locked` |
 | `user.reset_password` | `success`, `denied`, `failed` |
-| `user.update` | `success` |
+| `user.update` | `success`, `denied`, `failed` |
 
 ## Verbs
 
@@ -155,7 +158,7 @@ The action is `<resource type>.<verb>`. Read from the handlers' code; an action 
 | `purge` | deleted recordings past their retention |
 | `view_overview` | opened the admin overview |
 | `regenerate` | replaced an API key's secret |
-| `use` | presented an API key (recorded only when it was refused or rate limited) |
+| `use` | presented an API key, or worked on a cluster named per request (`X-OpenConsole-Cluster`; recorded only when it was refused or rate limited) |
 
 ## Outcomes
 

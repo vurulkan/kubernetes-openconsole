@@ -12,6 +12,7 @@ import (
 
 	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/problem"
 	"k8s-dashboard/backend/internal/recording"
 )
 
@@ -40,7 +41,7 @@ func (s *Server) handleListRecordings(w http.ResponseWriter, r *http.Request) {
 	f.Offset, _ = strconv.Atoi(q.Get("offset"))
 	items, total, err := s.recorder.List(r.Context(), f)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list recordings")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to list recordings")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": total})
@@ -63,16 +64,17 @@ func (s *Server) handleRecordingCast(w http.ResponseWriter, r *http.Request) {
 	}
 	f, err := os.Open(rec.Path)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "recording file missing")
+		writeErrorDetail(w, http.StatusNotFound, problem.NotFound, "recording file missing")
 		return
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to stat recording")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to stat recording")
 		return
 	}
 
+	extendWriteDeadline(w, 10*time.Minute) // a large recording over a slow link
 	verb := audit.VerbView
 	if r.URL.Query().Get("download") == "1" {
 		verb = audit.VerbDownload
@@ -88,12 +90,12 @@ func (s *Server) handleRecordingCast(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteRecording(w http.ResponseWriter, r *http.Request) {
 	_, ok := s.userForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return
 	}
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+		writeError(w, http.StatusBadRequest, problem.InvalidID)
 		return
 	}
 	stub := &models.SessionRecording{ID: id}
@@ -105,18 +107,18 @@ func (s *Server) handleDeleteRecording(w http.ResponseWriter, r *http.Request) {
 	rec, err := s.recorder.Delete(r.Context(), id)
 	switch {
 	case errors.Is(err, recording.ErrNotFound):
-		writeError(w, http.StatusNotFound, "recording not found")
+		writeErrorDetail(w, http.StatusNotFound, problem.NotFound, "recording not found")
 		return
 	case errors.Is(err, recording.ErrActive):
 		s.recordRecordingAudit(r, audit.VerbDelete, audit.Failed, "in_progress", rec, nil)
-		writeError(w, http.StatusConflict, "recording is still in progress")
+		writeErrorDetail(w, http.StatusConflict, problem.Conflict, "recording is still in progress")
 		return
 	case err != nil:
 		if rec == nil {
 			rec = stub
 		}
 		s.recordRecordingAudit(r, audit.VerbDelete, audit.Failed, "error", rec, failDetails(err, nil))
-		writeError(w, http.StatusInternalServerError, "failed to delete recording")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to delete recording")
 		return
 	}
 	// The row and file are gone after this, so the audit entry is the only
@@ -128,7 +130,7 @@ func (s *Server) handleDeleteRecording(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetRecordingSettings(w http.ResponseWriter, r *http.Request) {
 	usage, err := s.recorder.Usage(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to read recording usage")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to read recording usage")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"settings": s.recorder.Settings(), "usage": usage})
@@ -137,7 +139,7 @@ func (s *Server) handleGetRecordingSettings(w http.ResponseWriter, r *http.Reque
 func (s *Server) handleUpdateRecordingSettings(w http.ResponseWriter, r *http.Request) {
 	_, ok := s.userForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return
 	}
 	if _, ok := s.isAdminRequest(r); !ok {
@@ -147,19 +149,19 @@ func (s *Server) handleUpdateRecordingSettings(w http.ResponseWriter, r *http.Re
 	}
 	var in models.RecordingSettings
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid payload")
+		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
 	saved, err := s.recorder.UpdateSettings(r.Context(), in)
 	if err != nil {
 		var verr recording.ValidationError
 		if errors.As(err, &verr) {
-			s.recordSettingsAudit(r, audit.Failed, "invalid", failDetails(verr, nil))
-			writeError(w, http.StatusBadRequest, verr.Error())
+			s.recordSettingsAudit(r, audit.Failed, reasonInvalid, failDetails(verr, nil))
+			writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, verr.Error())
 			return
 		}
 		s.recordSettingsAudit(r, audit.Failed, "error", failDetails(err, nil))
-		writeError(w, http.StatusInternalServerError, "failed to save recording settings")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to save recording settings")
 		return
 	}
 	s.recordSettingsAudit(r, audit.Success, "", audit.D{"summary": settingsSummary(saved)})
@@ -169,16 +171,16 @@ func (s *Server) handleUpdateRecordingSettings(w http.ResponseWriter, r *http.Re
 func (s *Server) recordingFromURL(w http.ResponseWriter, r *http.Request) (*models.SessionRecording, bool) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+		writeError(w, http.StatusBadRequest, problem.InvalidID)
 		return nil, false
 	}
 	rec, err := s.recorder.Get(r.Context(), id)
 	if errors.Is(err, recording.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "recording not found")
+		writeErrorDetail(w, http.StatusNotFound, problem.NotFound, "recording not found")
 		return nil, false
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load recording")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to load recording")
 		return nil, false
 	}
 	return rec, true

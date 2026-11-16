@@ -58,6 +58,7 @@ export const ConfirmProvider: React.FC<{ children: React.ReactNode }> = ({ child
           size="sm"
           footer={
             <>
+              {/* First control, so focus starts on the safe choice. */}
               <Button variant="outline" size="sm" onClick={() => close(false)}>
                 {pending.cancelText ?? t('actions.cancel')}
               </Button>

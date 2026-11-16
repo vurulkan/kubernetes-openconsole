@@ -11,14 +11,17 @@ import (
 
 	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/auth"
+	"k8s-dashboard/backend/internal/kube"
 	logpkg "k8s-dashboard/backend/internal/logging"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/problem"
+	"k8s-dashboard/backend/internal/store"
 )
 
 // refreshHeader marks the list requests the UI sends on its own every few
 // seconds. They are not audited: the list the user opened already was, and
 // the HTTP request log still shows every request. Ignored with an API key.
-const refreshHeader = "X-OpenConsole-Refresh"
+const refreshHeader = auth.AutoRefreshHeader
 
 // auditEvent records e for request r. It fills in the acting user (from the
 // token, unless set), the request id, source IP, user agent and the user's
@@ -48,7 +51,7 @@ func (s *Server) auditEvent(r *http.Request, e models.AuditLog) {
 		ci := clusterFrom(r.Context())
 		e.Cluster, e.ClusterID = ci.Name, ci.ID
 	}
-	go func() {
+	s.audit.Go(func() {
 		ctx := context.Background()
 		if e.AuthSource == "" && userID > 0 {
 			if u, err := s.store.GetUserByID(ctx, userID); err == nil {
@@ -56,7 +59,7 @@ func (s *Server) auditEvent(r *http.Request, e models.AuditLog) {
 			}
 		}
 		s.audit.Record(ctx, e)
-	}()
+	})
 }
 
 // auditRead records a successful read (list / get / logs) of a Kubernetes
@@ -88,15 +91,18 @@ func (s *Server) auditReadDenied(r *http.Request, resource, verb, reason string)
 
 // Reasons for denied and failed outcomes.
 const (
-	reasonForbidden       = "forbidden"
-	reasonFeatureDisabled = "feature_disabled"
-	reasonAdminOnly       = "admin_only"
-	reasonRateLimited     = "rate_limited"
+	reasonForbidden       = problem.Forbidden
+	reasonFeatureDisabled = problem.FeatureDisabled
+	reasonAdminOnly       = problem.AdminOnly
+	reasonRateLimited     = problem.RateLimited
 	// reasonAPIAccessPolicy: the key lists the grant and its owner holds it,
 	// but the admin's API access policy keeps it from keys.
-	reasonAPIAccessPolicy = "api_access_policy"
+	reasonAPIAccessPolicy = problem.APIAccessPolicy
 	// reasonAPIAccessOff: the policy leaves the owner's keys nothing.
-	reasonAPIAccessOff = "api_access_off"
+	reasonAPIAccessOff = problem.APIAccessOff
+	// reasonInvalid: the request itself was wrong (body, value out of range,
+	// YAML that doesn't parse or names another object).
+	reasonInvalid = "invalid"
 )
 
 const errAPIAccess = "apiAccess must be off, safe_read or full"
@@ -112,6 +118,10 @@ func failReason(err error) string {
 		return ""
 	case errors.Is(err, errNotConnected):
 		return "not_connected"
+	case errors.Is(err, store.ErrUnknownReference):
+		return "not_found"
+	case errors.Is(err, kube.ErrInvalidObject):
+		return reasonInvalid
 	case apierrors.IsForbidden(err):
 		return "k8s_forbidden"
 	case apierrors.IsNotFound(err):
@@ -119,7 +129,7 @@ func failReason(err error) string {
 	case apierrors.IsConflict(err):
 		return "conflict"
 	case apierrors.IsInvalid(err), apierrors.IsBadRequest(err):
-		return "invalid"
+		return reasonInvalid
 	case errors.As(err, &status):
 		return "k8s_error"
 	}
@@ -156,21 +166,10 @@ func (s *Server) recordLoginAudit(r *http.Request, user, outcome, reason string,
 	})
 }
 
-// recordSettingsUpdate records a change to an admin setting (ldap,
-// azure_ad, session, logo).
-func (s *Server) recordSettingsUpdate(r *http.Request, name string, details audit.D) {
-	s.auditEvent(r, models.AuditLog{
-		Verb:         audit.VerbUpdate,
-		ResourceType: audit.KindSettings,
-		ResourceName: name,
-		Details:      details,
-	})
-}
-
-// recordPermissionAudit records a grant added to or removed from a role. The
-// event's cluster and namespace are the grant's, not the admin's current
-// cluster; a grant for all clusters has no cluster.
-func (s *Server) recordPermissionAudit(r *http.Request, verb string, p models.NamespacePermission) {
+// notePermission names a grant added to or removed from a role on the
+// adminWrite entry. The event's cluster and namespace are the grant's, not the
+// admin's current cluster; a grant for all clusters has no cluster.
+func (s *Server) notePermission(r *http.Request, p models.NamespacePermission) {
 	d := audit.D{"role": s.roleNameByID(r, p.RoleID)}
 	if p.Resource != "" {
 		d["grant"] = p.Resource + ":" + p.Action
@@ -178,15 +177,8 @@ func (s *Server) recordPermissionAudit(r *http.Request, verb string, p models.Na
 	if p.ID > 0 {
 		d["id"] = p.ID
 	}
-	s.auditEvent(r, models.AuditLog{
-		Verb:         verb,
-		ResourceType: audit.KindPermission,
-		ResourceName: d["role"].(string),
-		Namespace:    p.Namespace,
-		Cluster:      p.ClusterName,
-		ClusterID:    p.ClusterID,
-		Details:      d,
-	})
+	note := noteFor(r)
+	note.Name, note.Namespace, note.Cluster, note.ClusterID, note.Details = d["role"].(string), p.Namespace, p.ClusterName, p.ClusterID, d
 }
 
 func (s *Server) userNameByID(r *http.Request, id int) string {

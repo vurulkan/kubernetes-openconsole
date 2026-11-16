@@ -113,4 +113,28 @@ describe('openLogStream', () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(sockets).toHaveLength(8);
   });
+
+  it('a note (pods_limited) does not end the view', async () => {
+    const notes: LogFrame[] = [];
+    const statuses: LogStatus[] = [];
+    const sockets: FakeSocket[] = [];
+    openLogStream({
+      path: '/ws/x',
+      params: { tail: '100' },
+      live: true,
+      onLine: () => {},
+      onStatus: (st) => statuses.push(st),
+      onNote: (f) => notes.push(f),
+      connect: async (_p, params) => {
+        const sock = new FakeSocket(params);
+        sockets.push(sock);
+        return sock as unknown as WebSocket;
+      },
+    });
+    await flush();
+    sockets[0].onopen?.();
+    sockets[0].send({ t: 'note', reason: 'pods_limited', shown: 20, total: 60 });
+    expect(notes).toEqual([{ t: 'note', reason: 'pods_limited', shown: 20, total: 60 }]);
+    expect(last(statuses)?.state).toBe('following');
+  });
 });

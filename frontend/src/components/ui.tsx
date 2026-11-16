@@ -2,6 +2,8 @@ import React, { useEffect, useId, useLayoutEffect, useRef, useState } from 'reac
 import { createPortal } from 'react-dom';
 import { Check, ChevronDown, Search, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { modalScopeDepth, popModalScope, pushModalScope } from '../hooks/useScopedShortcuts';
+import { useDialogFocus } from '../hooks/useDialogFocus';
 
 // ─── Button ─────────────────────────────────────────────────────────────────
 
@@ -54,6 +56,31 @@ interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   error?: string;
 }
 
+/** Labelled monospace text area (certificates, keys). */
+export const TextArea: React.FC<{ label: string; value?: string; onChange: (v: string) => void; placeholder?: string }> = ({
+  label,
+  value,
+  onChange,
+  placeholder,
+}) => {
+  const id = useId();
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label htmlFor={id} className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+        {label}
+      </label>
+      <textarea
+        id={id}
+        rows={3}
+        value={value ?? ''}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+        className="rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-xs text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+      />
+    </div>
+  );
+};
+
 export const Input: React.FC<InputProps> = ({ label, error, className = '', id, ...props }) => {
   const autoId = useId();
   const inputId = id ?? autoId;
@@ -97,8 +124,11 @@ const ALERT_CLS: Record<AlertSeverity, string> = {
     'bg-brand-50/80 border-brand-200 text-brand-800 ring-brand-500/5 dark:bg-brand-500/10 dark:border-brand-500/30 dark:text-brand-200',
 };
 
+// A live region: screen readers read an error at once (alert) and other
+// messages when they appear (status).
 export const Alert: React.FC<AlertProps> = ({ severity, children, className = '' }) => (
   <div
+    role={severity === 'error' ? 'alert' : 'status'}
     className={`rounded-xl border px-4 py-3 text-sm shadow-sm ring-1 ${ALERT_CLS[severity]} ${className}`}
   >
     {children}
@@ -145,13 +175,16 @@ interface SpinnerProps {
 
 const SPINNER_SIZE: Record<string, string> = { sm: 'h-4 w-4', md: 'h-6 w-6', lg: 'h-8 w-8' };
 
-export const Spinner: React.FC<SpinnerProps> = ({ size = 'md', className = '' }) => (
-  <div
-    className={`inline-block animate-spin rounded-full border-2 border-current border-t-transparent text-brand-600 dark:text-brand-300 ${SPINNER_SIZE[size]} ${className}`}
-    role="status"
-    aria-label="Loading"
-  />
-);
+export const Spinner: React.FC<SpinnerProps> = ({ size = 'md', className = '' }) => {
+  const { t } = useTranslation();
+  return (
+    <div
+      className={`inline-block animate-spin rounded-full border-2 border-current border-t-transparent text-brand-600 dark:text-brand-300 ${SPINNER_SIZE[size]} ${className}`}
+      role="status"
+      aria-label={t('common.loading')}
+    />
+  );
+};
 
 // ─── Checkbox ────────────────────────────────────────────────────────────────
 
@@ -399,8 +432,8 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
   options,
   value,
   onChange,
-  placeholder = 'Select...',
-  noOptionsText = 'No options',
+  placeholder: placeholderProp,
+  noOptionsText: noOptionsProp,
   className = '',
   label,
 }) => {
@@ -415,6 +448,8 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
   const [menuPos, setMenuPos] = useState<{ top: number; left: number; width: number } | null>(null);
   const id = useId();
   const { t } = useTranslation();
+  const placeholder = placeholderProp ?? t('common.selectPlaceholder');
+  const noOptionsText = noOptionsProp ?? t('common.noOptions');
 
   // Portal the dropdown to document.body so it escapes any ancestor with
   // overflow:hidden (table rows, cards, drawers). Measure the trigger button
@@ -583,17 +618,17 @@ export const Modal: React.FC<ModalProps> = ({
   onKeyDown,
   size = 'full',
 }) => {
+  const { t } = useTranslation();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialogFocus(dialogRef, open);
+  // Kept in a ref so a new onClose on every parent render doesn't re-run the effect.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     if (!open) return;
     // Register as the active modal scope so page shortcuts suspend.
-    // Lazy import avoids a circular dep with the hook file.
-    let push: (() => void) | undefined;
-    let pop: (() => void) | undefined;
-    import('../hooks/useScopedShortcuts').then((m) => {
-      push = m.pushModalScope;
-      pop = m.popModalScope;
-      push();
-    });
+    pushModalScope();
+    const depth = modalScopeDepth();
     // Lock body scroll so wheeling over the backdrop doesn't move content
     // behind the modal — that scroll makes the dialog appear to float away
     // from where it was opened, which operators report as "opens too far
@@ -601,18 +636,19 @@ export const Modal: React.FC<ModalProps> = ({
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      // Only the topmost dialog closes (a confirm over a modal closes alone).
+      if (e.key === 'Escape' && modalScopeDepth() === depth) {
         e.preventDefault();
-        onClose();
+        onCloseRef.current();
       }
     };
     document.addEventListener('keydown', handler);
     return () => {
       document.removeEventListener('keydown', handler);
       document.body.style.overflow = prevOverflow;
-      if (pop) pop();
+      popModalScope();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 
@@ -646,7 +682,8 @@ export const Modal: React.FC<ModalProps> = ({
         className="relative z-10 flex animate-slide-up flex-col overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-elevated"
         style={dialogStyle}
         onKeyDown={onKeyDown}
-        tabIndex={0}
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-label={title}
@@ -656,9 +693,11 @@ export const Modal: React.FC<ModalProps> = ({
             {title}
           </h2>
           <button
+            type="button"
             onClick={onClose}
+            data-dialog-close
             className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/60 dark:hover:bg-slate-800 dark:hover:text-slate-100"
-            aria-label="Close"
+            aria-label={t('actions.close')}
           >
             <X size={18} />
           </button>

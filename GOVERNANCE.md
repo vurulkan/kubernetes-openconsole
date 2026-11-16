@@ -1,6 +1,6 @@
 # Governance
 
-Kubernetes OpenConsole is an open-source project licensed under [Apache-2.0](LICENSE). This document says who makes
+OpenConsole for Kubernetes is an open-source project licensed under [Apache-2.0](LICENSE). This document says who makes
 decisions and how. It aims to follow the practices the [CNCF](https://www.cncf.io/) expects of its projects, and it
 will change as the community grows.
 

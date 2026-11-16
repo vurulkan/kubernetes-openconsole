@@ -50,10 +50,13 @@ const LdapImportPanel: React.FC<Props> = ({ groups, onImported }) => {
     try {
       const result = await importLdapUsers(selected, groupIds);
       const skipped = result.skippedExisting?.length ?? 0;
+      const failed = result.failed ?? [];
       setDone(
-        skipped > 0
-          ? `${t('ldapImport.imported', { count: result.created })} ${t('ldapImport.skipped', { count: skipped })}`
-          : t('ldapImport.imported', { count: result.created }),
+        [
+          t('ldapImport.imported', { count: result.created }),
+          skipped > 0 ? t('ldapImport.skipped', { count: skipped }) : '',
+          failed.length > 0 ? t('ldapImport.failed', { count: failed.length, names: failed.join(', ') }) : '',
+        ].filter(Boolean).join(' '),
       );
       setSelected([]);
       setResults([]);

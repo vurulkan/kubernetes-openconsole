@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	"io"
 	"sort"
 	"sync"
 	"time"
@@ -9,6 +10,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	appslisters "k8s.io/client-go/listers/apps/v1"
 	autoscalinglisters "k8s.io/client-go/listers/autoscaling/v2"
@@ -91,6 +93,17 @@ func (b *EventBus) Unsubscribe(s *Subscription) {
 	}
 }
 
+// CloseAll ends every subscription (their channels close); the bus stays
+// usable for new subscribers.
+func (b *EventBus) CloseAll() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for id, s := range b.subs {
+		delete(b.subs, id)
+		close(s.ch)
+	}
+}
+
 func (b *EventBus) Publish(ev ResourceEvent) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
@@ -114,8 +127,12 @@ type InformerCache struct {
 	stop    chan struct{}
 	bus     *EventBus
 
-	syncedMu sync.RWMutex
-	synced   bool
+	// kinds tracks each informer by kind ("Pod", "Ingress", …): a kind's
+	// lister is used only while Usable says so; otherwise reads go to the API
+	// server and return its real error (forbidden, unreachable) instead of an
+	// empty or stale list.
+	kindsMu sync.RWMutex // Node is added by start, while requests read
+	kinds   map[string]*kindState
 
 	podLister         corelisters.PodLister
 	deploymentLister  appslisters.DeploymentLister
@@ -141,12 +158,13 @@ type InformerCache struct {
 func newInformerCache(client kubernetes.Interface, bus *EventBus, onTermination func(models.ContainerTermination)) *InformerCache {
 	// 10m resync keeps listers lively without flooding the API server; events
 	// still arrive via the watch stream in near real-time.
-	factory := informers.NewSharedInformerFactory(client, 10*time.Minute)
+	factory := informers.NewSharedInformerFactoryWithOptions(client, 10*time.Minute, informers.WithTransform(slimObject))
 	ic := &InformerCache{
 		factory: factory,
 		stop:    make(chan struct{}),
 		bus:     bus,
 		client:  client,
+		kinds:   map[string]*kindState{},
 	}
 
 	podInf := factory.Core().V1().Pods()
@@ -182,6 +200,7 @@ func newInformerCache(client kubernetes.Interface, bus *EventBus, onTermination 
 	ic.eventLister = evInf.Lister()
 
 	attach := func(inf cache.SharedIndexInformer, kind string) {
+		ic.track(inf, kind)
 		inf.AddEventHandler(cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj any) {
 				if ev, ok := toResourceEvent("added", kind, obj); ok {
@@ -249,6 +268,7 @@ func newInformerCache(client kubernetes.Interface, bus *EventBus, onTermination 
 			InvolvedName: e.InvolvedObject.Name,
 		})
 	}
+	ic.track(evInf.Informer(), "Event")
 	evInf.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: publishEvent,
 		UpdateFunc: func(old, cur any) {
@@ -296,17 +316,93 @@ func (c *InformerCache) start(ctx context.Context) {
 	probeCtx, cancelProbe := context.WithTimeout(ctx, 10*time.Second)
 	defer cancelProbe()
 	if canWatchNodes(probeCtx, c.client) {
-		c.nodeLister = c.factory.Core().V1().Nodes().Lister()
+		nodeInf := c.factory.Core().V1().Nodes()
+		c.nodeLister = nodeInf.Lister()
+		c.track(nodeInf.Informer(), "Node")
 	}
 	c.factory.Start(c.stop)
-	// Bounded initial sync so a slow cluster doesn't delay readiness forever.
+	// The overview counts start once pods and deployments are in (or after 20 s).
 	syncCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	c.factory.WaitForCacheSync(syncCtx.Done())
-	c.syncedMu.Lock()
-	c.synced = true
-	c.syncedMu.Unlock()
+	cache.WaitForCacheSync(syncCtx.Done(), c.kind("Pod").inf.HasSynced, c.kind("Deployment").inf.HasSynced)
 	go c.sampleCounts()
+}
+
+// kindState is one informer and the last error its list / watch reported.
+type kindState struct {
+	inf cache.SharedIndexInformer
+
+	mu    sync.Mutex
+	err   error
+	errRV string // the informer's resource version when err came
+}
+
+// failed records a list / watch error; a watch that simply ended (expired,
+// EOF) is routine and the reflector picks up where it was.
+func (k *kindState) failed(err error) {
+	if err == nil || err == io.EOF || err == io.ErrUnexpectedEOF || apierrors.IsResourceExpired(err) || apierrors.IsGone(err) {
+		return
+	}
+	k.mu.Lock()
+	k.err, k.errRV = err, k.inf.LastSyncResourceVersion()
+	k.mu.Unlock()
+}
+
+// lastErr is the error still standing: one recorded after which the informer
+// has made no progress (its resource version moves on every successful list
+// or watch event, and the cluster's resource version moves all the time).
+func (k *kindState) lastErr() error {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.err != nil && k.inf.LastSyncResourceVersion() != k.errRV {
+		k.err = nil
+	}
+	return k.err
+}
+
+// usable: the initial list is in and nothing has failed since.
+func (k *kindState) usable() bool {
+	return k.inf.HasSynced() && k.lastErr() == nil
+}
+
+func (c *InformerCache) track(inf cache.SharedIndexInformer, kind string) {
+	k := &kindState{inf: inf}
+	_ = inf.SetWatchErrorHandlerWithContext(func(ctx context.Context, r *cache.Reflector, err error) {
+		k.failed(err)
+		cache.DefaultWatchErrorHandler(ctx, r, err)
+	})
+	c.kindsMu.Lock()
+	c.kinds[kind] = k
+	c.kindsMu.Unlock()
+}
+
+func (c *InformerCache) kind(kind string) *kindState {
+	c.kindsMu.RLock()
+	defer c.kindsMu.RUnlock()
+	return c.kinds[kind]
+}
+
+// Usable reports whether the lister of kind may serve reads.
+func (c *InformerCache) Usable(kind string) bool {
+	k := c.kind(kind)
+	return k != nil && k.usable()
+}
+
+// Connected: at least one informer has its list in, and none is failing for
+// a reason other than a missing permission (a token the cluster refuses, an
+// API server that can't be reached). A kind the ClusterRole doesn't allow
+// only leaves its tab without a cache; the cluster is still connected.
+func (c *InformerCache) Connected() bool {
+	c.kindsMu.RLock()
+	defer c.kindsMu.RUnlock()
+	synced := false
+	for _, k := range c.kinds {
+		if err := k.lastErr(); err != nil && !apierrors.IsForbidden(err) {
+			return false
+		}
+		synced = synced || k.inf.HasSynced()
+	}
+	return synced
 }
 
 // CountPoint is the cluster's pod and deployment health at one moment (overview sparklines).
@@ -425,7 +521,7 @@ func canWatchNodes(ctx context.Context, client kubernetes.Interface) bool {
 
 // Nodes lists the cluster's nodes from the cache; false when nodes aren't watched or the cache is cold.
 func (c *InformerCache) Nodes() ([]*corev1.Node, bool) {
-	if !c.Synced() || c.nodeLister == nil {
+	if c.nodeLister == nil || !c.Usable("Node") {
 		return nil, false
 	}
 	nodes, err := c.nodeLister.List(labels.Everything())
@@ -472,11 +568,24 @@ func (c *InformerCache) stopAll() {
 	c.factory.Shutdown()
 }
 
-// Synced returns true once the initial list has populated every lister. Callers
-// should fall back to a live API call when this is false, so the UI isn't
-// forced to display an empty list during the warmup window.
-func (c *InformerCache) Synced() bool {
-	c.syncedMu.RLock()
-	defer c.syncedMu.RUnlock()
-	return c.synced
+// slimObject drops what the console never reads from the cache before an
+// object is stored: managedFields and the last-applied annotation, often
+// the largest part of an object (a full copy of its spec). YAML views and
+// edits read the object from the API server, not from here.
+func slimObject(obj any) (any, error) {
+	if m, ok := obj.(metav1.Object); ok {
+		m.SetManagedFields(nil)
+		if a := m.GetAnnotations(); a[lastApplied] != "" {
+			c := make(map[string]string, len(a)-1)
+			for k, v := range a {
+				if k != lastApplied {
+					c[k] = v
+				}
+			}
+			m.SetAnnotations(c)
+		}
+	}
+	return obj, nil
 }
+
+const lastApplied = "kubectl.kubernetes.io/last-applied-configuration"

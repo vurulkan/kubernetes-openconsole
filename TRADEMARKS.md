@@ -1,11 +1,11 @@
 # Trademarks
 
-The code of Kubernetes OpenConsole is licensed under Apache-2.0. That license does **not** grant rights to the
+The code of OpenConsole for Kubernetes is licensed under Apache-2.0. That license does **not** grant rights to the
 project's names and logo (Apache-2.0, section 6). This page says how you may use them.
 
 ## The marks
 
-- the names **OpenConsole** and **Kubernetes OpenConsole**;
+- the names **OpenConsole** and **OpenConsole for Kubernetes** (called "Kubernetes OpenConsole" before 2.23.1);
 - the OpenConsole logo (the stacked-layers mark on an indigo square, `static/img/logo.svg` in the documentation
   repository) and its variants.
 
@@ -20,7 +20,7 @@ They are used by Mustafa Volkan Vurulkan for this project. They are not register
 
 ## Please don't
 
-- call a modified version or a fork "OpenConsole" or "Kubernetes OpenConsole", or ship it with the logo: rename it and
+- call a modified version or a fork "OpenConsole", "OpenConsole for Kubernetes" or "Kubernetes OpenConsole", or ship it with the logo: rename it and
   replace the logo, and you may say it is "based on OpenConsole";
 - use the names or logo in a way that suggests the project endorses or is affiliated with your product, service or
   company;

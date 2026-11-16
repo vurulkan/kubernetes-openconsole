@@ -16,6 +16,7 @@ description: "Every series on GET /metrics."
 | `openconsole_http_request_duration_ms_sum` | counter |  | Sum of request durations in milliseconds. |
 | `openconsole_http_request_duration_ms_count` | counter |  | Count of observed requests used for duration stats. |
 | `openconsole_audit_events_total` | counter |  | Audit log entries recorded. |
+| `openconsole_audit_write_failures_total` | counter |  | Audit events that could not be written to the database (full or locked volume); each one is also an error log line. |
 | `openconsole_pod_exec_sessions_total` | counter |  | Pod exec sessions started. |
 | `openconsole_pod_log_streams_total` | counter |  | Pod log WebSocket streams started. |
 | `openconsole_deployment_actions_total` | counter |  | Deployment restart or scale actions attempted. |

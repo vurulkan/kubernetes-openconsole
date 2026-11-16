@@ -2,8 +2,10 @@ package auth
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net"
+	neturl "net/url"
 	"strings"
 	"time"
 
@@ -18,6 +20,7 @@ type LDAPConfig struct {
 	UseSSL            bool
 	StartTLS          bool
 	SkipVerify        bool
+	CACert            string // PEM; empty = the system's CAs
 	TimeoutSeconds    int
 	BindDN            string
 	BindPassword      string
@@ -44,34 +47,11 @@ func LDAPAuthenticateUser(cfg LDAPConfig, username, password string) (string, er
 	if password == "" {
 		return "", fmt.Errorf("empty password")
 	}
-	url := cfg.URL
-	if url == "" {
-		scheme := "ldap"
-		if cfg.UseSSL {
-			scheme = "ldaps"
-		}
-		port := cfg.Port
-		if port == 0 {
-			port = 389
-		}
-		url = fmt.Sprintf("%s://%s:%d", scheme, cfg.Host, port)
-	}
-	timeout := time.Duration(cfg.TimeoutSeconds) * time.Second
-	if timeout == 0 {
-		timeout = 10 * time.Second
-	}
-	dialer := &net.Dialer{Timeout: timeout}
-	conn, err := ldap.DialURL(url, ldap.DialWithDialer(dialer))
+	conn, err := dialLDAP(cfg)
 	if err != nil {
 		return "", err
 	}
 	defer conn.Close()
-
-	if cfg.StartTLS {
-		if err := conn.StartTLS(&tls.Config{InsecureSkipVerify: cfg.SkipVerify}); err != nil {
-			return "", err
-		}
-	}
 
 	if cfg.BindDN != "" {
 		if err := conn.Bind(cfg.BindDN, cfg.BindPassword); err != nil {
@@ -101,34 +81,11 @@ func SearchUsers(cfg LDAPConfig, query string) ([]LDAPUser, error) {
 	if !cfg.Enabled {
 		return nil, fmt.Errorf("ldap disabled")
 	}
-	url := cfg.URL
-	if url == "" {
-		scheme := "ldap"
-		if cfg.UseSSL {
-			scheme = "ldaps"
-		}
-		port := cfg.Port
-		if port == 0 {
-			port = 389
-		}
-		url = fmt.Sprintf("%s://%s:%d", scheme, cfg.Host, port)
-	}
-	timeout := time.Duration(cfg.TimeoutSeconds) * time.Second
-	if timeout == 0 {
-		timeout = 10 * time.Second
-	}
-	dialer := &net.Dialer{Timeout: timeout}
-	conn, err := ldap.DialURL(url, ldap.DialWithDialer(dialer))
+	conn, err := dialLDAP(cfg)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
-
-	if cfg.StartTLS {
-		if err := conn.StartTLS(&tls.Config{InsecureSkipVerify: cfg.SkipVerify}); err != nil {
-			return nil, err
-		}
-	}
 	if cfg.BindDN != "" {
 		if err := conn.Bind(cfg.BindDN, cfg.BindPassword); err != nil {
 			return nil, err
@@ -190,34 +147,11 @@ func TestConnection(cfg LDAPConfig) error {
 	if !cfg.Enabled {
 		return fmt.Errorf("ldap disabled")
 	}
-	url := cfg.URL
-	if url == "" {
-		scheme := "ldap"
-		if cfg.UseSSL {
-			scheme = "ldaps"
-		}
-		port := cfg.Port
-		if port == 0 {
-			port = 389
-		}
-		url = fmt.Sprintf("%s://%s:%d", scheme, cfg.Host, port)
-	}
-	timeout := time.Duration(cfg.TimeoutSeconds) * time.Second
-	if timeout == 0 {
-		timeout = 10 * time.Second
-	}
-	dialer := &net.Dialer{Timeout: timeout}
-	conn, err := ldap.DialURL(url, ldap.DialWithDialer(dialer))
+	conn, err := dialLDAP(cfg)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
-
-	if cfg.StartTLS {
-		if err := conn.StartTLS(&tls.Config{InsecureSkipVerify: cfg.SkipVerify}); err != nil {
-			return err
-		}
-	}
 	if cfg.BindDN != "" {
 		if err := conn.Bind(cfg.BindDN, cfg.BindPassword); err != nil {
 			return err
@@ -312,4 +246,56 @@ func loginFilter(cfg LDAPConfig, username string) string {
 		return "(&" + filter + exact + ")"
 	}
 	return filter
+}
+
+// dialLDAP connects to the directory, TLS (ldaps or StartTLS) checked against
+// the host name and the configured CA (else the system's), unless SkipVerify.
+func dialLDAP(cfg LDAPConfig) (*ldap.Conn, error) {
+	url := cfg.URL
+	if url == "" {
+		scheme := "ldap"
+		if cfg.UseSSL {
+			scheme = "ldaps"
+		}
+		port := cfg.Port
+		if port == 0 {
+			port = 389
+		}
+		url = fmt.Sprintf("%s://%s:%d", scheme, cfg.Host, port)
+	}
+	tlsCfg, err := ldapTLSConfig(cfg, url)
+	if err != nil {
+		return nil, err
+	}
+	timeout := time.Duration(cfg.TimeoutSeconds) * time.Second
+	if timeout == 0 {
+		timeout = 10 * time.Second
+	}
+	conn, err := ldap.DialURL(url, ldap.DialWithDialer(&net.Dialer{Timeout: timeout}), ldap.DialWithTLSConfig(tlsCfg))
+	if err != nil {
+		return nil, err
+	}
+	if cfg.StartTLS {
+		if err := conn.StartTLS(tlsCfg); err != nil {
+			conn.Close()
+			return nil, err
+		}
+	}
+	return conn, nil
+}
+
+func ldapTLSConfig(cfg LDAPConfig, rawURL string) (*tls.Config, error) {
+	u, err := neturl.Parse(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("ldap url: %w", err)
+	}
+	tlsCfg := &tls.Config{ServerName: u.Hostname(), InsecureSkipVerify: cfg.SkipVerify, MinVersion: tls.VersionTLS12}
+	if strings.TrimSpace(cfg.CACert) != "" {
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM([]byte(cfg.CACert)) {
+			return nil, fmt.Errorf("ldap CA certificate: no PEM certificate found")
+		}
+		tlsCfg.RootCAs = pool
+	}
+	return tlsCfg, nil
 }

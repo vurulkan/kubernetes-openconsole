@@ -25,6 +25,7 @@ import (
 	"k8s-dashboard/backend/internal/kube"
 	"k8s-dashboard/backend/internal/logging"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/problem"
 )
 
 // Limits of POST /api/namespaces/{namespace}/pods/{name}/exec (M16).
@@ -102,7 +103,7 @@ func (c *capped) result() (string, int64, bool) {
 func (s *Server) handlePodExecCommand(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.FromContext(r.Context())
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return
 	}
 	namespace, podName := chi.URLParam(r, "namespace"), chi.URLParam(r, "name")
@@ -111,8 +112,12 @@ func (s *Server) handlePodExecCommand(w http.ResponseWriter, r *http.Request) {
 		s.recordExecAudit(r, namespace, podName, outcome, reason, details)
 		writeError(w, status, reason)
 	}
+	invalid := func(detail string) {
+		s.recordExecAudit(r, namespace, podName, audit.Failed, reasonInvalid, details)
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, detail)
+	}
 
-	if !featureAllows("pods", "exec") {
+	if !s.featureAllows("pods", "exec") {
 		refuse(http.StatusForbidden, audit.Denied, reasonFeatureDisabled)
 		return
 	}
@@ -123,11 +128,11 @@ func (s *Server) handlePodExecCommand(w http.ResponseWriter, r *http.Request) {
 
 	var req execCommandRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "the body must be JSON: {\"command\": [\"cat\", \"/etc/os-release\"], \"container\": \"…\", \"timeoutSeconds\": 30}")
+		invalid("the body must be JSON: {\"command\": [\"cat\", \"/etc/os-release\"], \"container\": \"…\", \"timeoutSeconds\": 30}")
 		return
 	}
 	if len(req.Command) == 0 || strings.TrimSpace(req.Command[0]) == "" {
-		writeError(w, http.StatusBadRequest, "command must be a non-empty array, e.g. [\"cat\", \"/etc/os-release\"]; it is not run in a shell")
+		invalid("command must be a non-empty array, e.g. [\"cat\", \"/etc/os-release\"]; it is not run in a shell")
 		return
 	}
 	details["program"] = req.Command[0]
@@ -136,22 +141,24 @@ func (s *Server) handlePodExecCommand(w http.ResponseWriter, r *http.Request) {
 		timeout = *req.TimeoutSeconds
 	}
 	if timeout < 1 || timeout > execCommandMaxTimeout {
-		writeError(w, http.StatusBadRequest, "timeoutSeconds must be between 1 and "+strconv.Itoa(execCommandMaxTimeout))
+		invalid("timeoutSeconds must be between 1 and " + strconv.Itoa(execCommandMaxTimeout))
 		return
 	}
+	// The command may run longer than the server's WriteTimeout (60 s).
+	extendWriteDeadline(w, time.Duration(timeout)*time.Second+30*time.Second)
 
 	client, ok := kubeFor(r).Client()
 	if !ok {
-		refuse(http.StatusServiceUnavailable, audit.Failed, "not_connected")
+		refuse(http.StatusServiceUnavailable, audit.Failed, problem.NotConnected)
 		return
 	}
 	pod, err := client.CoreV1().Pods(namespace).Get(r.Context(), podName, metav1.GetOptions{})
 	switch {
 	case apierrors.IsNotFound(err):
-		refuse(http.StatusNotFound, audit.Failed, "pod_not_found")
+		refuse(http.StatusNotFound, audit.Failed, problem.PodNotFound)
 		return
 	case err != nil:
-		refuse(http.StatusBadGateway, audit.Failed, "unavailable")
+		refuse(http.StatusBadGateway, audit.Failed, problem.Unavailable)
 		return
 	}
 	container := strings.TrimSpace(req.Container)
@@ -161,17 +168,17 @@ func (s *Server) handlePodExecCommand(w http.ResponseWriter, r *http.Request) {
 	details["container"] = container
 	cs := containerStatus(pod, container)
 	if !hasContainer(pod, container) {
-		refuse(http.StatusBadRequest, audit.Failed, "container_not_found")
+		refuse(http.StatusBadRequest, audit.Failed, problem.ContainerNotFound)
 		return
 	}
 	if cs == nil || cs.State.Running == nil {
-		refuse(http.StatusBadRequest, audit.Failed, "not_ready")
+		refuse(http.StatusBadRequest, audit.Failed, problem.NotReady)
 		return
 	}
 
 	if !s.execSessions.acquire(claims.UserID) {
-		details["max_sessions"] = maxExecSessionsPerUser
-		refuse(http.StatusTooManyRequests, audit.RateLimited, "too_many_sessions")
+		details["max_sessions"] = s.execSessions.limit
+		refuse(http.StatusTooManyRequests, audit.RateLimited, problem.TooManySessions)
 		return
 	}
 	defer s.execSessions.release(claims.UserID)
@@ -181,7 +188,7 @@ func (s *Server) handlePodExecCommand(w http.ResponseWriter, r *http.Request) {
 	defer rec.Close()
 	if rec == nil && claims.APIKey != nil {
 		// Same rule as the shell: what a key runs is always recorded.
-		refuse(http.StatusServiceUnavailable, audit.Failed, "recording_unavailable")
+		refuse(http.StatusServiceUnavailable, audit.Failed, problem.RecordingUnavailable)
 		return
 	}
 	// The recording reads like a terminal: the command line, then its output.
@@ -226,7 +233,7 @@ func (s *Server) handlePodExecCommand(w http.ResponseWriter, r *http.Request) {
 	if failed != nil {
 		// The error text comes from the API server / kubelet, not from the command line.
 		s.recordExecAudit(r, namespace, podName, audit.Failed, "exec_failed", failDetails(failed, details))
-		writeError(w, http.StatusBadGateway, "exec_failed")
+		writeError(w, http.StatusBadGateway, problem.ExecFailed)
 		return
 	}
 	s.recordExecAudit(r, namespace, podName, audit.Success, "", details)

@@ -1,0 +1,31 @@
+# Optional: only your ingress controller and your Prometheus may reach the
+# console (8080 serves the UI, the API and /metrics, which has no sign-in).
+# Not part of kustomization.yaml, because the namespaces differ per cluster:
+# change the two names below to yours, then
+#   kubectl apply -f deploy/optional/networkpolicy.yaml
+# Kubelet probes and `kubectl port-forward` keep working. Outgoing traffic is
+# not restricted: the console needs your API servers and, if used, LDAP,
+# login.microsoftonline.com and Prometheus.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kubernetes-openconsole
+  namespace: kubernetes-openconsole
+spec:
+  podSelector:
+    matchLabels:
+      app: kubernetes-openconsole
+  policyTypes: [Ingress]
+  ingress:
+    - from: # your ingress controller's namespace
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: 8080
+    - from: # Prometheus, for /metrics
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 8080

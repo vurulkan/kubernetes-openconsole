@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -11,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"k8s-dashboard/backend/internal/models"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -20,6 +22,7 @@ import (
 type Manager struct {
 	mu         sync.RWMutex
 	client     kubernetes.Interface
+	stream     kubernetes.Interface // followed logs: no overall request timeout
 	restConfig *rest.Config
 	ready      bool
 	lastError  string
@@ -38,7 +41,7 @@ func NewManager() *Manager {
 // no informer cache, so every read goes straight to the client. Used by tests
 // with client-go's fake clientset.
 func NewManagerWithClient(client kubernetes.Interface) *Manager {
-	return &Manager{bus: NewEventBus(), client: client, ready: true}
+	return &Manager{bus: NewEventBus(), client: client, stream: client, ready: true}
 }
 
 // EventBus exposes the shared bus so API handlers can subscribe clients to
@@ -48,7 +51,7 @@ func (m *Manager) EventBus() *EventBus {
 }
 
 // Informers returns the active informer cache or nil when no cluster is
-// configured. Callers must check Synced() before trusting lister results.
+// configured. Callers must check Usable(kind) before trusting lister results.
 func (m *Manager) Informers() *InformerCache {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -73,13 +76,14 @@ func (m *Manager) ApplyCredentials(creds models.KubeCredentials) error {
 		return err
 	}
 
-	client, err := kubernetes.NewForConfig(config)
+	client, stream, err := newClients(config)
 	if err != nil {
 		m.lastError = err.Error()
 		return fmt.Errorf("client: %w", err)
 	}
 
 	m.client = client
+	m.stream = stream
 	m.restConfig = config
 	m.ready = true
 	m.lastError = ""
@@ -147,12 +151,6 @@ func (m *Manager) Start(ctx context.Context) error {
 	return nil
 }
 
-func (m *Manager) StartAsync() {
-	go func() {
-		_ = m.Start(context.Background())
-	}()
-}
-
 func (m *Manager) Client() (kubernetes.Interface, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -162,20 +160,69 @@ func (m *Manager) Client() (kubernetes.Interface, bool) {
 	return m.client, true
 }
 
+// StreamClient is the client for followed log streams: the same credentials
+// without the overall request timeout, which would cut a live log every 30 s.
+func (m *Manager) StreamClient() (kubernetes.Interface, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.stream == nil {
+		return nil, false
+	}
+	return m.stream, true
+}
+
+// newClients builds the client for ordinary calls (bounded by config.Timeout)
+// and the one for followed streams (no overall timeout; they end with their
+// request context, and dial / TLS timeouts still apply).
+func newClients(config *rest.Config) (client, stream kubernetes.Interface, err error) {
+	if client, err = kubernetes.NewForConfig(config); err != nil {
+		return nil, nil, err
+	}
+	sc := rest.CopyConfig(config)
+	sc.Timeout = 0
+	if stream, err = kubernetes.NewForConfig(sc); err != nil {
+		return nil, nil, err
+	}
+	return client, stream, nil
+}
+
 func (m *Manager) Ready() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.client != nil && m.ready
 }
 
+// Connected is what openconsole_cluster_connected reports: a client, and an
+// informer cache that has listed something and isn't failing (see
+// InformerCache.Connected). A Manager without a cache (tests) is connected
+// when it has a client.
+func (m *Manager) Connected() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.client == nil || !m.ready {
+		return false
+	}
+	return m.informers == nil || m.informers.Connected()
+}
+
+// Check makes one real call (list namespaces, limit 1) with the Manager's
+// client: connecting builds a client but asks the cluster nothing, so a
+// refused token or an unreachable server shows only here.
+func (m *Manager) Check(ctx context.Context) error {
+	client, ok := m.Client()
+	if !ok {
+		return ErrNotReady
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	_, err := client.CoreV1().Namespaces().List(ctx, metav1.ListOptions{Limit: 1})
+	return err
+}
+
 func (m *Manager) LastError() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.lastError
-}
-
-func (m *Manager) ValidateCredentials(creds models.KubeCredentials) error {
-	return ValidateCredentials(creds)
 }
 
 // ValidateCredentials builds a client from creds and makes one real call
@@ -210,8 +257,12 @@ func (m *Manager) Stop() {
 	}
 	m.stopMetrics()
 	m.client = nil
+	m.stream = nil
 	m.restConfig = nil
 	m.ready = false
+	// Live Events sockets on this cluster end, so the panels reconnect to the
+	// new connection instead of waiting on a bus nothing publishes to anymore.
+	m.bus.CloseAll()
 }
 
 func buildConfig(creds models.KubeCredentials) (*rest.Config, error) {
@@ -223,9 +274,9 @@ func buildConfig(creds models.KubeCredentials) (*rest.Config, error) {
 	// (no-op when tracing is off). Background informer list/watch traffic
 	// has no parent span and is not traced.
 	cfg.Wrap(func(rt http.RoundTripper) http.RoundTripper {
-		return otelhttp.NewTransport(rt, otelhttp.WithFilter(func(r *http.Request) bool {
+		return tracedTransport{otelhttp.NewTransport(rt, otelhttp.WithFilter(func(r *http.Request) bool {
 			return trace.SpanFromContext(r.Context()).SpanContext().IsValid()
-		}))
+		})), rt}
 	})
 	return cfg, nil
 }
@@ -233,6 +284,9 @@ func buildConfig(creds models.KubeCredentials) (*rest.Config, error) {
 func buildConfigRaw(creds models.KubeCredentials) (*rest.Config, error) {
 	switch creds.Method {
 	case "kubeconfig":
+		if err := checkInlineKubeconfig(creds.Kubeconfig); err != nil {
+			return nil, err
+		}
 		return clientcmd.RESTConfigFromKubeConfig(creds.Kubeconfig)
 	case "token":
 		if creds.Server == "" || len(creds.Token) == 0 {
@@ -244,9 +298,62 @@ func buildConfigRaw(creds models.KubeCredentials) (*rest.Config, error) {
 			TLSClientConfig: rest.TLSClientConfig{
 				CAData: creds.CACert,
 			},
-			Timeout: 30 * time.Second,
+			Timeout: apiTimeout,
 		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported credentials method")
 	}
 }
+
+// apiTimeout bounds an ordinary API call of a token cluster. A var for tests.
+var apiTimeout = 30 * time.Second
+
+// ErrKubeconfigUnsupported: the kubeconfig runs a program or reads a file.
+var ErrKubeconfigUnsupported = errors.New("kubeconfig_unsupported")
+
+// checkInlineKubeconfig refuses a kubeconfig that would run a program (exec,
+// auth-provider) or read a file (token / certificate / key paths) in the
+// console's pod: an admin, or an admin-scoped API key, could otherwise run
+// code there or send its files (the DB, the ServiceAccount token) to a server
+// of their choice. Only inline data is accepted.
+func checkInlineKubeconfig(raw []byte) error {
+	cfg, err := clientcmd.Load(raw)
+	if err != nil {
+		return err
+	}
+	for name, u := range cfg.AuthInfos {
+		bad := ""
+		switch {
+		case u.Exec != nil:
+			bad = "exec"
+		case u.AuthProvider != nil:
+			bad = "auth-provider"
+		case u.TokenFile != "":
+			bad = "tokenFile"
+		case u.ClientCertificate != "":
+			bad = "client-certificate"
+		case u.ClientKey != "":
+			bad = "client-key"
+		}
+		if bad != "" {
+			return fmt.Errorf("%w: user %q uses %s; use inline credentials (token, client-certificate-data, client-key-data)", ErrKubeconfigUnsupported, name, bad)
+		}
+	}
+	for name, c := range cfg.Clusters {
+		if c.CertificateAuthority != "" {
+			return fmt.Errorf("%w: cluster %q uses certificate-authority (a file); use certificate-authority-data", ErrKubeconfigUnsupported, name)
+		}
+	}
+	return nil
+}
+
+// tracedTransport is otelhttp's transport that tells client-go what it wraps:
+// when a request times out client-go cancels it on the innermost transport,
+// and without WrappedRoundTripper it logged "Unable to cancel request for
+// *otelhttp.Transport" for every timed-out call (dozens per unreachable cluster).
+type tracedTransport struct {
+	*otelhttp.Transport
+	inner http.RoundTripper
+}
+
+func (t tracedTransport) WrappedRoundTripper() http.RoundTripper { return t.inner }

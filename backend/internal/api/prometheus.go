@@ -10,9 +10,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 
 	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/problem"
 	"k8s-dashboard/backend/internal/prom"
 )
 
@@ -64,7 +66,7 @@ func keepSecrets(in, stored models.PrometheusConfig) models.PrometheusConfig {
 func (s *Server) clusterParam(w http.ResponseWriter, r *http.Request) (int, bool) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil || id <= 0 {
-		writeError(w, http.StatusBadRequest, "invalid cluster id")
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidID, "invalid cluster id")
 		return 0, false
 	}
 	return id, true
@@ -77,7 +79,7 @@ func (s *Server) handleGetPrometheus(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg, err := s.store.GetPrometheus(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "cluster not found")
+		writeErrorDetail(w, http.StatusNotFound, problem.NotFound, "cluster not found")
 		return
 	}
 	writeJSON(w, http.StatusOK, maskPrometheus(cfg))
@@ -90,23 +92,23 @@ func (s *Server) handlePutPrometheus(w http.ResponseWriter, r *http.Request) {
 	}
 	stored, err := s.store.GetPrometheus(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "cluster not found")
+		writeErrorDetail(w, http.StatusNotFound, problem.NotFound, "cluster not found")
 		return
 	}
 	var in models.PrometheusConfig
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid body")
+		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
 	in = keepSecrets(in, stored)
 	if in.Mode == "" {
 		in = models.PrometheusConfig{}
 	} else if _, err := prom.New(in, nil); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, err.Error())
 		return
 	}
 	if err := s.store.SetPrometheus(r.Context(), id, in); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not save")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "could not save")
 		return
 	}
 	s.prom.Delete(id)
@@ -132,12 +134,12 @@ func (s *Server) handleTestPrometheus(w http.ResponseWriter, r *http.Request) {
 	}
 	stored, err := s.store.GetPrometheus(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "cluster not found")
+		writeErrorDetail(w, http.StatusNotFound, problem.NotFound, "cluster not found")
 		return
 	}
 	var in models.PrometheusConfig
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid body")
+		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
 	c, err := s.promClientFor(r.Context(), id, keepSecrets(in, stored))
@@ -149,12 +151,20 @@ func (s *Server) handleTestPrometheus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) promClientFor(ctx context.Context, clusterID int, cfg models.PrometheusConfig) (*prom.Client, error) {
-	m, err := s.clusters.Get(ctx, clusterID)
-	if err != nil {
-		return prom.New(cfg, nil)
+	var client kubernetes.Interface
+	if m, err := s.clusters.Get(ctx, clusterID); err == nil {
+		client, _ = m.Client()
 	}
-	client, _ := m.Client()
-	return prom.New(cfg, client)
+	return s.newProm(cfg, client)
+}
+
+// newProm is prom.New with the server's Azure AD authority.
+func (s *Server) newProm(cfg models.PrometheusConfig, client kubernetes.Interface) (*prom.Client, error) {
+	c, err := prom.New(cfg, client)
+	if c != nil {
+		c.AzureAuthority = s.azureAuthority
+	}
+	return c, err
 }
 
 type promCandidate struct {
@@ -172,17 +182,17 @@ func (s *Server) handleDiscoverPrometheus(w http.ResponseWriter, r *http.Request
 	}
 	m, err := s.clusters.Get(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "cluster not connected")
+		writeError(w, http.StatusServiceUnavailable, problem.NotConnected)
 		return
 	}
 	client, ok := m.Client()
 	if !ok {
-		writeError(w, http.StatusServiceUnavailable, "cluster not connected")
+		writeError(w, http.StatusServiceUnavailable, problem.NotConnected)
 		return
 	}
 	svcs, err := client.CoreV1().Services("").List(r.Context(), metav1.ListOptions{})
 	if err != nil {
-		writeKubeError(w, err, "services")
+		writeReadError(w, r, err, "services")
 		return
 	}
 	type ranked struct {
@@ -236,7 +246,7 @@ func (s *Server) promFor(r *http.Request) *prom.Client {
 		return nil
 	}
 	client, _ := kubeFor(r).Client()
-	c, err := prom.New(cfg, client)
+	c, err := s.newProm(cfg, client)
 	if err != nil {
 		return nil
 	}

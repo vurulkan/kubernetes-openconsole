@@ -34,9 +34,7 @@ func TestExecConcurrentSessionLimit(t *testing.T) {
 	bobID, bob := e.user("bob", false)
 	e.grant(bobID, [4]any{0, "team-a", "pods", "exec"})
 
-	prev := maxExecSessionsPerUser
-	maxExecSessionsPerUser = 2
-	t.Cleanup(func() { maxExecSessionsPerUser = prev })
+	e.server.SetExecLimits(0, 2)
 
 	// Two shells already open for bob.
 	for i := 0; i < 2; i++ {

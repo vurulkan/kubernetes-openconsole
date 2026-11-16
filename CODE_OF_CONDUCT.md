@@ -1,6 +1,6 @@
 # Code of Conduct
 
-Kubernetes OpenConsole follows the
+OpenConsole for Kubernetes follows the
 [CNCF Code of Conduct](https://github.com/cncf/foundation/blob/main/code-of-conduct.md). Everyone taking part in the
 project, in issues, pull requests, discussions and any other project space, is expected to follow it.
 

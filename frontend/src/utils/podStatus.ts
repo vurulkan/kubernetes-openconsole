@@ -15,7 +15,7 @@ type ContainerState = {
   running?: { startedAt?: string };
   terminated?: Terminated;
 };
-type ContainerStatus = {
+export type ContainerStatus = {
   name: string;
   ready?: boolean;
   started?: boolean;

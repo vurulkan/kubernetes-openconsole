@@ -240,12 +240,10 @@ func TestAPIKeyRejections(t *testing.T) {
 	e.expect("GET", "/api/namespaces/team-a/pods", revoked, nil, http.StatusUnauthorized)
 	e.waitAudit("api_key.use.denied", "revoked")
 
-	// Regenerate: new secret works, the old one does not; it comes back to life.
-	var regen struct{ Secret string }
-	_ = json.Unmarshal([]byte(e.expect("POST", "/api/me/api-keys/"+itoa(int64(id))+"/regenerate", bob, map[string]any{"expiresAt": time.Now().Add(time.Hour)}, http.StatusOK)), &regen)
-	e.expect("GET", "/api/namespaces/team-a/pods", regen.Secret, nil, http.StatusOK)
+	// A revoked key can't be regenerated back to life (409, audited).
+	e.expect("POST", "/api/me/api-keys/"+itoa(int64(id))+"/regenerate", bob, map[string]any{"expiresAt": time.Now().Add(time.Hour)}, http.StatusConflict)
 	e.expect("GET", "/api/namespaces/team-a/pods", revoked, nil, http.StatusUnauthorized)
-	e.waitAudit("api_key.regenerate.success", "revoked")
+	e.waitAudit("api_key.regenerate.failed", "revoked")
 
 	body["name"] = "expired"
 	expired, expiredID := e.createKey(bob, body)
@@ -255,6 +253,13 @@ func TestAPIKeyRejections(t *testing.T) {
 	}
 	e.expect("GET", "/api/namespaces/team-a/pods", expired, nil, http.StatusUnauthorized)
 	e.waitAudit("api_key.use.denied", "expired")
+
+	// An expired key can be regenerated: the new secret works, the old one does not.
+	var regen struct{ Secret string }
+	_ = json.Unmarshal([]byte(e.expect("POST", "/api/me/api-keys/"+itoa(int64(expiredID))+"/regenerate", bob, map[string]any{"expiresAt": time.Now().Add(time.Hour)}, http.StatusOK)), &regen)
+	e.expect("GET", "/api/namespaces/team-a/pods", regen.Secret, nil, http.StatusOK)
+	e.expect("GET", "/api/namespaces/team-a/pods", expired, nil, http.StatusUnauthorized)
+	e.waitAudit("api_key.regenerate.success", "expired")
 
 	e.expect("GET", "/api/namespaces/team-a/pods", "oc_unknownunknownunknownunknownunknownunkn", nil, http.StatusUnauthorized)
 
@@ -270,7 +275,7 @@ func TestAPIKeyRejections(t *testing.T) {
 	// Deleting a key ends it too.
 	_ = e.store.UpdateUser(context.Background(), models.User{ID: bobID, Username: "bob", IsActive: true})
 	bob = e.token(bobID, "bob")
-	e.expect("DELETE", "/api/me/api-keys/"+itoa(int64(id)), bob, nil, http.StatusNoContent)
+	e.expect("DELETE", "/api/me/api-keys/"+itoa(int64(expiredID)), bob, nil, http.StatusNoContent)
 	e.expect("GET", "/api/namespaces/team-a/pods", regen.Secret, nil, http.StatusUnauthorized)
 }
 
@@ -372,8 +377,7 @@ func TestAPIKeysFeatureFlag(t *testing.T) {
 	bobID, bob := e.user("bob", false)
 	e.grant(bobID, [4]any{0, "team-a", "pods", "list"})
 	key, _ := e.createKey(bob, keyBody("k", []string{"team-a"}, "pods:list"))
-	SetDisabledFeatures([]string{FeatureAPIKeys})
-	t.Cleanup(func() { SetDisabledFeatures(nil) })
+	e.server.SetDisabledFeatures([]string{FeatureAPIKeys})
 	e = &testEnv{t: t, store: e.store, server: e.server, http: httptest.NewServer(e.server.Router())}
 	t.Cleanup(e.http.Close)
 	e.expect("GET", "/api/namespaces/team-a/pods", key, nil, http.StatusUnauthorized)

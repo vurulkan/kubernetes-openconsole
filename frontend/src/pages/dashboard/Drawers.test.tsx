@@ -30,7 +30,7 @@ const pod = {
 
 const deployment = {
   metadata: { name: 'web', namespace: 'team-a', resourceVersion: '5', annotations: { 'deployment.kubernetes.io/revision': '2' } },
-  spec: { replicas: 1, template: { spec: { containers: [{ image: 'web:1.2' }] } } },
+  spec: { replicas: 1, template: { spec: { containers: [{ name: 'app', image: 'web:1.2' }] } } },
   status: { replicas: 1, readyReplicas: 0, updatedReplicas: 1 },
 };
 
@@ -149,7 +149,7 @@ describe('WorkloadDrawer (StatefulSet)', () => {
   it('shows its own pods, no revisions, logs or restart, and scale when allowed', async () => {
     const sts = {
       metadata: { name: 'db', namespace: 'team-a', resourceVersion: '7' },
-      spec: { replicas: 2, updateStrategy: { type: 'RollingUpdate' }, template: { spec: { containers: [{ image: 'pg:16' }] } } },
+      spec: { replicas: 2, updateStrategy: { type: 'RollingUpdate' }, template: { spec: { containers: [{ name: 'db', image: 'pg:16' }] } } },
       status: { replicas: 2, readyReplicas: 2, updatedReplicas: 2, availableReplicas: 2, updateRevision: 'db-6d9f' },
     };
     const podOf = (name: string, owner: string) => ({

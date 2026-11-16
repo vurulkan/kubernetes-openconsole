@@ -10,16 +10,18 @@ import { UsageBar, UsageHistoryPanel } from '../../components/Usage';
 import { parseCpu, parseMem } from '../../utils/format';
 import { podResources } from '../../utils/resources';
 import { ageShort } from '../../utils/age';
-import { exitCodeHint, exitLabel, podOwner, podStatus, type Termination } from '../../utils/podStatus';
-import { Conditions, Empty, Events, Fields, Section, type Item } from './DetailParts';
+import { exitCodeHint, exitLabel, podOwner, podStatus, type ContainerStatus, type Termination } from '../../utils/podStatus';
+import type { ContainerSpec, PodObject, Probe } from '../../utils/kubeTypes';
+import { Conditions, Empty, Events, Fields, Section } from './DetailParts';
 
 type Props = {
-  pod: Item | null;
+  pod: PodObject | null;
   namespace: string;
   canExec: boolean;
   onClose: () => void;
-  onLogs: (name: string, previousContainer?: string) => void;
-  onShell: (pod: Item, anchor: HTMLElement) => void;
+  /** Undefined without pods:logs: no Logs buttons. */
+  onLogs?: (name: string, previousContainer?: string) => void;
+  onShell: (pod: PodObject, anchor: HTMLElement) => void;
   onYaml: (name: string) => void;
   /** Opens the owning Deployment's / StatefulSet's / DaemonSet's drawer. */
   onOpenOwner: (kind: WorkloadKind, name: string) => void;
@@ -30,7 +32,7 @@ type Props = {
 
 const DRAWER_KIND: Record<string, WorkloadKind> = { Deployment: 'deployments', StatefulSet: 'statefulsets', DaemonSet: 'daemonsets' };
 
-function probeText(p?: Item): string | undefined {
+function probeText(p?: Probe): string | undefined {
   if (!p) return undefined;
   if (p.httpGet) return `HTTP GET ${p.httpGet.path ?? '/'} :${p.httpGet.port}`;
   if (p.tcpSocket) return `TCP :${p.tcpSocket.port}`;
@@ -67,16 +69,17 @@ const TerminationBox: React.FC<{ term: Termination }> = ({ term }) => {
 export const PodDrawer: React.FC<Props> = ({ pod, namespace, canExec, onClose, onLogs, onShell, onYaml, onOpenOwner, onOpenNode, metrics }) => {
   const { t } = useTranslation();
   if (!pod) return null;
-  const name: string = pod.metadata?.name ?? '';
+  const name = pod.metadata?.name ?? '';
+  const nodeName = pod.spec?.nodeName;
   const status = podStatus(pod);
   const owner = podOwner(pod);
   const [ownerKind, ownerName] = owner ? owner.split('/') : [];
   const openable = owner ? DRAWER_KIND[ownerKind] : undefined;
-  const specs: Item[] = [
-    ...(pod.spec?.initContainers ?? []).map((c: Item) => ({ ...c, init: true })),
+  const specs: Array<ContainerSpec & { init?: boolean }> = [
+    ...(pod.spec?.initContainers ?? []).map((c) => ({ ...c, init: true })),
     ...(pod.spec?.containers ?? []),
   ];
-  const statuses: Item[] = [...(pod.status?.initContainerStatuses ?? []), ...(pod.status?.containerStatuses ?? [])];
+  const statuses: ContainerStatus[] = [...(pod.status?.initContainerStatuses ?? []), ...(pod.status?.containerStatuses ?? [])];
   const usage = metrics?.available ? metrics.items.find((p) => p.name === name) : undefined;
   const budget = podResources(pod.spec?.containers);
 
@@ -93,7 +96,7 @@ export const PodDrawer: React.FC<Props> = ({ pod, namespace, canExec, onClose, o
             <FileCode2 size={13} />
             {t('dashboard.actions.yaml')}
           </Button>
-          {status.lastTermination && (
+          {onLogs && status.lastTermination && (
             <Button variant="outline" size="sm" onClick={() => onLogs(name, status.lastTermination!.container)}>
               <History size={13} />
               {t('dashboard.detail.previousLogs')}
@@ -105,10 +108,12 @@ export const PodDrawer: React.FC<Props> = ({ pod, namespace, canExec, onClose, o
               {t('dashboard.actions.shell')}
             </Button>
           )}
-          <Button variant="primary" size="sm" onClick={() => onLogs(name)}>
-            <Terminal size={13} />
-            {t('dashboard.actions.logs')}
-          </Button>
+          {onLogs && (
+            <Button variant="primary" size="sm" onClick={() => onLogs(name)}>
+              <Terminal size={13} />
+              {t('dashboard.actions.logs')}
+            </Button>
+          )}
         </>
       }
     >
@@ -121,17 +126,17 @@ export const PodDrawer: React.FC<Props> = ({ pod, namespace, canExec, onClose, o
               [t('dashboard.detail.restarts'), String(status.restarts)],
               [
                 t('dashboard.detail.node'),
-                onOpenNode && pod.spec?.nodeName ? (
+                onOpenNode && nodeName ? (
                   <button
                     key="n"
                     type="button"
-                    onClick={() => onOpenNode(pod.spec.nodeName)}
+                    onClick={() => onOpenNode(nodeName)}
                     className="text-brand-600 underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/60 dark:text-brand-300"
                   >
-                    {pod.spec.nodeName}
+                    {nodeName}
                   </button>
                 ) : (
-                  pod.spec?.nodeName
+                  nodeName
                 ),
               ],
               [t('dashboard.detail.podIP'), pod.status?.podIP],
@@ -158,7 +163,7 @@ export const PodDrawer: React.FC<Props> = ({ pod, namespace, canExec, onClose, o
         <Section title={t('dashboard.detail.containers')}>
           <div className="flex flex-col gap-3">
             {specs.map((c) => {
-              const st = statuses.find((s) => s.name === c.name) ?? {};
+              const st: Partial<ContainerStatus> = statuses.find((s) => s.name === c.name) ?? {};
               const term = status.containers.find((x) => x.name === c.name)?.lastTermination;
               const state = st.state ?? {};
               const stateText = state.running
@@ -169,8 +174,10 @@ export const PodDrawer: React.FC<Props> = ({ pod, namespace, canExec, onClose, o
                     ? `${state.terminated.reason ?? 'Terminated'} (${state.terminated.exitCode})`
                     : '—';
               const res = c.resources ?? {};
-              const resText = (kind: 'requests' | 'limits') =>
-                res[kind] ? `cpu ${res[kind].cpu ?? '—'} · mem ${res[kind].memory ?? '—'}` : t('dashboard.detail.notSet');
+              const resText = (kind: 'requests' | 'limits') => {
+                const r = res[kind];
+                return r ? `cpu ${r.cpu ?? '—'} · mem ${r.memory ?? '—'}` : t('dashboard.detail.notSet');
+              };
               return (
                 <div key={c.name} className="flex flex-col gap-2 rounded-lg border border-slate-200 p-3 dark:border-slate-800">
                   <div className="flex items-center justify-between gap-2">

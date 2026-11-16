@@ -1,20 +1,23 @@
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { Spinner } from './components/ui';
 import LoginPage from './pages/LoginPage';
 import ChangePasswordPage from './pages/ChangePasswordPage';
-import DashboardPage from './pages/DashboardPage';
-import AdminPage from './pages/AdminPage';
-import OverviewPage from './pages/OverviewPage';
-import NodesPage from './pages/NodesPage';
-import ApiKeysPage from './pages/ApiKeysPage';
-import ApiKeyFormPage from './pages/apikeys/ApiKeyFormPage';
+
+// Each screen is its own chunk, loaded when first opened.
+const DashboardPage = lazy(() => import('./pages/DashboardPage'));
+const AdminPage = lazy(() => import('./pages/AdminPage'));
+const OverviewPage = lazy(() => import('./pages/OverviewPage'));
+const NodesPage = lazy(() => import('./pages/NodesPage'));
+const ApiKeysPage = lazy(() => import('./pages/ApiKeysPage'));
+const ApiKeyFormPage = lazy(() => import('./pages/apikeys/ApiKeyFormPage'));
 import CommandPalette from './components/CommandPalette';
 import ShortcutsHelp from './components/ShortcutsHelp';
 import { ConfirmProvider } from './components/ConfirmDialog';
 import { useGlobalShortcuts } from './hooks/useGlobalShortcuts';
 import { useTheme } from './components/ThemeProvider';
-import { endSession, getMe, listNamespaces, tokenExpiresAt, User } from './services/api';
+import { endSession, getMe, listNamespaces, tokenExpiresAt, tokenIdleSeconds, User } from './services/api';
+import { isIdle, noteActivity } from './utils/session';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -42,15 +45,41 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // Back to the sign-in page when the session runs out, even on an idle screen
-  // that sends no requests. Polled, so a laptop waking from sleep is caught too.
+  // Back to the sign-in page after the inactivity timeout, even on a screen
+  // that sends no requests (its polls are not activity). Polled, so a laptop
+  // waking from sleep is caught too. A token from before the inactivity
+  // timeout carries no idle claim: it ends at its expiry, as it used to.
   useEffect(() => {
     if (!user) return;
     const timer = window.setInterval(() => {
+      const idle = tokenIdleSeconds();
       const exp = tokenExpiresAt();
-      if (exp !== null && Date.now() >= exp) endSession();
+      if (idle ? isIdle(idle) : exp !== null && Date.now() >= exp) endSession();
     }, 15_000);
-    return () => window.clearInterval(timer);
+    // Clicks and keys are activity; while they go on without requests (typing
+    // in a shell), a request every minute (a quarter of a shorter timeout)
+    // keeps the server's deadline moving.
+    let lastPing = Date.now();
+    const pingEvery = Math.min(60_000, (tokenIdleSeconds() ?? 3600) * 250);
+    const onInput = () => {
+      noteActivity();
+      if (Date.now() - lastPing < pingEvery) return;
+      lastPing = Date.now();
+      void getMe().catch(() => undefined);
+    };
+    // Signed out in another tab: this one follows.
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'authToken' && !e.newValue) endSession();
+    };
+    window.addEventListener('pointerdown', onInput, true);
+    window.addEventListener('keydown', onInput, true);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('pointerdown', onInput, true);
+      window.removeEventListener('keydown', onInput, true);
+      window.removeEventListener('storage', onStorage);
+    };
   }, [user]);
 
   useEffect(() => {
@@ -60,16 +89,16 @@ const App: React.FC = () => {
       .catch(() => setNamespaces([]));
   }, [user]);
 
-  if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center">
-        <Spinner size="lg" />
-      </div>
-    );
-  }
+  const pageLoading = (
+    <div className="flex min-h-screen items-center justify-center">
+      <Spinner size="lg" />
+    </div>
+  );
+  if (loading) return pageLoading;
 
   return (
     <ConfirmProvider>
+      <Suspense fallback={pageLoading}>
       <Routes>
         <Route path="/login" element={<LoginPage onLogin={refreshUser} />} />
         <Route
@@ -95,6 +124,7 @@ const App: React.FC = () => {
         <Route path="/account/api-keys" element={user ? <ApiKeysPage user={user} /> : <Navigate to="/login" />} />
         <Route path="/account/api-keys/:id" element={user ? <ApiKeyFormPage user={user} /> : <Navigate to="/login" />} />
       </Routes>
+      </Suspense>
       {user && <CommandPalette user={user} namespaces={namespaces} />}
       <ShortcutsHelp />
     </ConfirmProvider>

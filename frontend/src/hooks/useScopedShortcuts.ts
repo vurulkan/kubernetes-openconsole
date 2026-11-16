@@ -24,12 +24,15 @@ type Binding = {
   shift?: boolean;
 };
 
-const isTypingTarget = (el: EventTarget | null): boolean => {
+// Keys typed here belong to the field, not to shortcuts. Monaco takes text
+// through a plain div (EditContext) and xterm through its own textarea, so
+// anything inside an editor or a terminal counts too.
+export const isTypingTarget = (el: EventTarget | null): boolean => {
   if (!el || !(el instanceof HTMLElement)) return false;
   const tag = el.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
   if (el.isContentEditable) return true;
-  return false;
+  return el.closest('.monaco-editor, .xterm') !== null;
 };
 
 // Global counter tracked by Modal so scoped page shortcuts stop firing while

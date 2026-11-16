@@ -1,3 +1,6 @@
+import i18n from '../i18n';
+import { noteActivity } from '../utils/session';
+
 export type User = {
   id: number;
   username: string;
@@ -9,6 +12,8 @@ export type User = {
   activeClusterId?: number;
   /** Replaces the role modes for this user's API keys; "" = by roles. */
   apiAccessOverride?: ApiAccessOverride;
+  /** The user's groups (in the admin user list only). */
+  groupIds?: number[];
 };
 
 /** What a role's grants give API keys. */
@@ -41,6 +46,8 @@ export type LDAPConfig = {
   useSsl: boolean;
   startTls: boolean;
   sslSkipVerify: boolean;
+  /** PEM CA the server certificate (ldaps / StartTLS) is checked against; empty = system CAs. */
+  caCert?: string;
   timeoutSeconds: number;
   bindDn: string;
   bindPassword: string;
@@ -63,14 +70,6 @@ export type AzureADConfig = {
   passwordConfigured?: boolean;
 };
 
-export type KubeClusterStatus = {
-  method: string;
-  server: string;
-  active: boolean;
-  ready?: boolean;
-  lastError?: string;
-};
-
 export const hasToken = () => Boolean(getToken());
 
 const BASE_URL = '';
@@ -89,14 +88,116 @@ const checkSession = (status: number) => {
   if (status === 401 && getToken()) endSession();
 };
 
-// When the JWT runs out (ms since epoch), or null if it can't be read.
-export const tokenExpiresAt = (): number | null => {
+const tokenClaims = (): { exp?: number; idle?: number } => {
   try {
-    const payload = JSON.parse(atob(getToken().split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))) as { exp?: number };
-    return payload.exp ? payload.exp * 1000 : null;
+    return JSON.parse(atob(getToken().split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
   } catch {
-    return null;
+    return {};
   }
+};
+
+// When the JWT runs out (ms since epoch, by the server's clock), or null if it can't be read.
+export const tokenExpiresAt = (): number | null => {
+  const { exp } = tokenClaims();
+  return exp ? exp * 1000 : null;
+};
+
+// The inactivity timeout in seconds (the admin's session setting), or null for an older token.
+export const tokenIdleSeconds = (): number | null => tokenClaims().idle ?? null;
+
+// The cluster this tab shows. Every request names it, so another tab
+// switching the user's cluster can't redirect this tab's actions (the server
+// otherwise uses the user's stored pick). Learned from the first response,
+// which names the cluster that answered; a reload takes the latest pick.
+const CLUSTER_HEADER = 'X-OpenConsole-Cluster';
+let tabCluster: number | null = null;
+export const tabClusterId = () => tabCluster;
+
+const authHeaders = (): Record<string, string> => ({
+  ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
+  ...(tabCluster ? { [CLUSTER_HEADER]: String(tabCluster) } : {}),
+});
+
+// What every response tells the tab: a 401 ends the session; the first one
+// names the tab's cluster; a request the user caused (not a poll) is activity.
+const seeResponse = (response: Response, auto = false) => {
+  checkSession(response.status);
+  if (tabCluster === null) {
+    const id = Number(response.headers.get(CLUSTER_HEADER));
+    if (id > 0) tabCluster = id;
+  }
+  if (!auto && response.ok && getToken()) noteActivity();
+};
+
+// Another tab picked a cluster: the key other tabs watch (storage event).
+export const CLUSTER_PICK_KEY = 'clusterPick';
+
+// Reason codes of the server's error answers (problem details: {"error":
+// "<code>", "detail": "<English text>"}; backend/internal/problem), shown as a
+// sentence in the UI language. api.test.ts checks the list against the server's.
+export const ERROR_CODES = [
+  'unauthorized',
+  'api_key_expired',
+  'api_key_revoked',
+  'password_change_required',
+  'forbidden',
+  'admin_only',
+  'feature_disabled',
+  'api_key_not_allowed',
+  'api_access_policy',
+  'api_access_off',
+  'backup_download_disabled',
+  'rate_limited',
+  'too_many_sessions',
+  'not_found',
+  'method_not_allowed',
+  'invalid_id',
+  'invalid_body',
+  'invalid_input',
+  'body_too_large',
+  'conflict',
+  'wrong_password',
+  'weak_password',
+  'password_unchanged',
+  'cannot_delete_self',
+  'kubeconfig_unsupported',
+  'cluster_invalid',
+  'cluster_forbidden',
+  'cluster_timeout',
+  'cluster_unreachable',
+  'cluster_error',
+  'not_connected',
+  'not_configured',
+  'pod_not_found',
+  'container_not_found',
+  'not_ready',
+  'previous_unavailable',
+  'unavailable',
+  'exec_failed',
+  'connection_failed',
+  'sign_in_failed',
+  'recording_unavailable',
+  'internal_error',
+];
+/** A reason code (or "code: detail", as WebSocket frames still send) as a sentence; other text as is. */
+export const errorText = (reason: string, detail?: string) => {
+  const m = /^([a-z_]+)(?:: (.+))?$/s.exec(reason);
+  if (!m || !ERROR_CODES.includes(m[1])) return detail || reason;
+  const sentence = i18n.t(`apiErrors.${m[1]}`);
+  const extra = detail || m[2];
+  return extra ? `${sentence} (${extra})` : sentence;
+};
+const networkError = () => new Error(i18n.t('apiErrors.network'));
+
+const responseError = async (response: Response) => {
+  const text = await response.text();
+  let body: { error?: string; detail?: string } = {};
+  try {
+    body = JSON.parse(text) as typeof body;
+  } catch {
+    /* not JSON */
+  }
+  return new Error(errorText(body.error || text || response.statusText, body.detail));
 };
 
 const apiRequest = async <T>(path: string, options: RequestInit = {}): Promise<T> => {
@@ -109,36 +210,15 @@ const apiRequest = async <T>(path: string, options: RequestInit = {}): Promise<T
       headers: {
         'Content-Type': 'application/json',
         ...(options.headers || {}),
-        ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {})
+        ...authHeaders()
       }
     });
-  } catch (error) {
-    const target = `${window.location.origin}${path}`;
-    throw new Error(`Network error while contacting the server: ${target}`);
+  } catch {
+    throw networkError();
   }
 
-  checkSession(response.status);
-  if (!response.ok) {
-    const contentType = response.headers.get('content-type') || '';
-    const messageText = await response.text();
-    if (contentType.includes('application/json')) {
-      try {
-        const parsed = JSON.parse(messageText) as { error?: string };
-        throw new Error(parsed.error || response.statusText);
-      } catch (error) {
-        throw new Error(messageText || response.statusText);
-      }
-    }
-    if (messageText.startsWith('{') && messageText.includes('"error"')) {
-      try {
-        const parsed = JSON.parse(messageText) as { error?: string };
-        throw new Error(parsed.error || response.statusText);
-      } catch (error) {
-        throw new Error(messageText || response.statusText);
-      }
-    }
-    throw new Error(messageText || response.statusText);
-  }
+  seeResponse(response, new Headers(options.headers).get('X-OpenConsole-Refresh') === 'auto');
+  if (!response.ok) throw await responseError(response);
 
   if (response.status === 204) {
     return {} as T;
@@ -155,77 +235,20 @@ const formRequest = async <T>(path: string, formData: FormData): Promise<T> => {
       body: formData,
       credentials: 'same-origin',
       cache: 'no-store',
-      headers: {
-        ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {})
-      }
+      headers: authHeaders()
     });
-  } catch (error) {
-    const target = `${window.location.origin}${path}`;
-    throw new Error(`Network error while contacting the server: ${target}`);
+  } catch {
+    throw networkError();
   }
 
-  checkSession(response.status);
-  if (!response.ok) {
-    const contentType = response.headers.get('content-type') || '';
-    const messageText = await response.text();
-    if (contentType.includes('application/json')) {
-      try {
-        const parsed = JSON.parse(messageText) as { error?: string };
-        throw new Error(parsed.error || response.statusText);
-      } catch (error) {
-        throw new Error(messageText || response.statusText);
-      }
-    }
-    if (messageText.startsWith('{') && messageText.includes('"error"')) {
-      try {
-        const parsed = JSON.parse(messageText) as { error?: string };
-        throw new Error(parsed.error || response.statusText);
-      } catch (error) {
-        throw new Error(messageText || response.statusText);
-      }
-    }
-    throw new Error(messageText || response.statusText);
-  }
+  seeResponse(response);
+  if (!response.ok) throw await responseError(response);
 
   if (response.status === 204) {
     return {} as T;
   }
 
   return response.json() as Promise<T>;
-};
-
-const xhrRequest = async <T>(path: string, payload: unknown): Promise<T> => {
-  return new Promise((resolve, reject) => {
-    const request = new XMLHttpRequest();
-    request.open('POST', path, true);
-    request.setRequestHeader('Content-Type', 'application/json');
-    const token = getToken();
-    if (token) {
-      request.setRequestHeader('Authorization', `Bearer ${token}`);
-    }
-    request.onreadystatechange = () => {
-      if (request.readyState !== XMLHttpRequest.DONE) {
-        return;
-      }
-      checkSession(request.status);
-      if (request.status >= 200 && request.status < 300) {
-        try {
-          resolve(JSON.parse(request.responseText) as T);
-        } catch (error) {
-          resolve({} as T);
-        }
-      } else {
-        try {
-          const parsed = JSON.parse(request.responseText) as { error?: string };
-          reject(new Error(parsed.error || request.statusText));
-        } catch (error) {
-          reject(new Error(request.responseText || request.statusText));
-        }
-      }
-    };
-    request.onerror = () => reject(new Error('Network error while contacting the server.'));
-    request.send(JSON.stringify(payload));
-  });
 };
 
 export const login = (username: string, password: string) =>
@@ -254,10 +277,12 @@ export const changePassword = (currentPassword: string, newPassword: string) =>
 // header so the server doesn't audit each one; the lists the user opens are.
 // A WebSocket can't carry the Authorization header, and the JWT must not go into a URL:
 // trade it for a single-use ticket (30 s, valid for this path only).
-export const wsUrl = async (path: string, params?: URLSearchParams) => {
+// auto: a reconnect the socket makes on its own, which is not user activity.
+export const wsUrl = async (path: string, params?: URLSearchParams, auto?: boolean) => {
   const { ticket } = await apiRequest<{ ticket: string }>('/api/ws-ticket', {
     method: 'POST',
     body: JSON.stringify({ path }),
+    ...autoRefresh(auto),
   });
   const query = new URLSearchParams(params);
   query.set('ticket', ticket);
@@ -296,6 +321,9 @@ export const getJobYaml = (namespace: string, name: string) =>
 
 export const listCronJobs = (namespace: string) =>
   apiRequest<{ items: Array<Record<string, unknown>> }>(`/api/namespaces/${namespace}/cronjobs`);
+
+export const getPodYaml = (namespace: string, name: string) =>
+  apiRequest<{ yaml: string }>(`/api/namespaces/${namespace}/pods/${name}/yaml`);
 
 export const getDeploymentYaml = (namespace: string, name: string) =>
   apiRequest<{ yaml: string }>(`/api/namespaces/${namespace}/deployments/${name}/yaml`);
@@ -564,18 +592,27 @@ export type ClusterListItem = {
 
 // Clusters the caller may use: isActive = the default cluster, selected =
 // the caller's current one.
-export const listClustersPublic = () =>
+export const listClustersPublic = (auto?: boolean) =>
   apiRequest<{ items: Array<{ id: number; name: string; isActive: boolean; selected: boolean }> }>(
-    '/api/clusters/public'
+    '/api/clusters/public',
+    autoRefresh(auto)
   );
 
 // Picks the caller's own cluster (0 = back to the default). Only affects the
 // current user.
-export const selectCluster = (clusterId: number) =>
-  apiRequest<{ status: string; clusterId: number; name: string }>('/api/cluster/select', {
+export const selectCluster = async (clusterId: number) => {
+  const result = await apiRequest<{ status: string; clusterId: number; name: string }>('/api/cluster/select', {
     method: 'POST',
     body: JSON.stringify({ clusterId }),
   });
+  // Other open tabs see this (storage event) and offer to follow.
+  try {
+    localStorage.setItem(CLUSTER_PICK_KEY, JSON.stringify({ id: result.clusterId, name: result.name, at: Date.now() }));
+  } catch {
+    /* storage unavailable */
+  }
+  return result;
+};
 
 export const getActiveCluster = () =>
   apiRequest<{
@@ -603,7 +640,7 @@ export const createCluster = (payload: ClusterCreatePayload) =>
 
 export const updateClusterRow = (
   id: number,
-  payload: ClusterCreatePayload & { replaceSecrets?: boolean }
+  payload: ClusterCreatePayload & { replaceSecrets?: boolean; removeCaCert?: boolean }
 ) =>
   apiRequest<{ status: string }>(`/api/admin/clusters/${id}`, {
     method: 'PUT',
@@ -699,10 +736,8 @@ export const setUserGroups = (id: number, groupIds: number[]) =>
     body: JSON.stringify({ groupIds })
   });
 
-export const getUserGroups = (id: number) =>
-  apiRequest<{ groupIds: number[] }>(`/api/admin/users/${id}/groups`);
-
-export const listGroups = () => apiRequest<{ items: Array<{ id: number; name: string }> }>('/api/admin/groups');
+/** Every group with the ids of its roles. */
+export const listGroups = () => apiRequest<{ items: Array<{ id: number; name: string; roleIds?: number[] }> }>('/api/admin/groups');
 
 export const createGroup = (name: string) =>
   apiRequest<{ id: number; name: string }>('/api/admin/groups', {
@@ -724,9 +759,6 @@ export const setGroupRoles = (id: number, roleIds: number[]) =>
     method: 'PUT',
     body: JSON.stringify({ roleIds })
   });
-
-export const getGroupRoles = (id: number) =>
-  apiRequest<{ roleIds: number[] }>(`/api/admin/groups/${id}/roles`);
 
 export const listRoles = () => apiRequest<{ items: Role[] }>('/api/admin/roles');
 
@@ -801,7 +833,7 @@ export const searchLdapUsers = (query: string) =>
   });
 
 export const importLdapUsers = (usernames: string[], groupIds: number[] = []) =>
-  apiRequest<{ created: number; createdUsers?: string[]; skippedExisting?: string[] }>('/api/admin/ldap/users/import', {
+  apiRequest<{ created: number; createdUsers?: string[]; skippedExisting?: string[]; failed?: string[] }>('/api/admin/ldap/users/import', {
     method: 'POST',
     body: JSON.stringify({ usernames, groupIds })
   });
@@ -811,34 +843,6 @@ export const getSession = () => apiRequest<SessionSettings>('/api/admin/session'
 export const updateSession = (payload: SessionSettings) =>
   apiRequest('/api/admin/session', {
     method: 'PUT',
-    body: JSON.stringify(payload)
-  });
-
-export const getCluster = () => apiRequest<KubeClusterStatus>('/api/admin/cluster');
-
-export const updateCluster = (payload: {
-  method: string;
-  kubeconfigBase64?: string;
-  token?: string;
-  server?: string;
-  caCertBase64?: string;
-}) =>
-  xhrRequest<{ status: string; active?: boolean; ready?: boolean; lastError?: string }>('/api/admin/cluster', payload).catch(() =>
-    apiRequest<{ status: string; active?: boolean; ready?: boolean; lastError?: string }>('/api/admin/cluster', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    })
-  );
-
-export const validateCluster = (payload: {
-  method: string;
-  kubeconfigBase64?: string;
-  token?: string;
-  server?: string;
-  caCertBase64?: string;
-}) =>
-  apiRequest('/api/admin/cluster/validate', {
-    method: 'POST',
     body: JSON.stringify(payload)
   });
 
@@ -937,9 +941,9 @@ export const downloadWithAuth = async (path: string, fallbackName: string) => {
   const response = await fetch(path, {
     credentials: 'same-origin',
     cache: 'no-store',
-    headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {},
+    headers: authHeaders(),
   });
-  checkSession(response.status);
+  seeResponse(response);
   if (!response.ok) {
     const text = await response.text();
     let message = text || response.statusText;
@@ -967,6 +971,20 @@ export const exportAuditLogs = (q: AuditQuery) =>
 
 export const exportUsersCsv = () => downloadWithAuth('/api/admin/users/export', 'users.csv');
 export const exportGroupsCsv = () => downloadWithAuth('/api/admin/groups/export', 'groups.csv');
+
+export type BackupInfo = { name: string; sizeBytes: number; createdAt: string };
+export type BackupList = {
+  items: BackupInfo[];
+  dir: string;
+  keep: number;
+  intervalSeconds: number;
+  allowDownload: boolean;
+  keyExternal: boolean;
+};
+export const listBackups = () => apiRequest<BackupList>('/api/admin/backups');
+export const createBackup = () => apiRequest<BackupInfo>('/api/admin/backups', { method: 'POST' });
+export const downloadBackup = (name: string) =>
+  downloadWithAuth(`/api/admin/backups/${encodeURIComponent(name)}`, name);
 
 export type SessionRow = {
   id: number;
@@ -1091,9 +1109,9 @@ const fetchRecordingCast = async (id: number, download: boolean): Promise<Respon
   const response = await fetch(`/api/admin/recordings/${id}/cast${download ? '?download=1' : ''}`, {
     credentials: 'same-origin',
     cache: 'no-store',
-    headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {},
+    headers: authHeaders(),
   });
-  checkSession(response.status);
+  seeResponse(response);
   if (!response.ok) {
     const text = await response.text();
     let message = text || response.statusText;

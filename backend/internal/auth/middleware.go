@@ -2,11 +2,16 @@ package auth
 
 import (
 	"context"
-	"encoding/json"
+	"k8s-dashboard/backend/internal/problem"
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 )
+
+// AutoRefreshHeader marks a request a screen sends on its own (a poll): it is
+// neither audited nor counted as activity for the inactivity timeout.
+const AutoRefreshHeader = "X-OpenConsole-Refresh"
 
 type contextKey string
 
@@ -30,8 +35,9 @@ type SessionValidator interface {
 	// explicitly rejected; err means lookup failed (treated as fail-open by
 	// the middleware so a DB blip doesn't log everyone out).
 	Validate(ctx context.Context, jti string) (live bool, err error)
-	// Touch bumps last_used_at; non-blocking.
-	Touch(jti string)
+	// Touch records activity: last_used_at, and the inactivity deadline moves
+	// on (never past until, the token's own expiry); non-blocking.
+	Touch(jti string, until time.Time)
 }
 
 // APIKeyPrefix starts every API key secret, so secret scanners can spot one.
@@ -39,7 +45,8 @@ const APIKeyPrefix = "oc_"
 
 // KeyAuthenticator checks an API key: the secret from the Authorization
 // header, or (keyID > 0) the key a WebSocket ticket was issued with. A
-// non-zero status rejects the request with that status (and the message, if any, as {"error": …}).
+// non-zero status rejects the request with that status and reason code (see
+// package problem); a 429 tells the client to retry after a second.
 type KeyAuthenticator interface {
 	AuthenticateKey(r *http.Request, secret string, keyID int) (*Claims, int, string)
 }
@@ -52,22 +59,20 @@ type KeyAuthenticator interface {
 // with oc_ is an API key, checked by keys (nil = API keys are off).
 func AuthMiddleware(secret []byte, sessions SessionValidator, keys KeyAuthenticator) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
-		serveKey := func(w http.ResponseWriter, r *http.Request, secret string, keyID int) {
+		serveKey := func(w http.ResponseWriter, r *http.Request, secret string, keyID int, cluster string) {
 			if keys == nil {
-				w.WriteHeader(http.StatusUnauthorized)
+				problem.Write(w, http.StatusUnauthorized, problem.Unauthorized, "")
 				return
 			}
-			claims, status, message := keys.AuthenticateKey(r, secret, keyID)
+			claims, status, code := keys.AuthenticateKey(r, secret, keyID)
 			if status != 0 {
-				if message != "" {
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(status)
-					_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
-					return
+				if status == http.StatusTooManyRequests {
+					w.Header().Set("Retry-After", "1")
 				}
-				w.WriteHeader(status)
+				problem.Write(w, status, code, "")
 				return
 			}
+			claims.Cluster = cluster
 			next.ServeHTTP(w, r.WithContext(WithUser(r.Context(), claims)))
 		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -81,12 +86,12 @@ func AuthMiddleware(secret []byte, sessions SessionValidator, keys KeyAuthentica
 			}
 			var claims *Claims
 			if strings.HasPrefix(token, APIKeyPrefix) {
-				serveKey(w, r, token, 0)
+				serveKey(w, r, token, 0, "")
 				return
 			} else if token != "" {
 				parsed, err := ParseToken(secret, token)
 				if err != nil {
-					w.WriteHeader(http.StatusUnauthorized)
+					problem.Write(w, http.StatusUnauthorized, problem.Unauthorized, "")
 					return
 				}
 				claims = parsed
@@ -94,17 +99,17 @@ func AuthMiddleware(secret []byte, sessions SessionValidator, keys KeyAuthentica
 				// WebSockets: the JWT never goes into a URL (see ticket.go).
 				redeemed, ok := RedeemTicket(id, r.URL.Path)
 				if !ok {
-					w.WriteHeader(http.StatusUnauthorized)
+					problem.Write(w, http.StatusUnauthorized, problem.Unauthorized, "")
 					return
 				}
 				if redeemed.APIKey != nil {
 					// Checked again: the key may have been revoked since the ticket was issued.
-					serveKey(w, r, "", redeemed.APIKey.ID)
+					serveKey(w, r, "", redeemed.APIKey.ID, redeemed.Cluster)
 					return
 				}
 				claims = redeemed
 			} else {
-				w.WriteHeader(http.StatusUnauthorized)
+				problem.Write(w, http.StatusUnauthorized, problem.Unauthorized, "")
 				return
 			}
 			if sessions != nil && claims.ID != "" {
@@ -112,10 +117,15 @@ func AuthMiddleware(secret []byte, sessions SessionValidator, keys KeyAuthentica
 				if lookupErr != nil {
 					slog.Warn("session lookup failed; allowing", "error", lookupErr.Error())
 				} else if !live {
-					w.WriteHeader(http.StatusUnauthorized)
+					problem.Write(w, http.StatusUnauthorized, problem.Unauthorized, "")
 					return
 				}
-				sessions.Touch(claims.ID)
+				// A screen's automatic refresh is not activity: a tab left open still times out.
+				// Nor is a WebSocket connect (ticket): its ticket request already counted
+				// when the user caused it, and a reconnect the socket makes itself must not.
+				if token != "" && r.Header.Get(AutoRefreshHeader) != "auto" && claims.ExpiresAt != nil {
+					sessions.Touch(claims.ID, claims.ExpiresAt.Time)
+				}
 			}
 			next.ServeHTTP(w, r.WithContext(WithUser(r.Context(), claims)))
 		})

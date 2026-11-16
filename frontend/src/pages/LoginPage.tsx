@@ -78,7 +78,7 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
           />
           <div className="relative">
             <div className="flex items-center gap-2.5">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white dark:bg-slate-900/10 ring-1 ring-inset ring-white/15">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 ring-1 ring-inset ring-white/15">
                 <svg
                   viewBox="0 0 24 24"
                   className="h-5 w-5 text-white"
@@ -94,8 +94,8 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
                 </svg>
               </div>
               <div className="flex flex-col leading-tight">
-                <span className="text-sm font-semibold tracking-tight">Kubernetes OpenConsole</span>
-                <span className="text-[10px] font-medium uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                <span className="text-sm font-semibold tracking-tight">OpenConsole for Kubernetes</span>
+                <span className="text-[10px] font-medium uppercase tracking-[0.18em] text-slate-400">
                   {t('login.tagline')}
                 </span>
               </div>
@@ -116,9 +116,9 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
             ].map((stat) => (
               <div
                 key={stat.label}
-                className="rounded-xl border border-white/10 bg-white dark:bg-slate-900/5 px-3 py-2.5 backdrop-blur-sm"
+                className="rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 backdrop-blur-sm"
               >
-                <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+                <div className="text-[10px] uppercase tracking-[0.14em] text-slate-400">
                   {stat.label}
                 </div>
                 <div className="mt-1 text-sm font-semibold text-white">{stat.value}</div>
@@ -133,7 +133,7 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
             <div className="mb-6 flex justify-center overflow-hidden">
               <img
                 src={logoUrl}
-                alt="Organization logo"
+                alt={t('admin.customization.logo')}
                 onError={() => setLogoUrl(null)}
                 className="max-h-16 w-full max-w-full object-contain"
               />

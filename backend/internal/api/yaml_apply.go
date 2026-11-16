@@ -12,6 +12,7 @@ import (
 
 	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/problem"
 )
 
 // resourceTarget maps the URL segment to both the GVR (needed by the dynamic
@@ -58,7 +59,7 @@ func (s *Server) handleYAMLApply(w http.ResponseWriter, r *http.Request) {
 	resource := chi.URLParam(r, "resource")
 	target, ok := resourceGVR[resource]
 	if !ok {
-		writeError(w, http.StatusBadRequest, "unsupported resource type")
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "unsupported resource type")
 		return
 	}
 	namespace := chi.URLParam(r, "namespace")
@@ -66,7 +67,7 @@ func (s *Server) handleYAMLApply(w http.ResponseWriter, r *http.Request) {
 
 	user, ok := s.userForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return
 	}
 
@@ -79,21 +80,23 @@ func (s *Server) handleYAMLApply(w http.ResponseWriter, r *http.Request) {
 
 	var body applyRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid body")
+		s.recordApplyAudit(r, namespace, name, resource, audit.Failed, reasonInvalid, nil)
+		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
 	if body.YAML == "" {
-		writeError(w, http.StatusBadRequest, "yaml is required")
+		s.recordApplyAudit(r, namespace, name, resource, audit.Failed, reasonInvalid, audit.D{"dry_run": body.DryRun})
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "yaml is required")
 		return
 	}
 
 	// Rate limit only the mutating path. Dry-run is cheap and operators
 	// iterate on it; limiting the preview would make the UI feel broken.
 	if !body.DryRun {
-		if !allowDeployAction(user.ID) {
+		if !s.allowDeployAction(user.ID) {
 			w.Header().Set("Retry-After", "6")
 			s.recordApplyAudit(r, namespace, name, resource, audit.RateLimited, reasonRateLimited, audit.D{"dry_run": false})
-			writeError(w, http.StatusTooManyRequests, "rate limited")
+			writeError(w, http.StatusTooManyRequests, problem.RateLimited)
 			return
 		}
 	}
@@ -108,7 +111,8 @@ func (s *Server) handleYAMLApply(w http.ResponseWriter, r *http.Request) {
 		// (Cloudflare, ingress-nginx) doesn't intercept a 5xx and show its
 		// own branded page for what is actually a user mistake (bad YAML,
 		// stale resourceVersion, missing field, etc.).
-		writeError(w, httpStatusFor(err), err.Error())
+		st := httpStatusFor(err)
+		writeErrorDetail(w, st, kubeWriteCode(st), err.Error())
 		return
 	}
 

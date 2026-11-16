@@ -54,20 +54,22 @@ func TestLoginRespectsAuthSource(t *testing.T) {
 		t.Fatalf("audit user = %q", a.User)
 	}
 
-	// Legacy import still tagged local: the directory password signs in and
-	// tags the account LDAP.
+	// A local account never takes a directory password, even when the
+	// directory has an entry with the same name: no takeover, no re-tagging.
 	account("john", models.AuthSourceLocal)
-	login("john", ldapfake.JohnPwd, http.StatusOK)
-	if u, _ := e.store.GetUserByUsername(ctx, "john"); u.AuthSource != models.AuthSourceLDAP {
+	login("john", ldapfake.JohnPwd, http.StatusUnauthorized)
+	if u, _ := e.store.GetUserByUsername(ctx, "john"); u.AuthSource != models.AuthSourceLocal {
 		t.Fatalf("john source = %q", u.AuthSource)
 	}
+	login("john", "Local-pass-1", http.StatusOK)
 
 	// Azure AD account: no password sign-in at all. The response is the
 	// same as for a wrong password (no account / source disclosure); the
 	// audit entry says why.
 	account("jane@example.com", models.AuthSourceAzure)
-	if out := login("jane@example.com", "Local-pass-1", http.StatusUnauthorized); strings.TrimSpace(out) != "" {
-		t.Fatalf("azure password login body = %q", out)
+	wrong := login("john", "Wrong-pass-1", http.StatusUnauthorized)
+	if out := login("jane@example.com", "Local-pass-1", http.StatusUnauthorized); out != wrong {
+		t.Fatalf("azure password login body = %q, a wrong password gives %q", out, wrong)
 	}
 	e.waitAudit("user.login.failed", "azure_account")
 }

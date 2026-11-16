@@ -94,7 +94,7 @@ export const CastPlayerModal: React.FC<Props> = ({ recording, onClose }) => {
         idleTimeLimit: opts.skipIdle ? IDLE_LIMIT_SECONDS : undefined,
         fit: 'both',
         controls: true,
-        terminalFontFamily: '"Fira Code", ui-monospace, SFMono-Regular, Menlo, monospace',
+        terminalFontFamily: '"Fira Code Variable", ui-monospace, SFMono-Regular, Menlo, monospace',
       });
       player.addEventListener('playing', () => { playingRef.current = true; });
       player.addEventListener('play', () => { playingRef.current = true; });
@@ -135,17 +135,18 @@ export const CastPlayerModal: React.FC<Props> = ({ recording, onClose }) => {
     };
   }, [recording, disposePlayer]);
 
-  // First mount once data is in and the modal body is painted.
+  // First mount once data is in and the modal body is painted. skipIdle is
+  // read here, not a dependency: later changes go through rebuild().
+  const skipIdleRef = useRef(skipIdle);
+  skipIdleRef.current = skipIdle;
   useEffect(() => {
     if (!ready) return;
     const raf = requestAnimationFrame(() => {
-      mount({ speed: 1, skipIdle, autoPlay: true }).catch((err) =>
+      mount({ speed: 1, skipIdle: skipIdleRef.current, autoPlay: true }).catch((err) =>
         setError(err instanceof Error ? err.message : String(err)),
       );
     });
     return () => cancelAnimationFrame(raf);
-    // skipIdle intentionally read once here; later changes go through rebuild()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, mount]);
 
   useEffect(() => disposePlayer, [disposePlayer]);
