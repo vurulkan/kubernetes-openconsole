@@ -101,5 +101,13 @@ func TestLDAPSignInFailureIsLogged(t *testing.T) {
 	if l := logs(); !strings.Contains(l, `level=WARN msg="ldap sign-in failed" user=john`) || !strings.Contains(l, "127.0.0.1:1") {
 		t.Fatalf("unreachable directory log: %s", l)
 	}
+	// First sign-in of a directory user (account created on sign-in): same line.
+	e.expect("PUT", "/api/admin/ldap", admin, map[string]any{"enabled": true, "url": "ldap://127.0.0.1:1", "timeoutSeconds": 2,
+		"bindDn": ldapfake.ServiceDN, "bindPassword": ldapfake.ServicePwd, "userBaseDn": ldapfake.UsersDN,
+		"userFilter": "(sAMAccountName=%s)", "usernameAttribute": "sAMAccountName", "autoProvision": true}, http.StatusOK)
+	e.expect("POST", "/api/auth/login", "", map[string]string{"username": "newcomer", "password": "Any-pass-123"}, http.StatusUnauthorized)
+	if l := logs(); !strings.Contains(l, `msg="ldap sign-in failed" user=newcomer`) {
+		t.Fatalf("auto-provision log: %s", l)
+	}
 	_ = auth.LDAPConfig{}
 }

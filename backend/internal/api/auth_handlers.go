@@ -149,6 +149,7 @@ func (s *Server) ldapAutoProvision(r *http.Request, typed, password string) (*mo
 	}
 	name, err := auth.LDAPAuthenticateUser(ldapAuthConfig(cfg), typed, password)
 	if err != nil {
+		logLDAPFailure(ctx, typed, err)
 		return nil, false
 	}
 	name = strings.TrimSpace(name)
@@ -238,17 +239,22 @@ func (s *Server) ldapAuthenticate(ctx context.Context, username, password string
 		return false
 	}
 	if err := auth.LDAPAuthenticate(ldapAuthConfig(cfg), username, password); err != nil {
-		// The audit entry only says bad_password; the directory's answer is
-		// what an operator needs (unreachable, TLS, bind DN, base DN, filter).
-		level := slog.LevelWarn
-		if ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials) {
-			level = slog.LevelInfo // a wrong password
-		}
-		slog.Log(ctx, level, "ldap sign-in failed", slog.String("user", username),
-			slog.String("error", err.Error()), slog.String("request_id", logpkg.RequestIDFrom(ctx)))
+		logLDAPFailure(ctx, username, err)
 		return false
 	}
 	return true
+}
+
+// logLDAPFailure logs why a directory sign-in failed. The audit entry only says
+// bad_password; the directory's answer is what an operator needs (unreachable,
+// TLS, bind DN, base DN, filter). A wrong password is info, the rest a warning.
+func logLDAPFailure(ctx context.Context, username string, err error) {
+	level := slog.LevelWarn
+	if ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials) {
+		level = slog.LevelInfo
+	}
+	slog.Log(ctx, level, "ldap sign-in failed", slog.String("user", username),
+		slog.String("error", err.Error()), slog.String("request_id", logpkg.RequestIDFrom(ctx)))
 }
 
 func (s *Server) issueTokenForUser(w http.ResponseWriter, r *http.Request, user *models.User) {
