@@ -83,3 +83,45 @@ func TestAdminWritesAuditEveryOutcome(t *testing.T) {
 		e.waitAudit(c.action+".success", c.ok.contains)
 	}
 }
+
+// The Users and Groups lists carry the memberships, so the admin screen
+// doesn't ask once per user and once per group (M29, was N+1).
+func TestAdminListsCarryMemberships(t *testing.T) {
+	e := newTestEnv(t)
+	_, admin := e.user("root", true)
+	bobID, _ := e.user("bob", false)
+	var g, r struct{ ID int }
+	_ = json.Unmarshal([]byte(e.expect("POST", "/api/admin/groups", admin, map[string]any{"name": "ops"}, http.StatusCreated)), &g)
+	_ = json.Unmarshal([]byte(e.expect("POST", "/api/admin/roles", admin, map[string]any{"name": "viewer"}, http.StatusCreated)), &r)
+	e.expect("PUT", "/api/admin/users/"+itoa(int64(bobID))+"/groups", admin, map[string]any{"groupIds": []int{g.ID}}, http.StatusOK)
+	e.expect("PUT", "/api/admin/groups/"+itoa(int64(g.ID))+"/roles", admin, map[string]any{"roleIds": []int{r.ID}}, http.StatusOK)
+
+	var users struct {
+		Items []struct {
+			ID       int
+			Username string
+			GroupIDs []int `json:"groupIds"`
+		}
+	}
+	_ = json.Unmarshal([]byte(e.expect("GET", "/api/admin/users", admin, nil, http.StatusOK)), &users)
+	for _, u := range users.Items {
+		want := []int{}
+		if u.ID == bobID {
+			want = []int{g.ID}
+		}
+		if u.Username == "" || u.GroupIDs == nil || len(u.GroupIDs) != len(want) || (len(want) == 1 && u.GroupIDs[0] != want[0]) {
+			t.Fatalf("user %+v, want groups %v", u, want)
+		}
+	}
+	var groups struct {
+		Items []struct {
+			ID      int
+			Name    string
+			RoleIDs []int `json:"roleIds"`
+		}
+	}
+	_ = json.Unmarshal([]byte(e.expect("GET", "/api/admin/groups", admin, nil, http.StatusOK)), &groups)
+	if len(groups.Items) != 1 || groups.Items[0].Name != "ops" || len(groups.Items[0].RoleIDs) != 1 || groups.Items[0].RoleIDs[0] != r.ID {
+		t.Fatalf("groups = %+v", groups.Items)
+	}
+}

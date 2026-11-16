@@ -33,13 +33,28 @@ func checkUsername(name string) string {
 	return ""
 }
 
+// handleListUsers lists every user with its group ids, so the Users screen
+// needs no request per user.
 func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 	users, err := s.store.ListUsers(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"items": users})
+	groups, err := s.store.UserGroupIDs(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
+		return
+	}
+	type item struct {
+		models.User
+		GroupIDs []int `json:"groupIds"`
+	}
+	items := make([]item, 0, len(users))
+	for _, u := range users {
+		items = append(items, item{User: u, GroupIDs: append([]int{}, groups[u.ID]...)})
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"items": items})
 }
 
 func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
@@ -287,13 +302,27 @@ func (s *Server) handleGetUserGroups(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"groupIds": ids})
 }
 
+// handleListGroups lists every group with its role ids.
 func (s *Server) handleListGroups(w http.ResponseWriter, r *http.Request) {
 	groups, err := s.store.ListGroups(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"items": groups})
+	roles, err := s.store.GroupRoleIDs(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
+		return
+	}
+	type item struct {
+		models.Group
+		RoleIDs []int `json:"roleIds"`
+	}
+	items := make([]item, 0, len(groups))
+	for _, g := range groups {
+		items = append(items, item{Group: g, RoleIDs: append([]int{}, roles[g.ID]...)})
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"items": items})
 }
 
 func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {

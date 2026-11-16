@@ -884,7 +884,7 @@ paths:
     parameters: [{$ref: '#/components/parameters/name'}]
     get: {tags: [Admin], x-openconsole-admin: true, summary: Node usage history, responses: {"200": {$ref: '#/components/responses/ok'}}}
   /api/admin/users:
-    get: {tags: [Admin], x-openconsole-admin: true, summary: List users, responses: {"200": {$ref: '#/components/responses/list'}}}
+    get: {tags: [Admin], x-openconsole-admin: true, summary: List users, description: "Each user with `groupIds`, the ids of its groups.", responses: {"200": {$ref: '#/components/responses/list'}}}
     post: {tags: [Admin], x-openconsole-admin: true, summary: Create a user, responses: {"200": {$ref: '#/components/responses/ok'}}}
   /api/admin/users/export:
     get: {tags: [Admin], x-openconsole-admin: true, summary: Users as CSV, responses: {"200": {description: CSV.}}}
@@ -916,7 +916,7 @@ paths:
     parameters: [{$ref: '#/components/parameters/id'}]
     post: {tags: [Admin], x-openconsole-admin: true, x-openconsole-api-key: false, summary: Revoke a user's API key (web), responses: {"200": {$ref: '#/components/responses/ok'}}}
   /api/admin/groups:
-    get: {tags: [Admin], x-openconsole-admin: true, summary: List groups, responses: {"200": {$ref: '#/components/responses/list'}}}
+    get: {tags: [Admin], x-openconsole-admin: true, summary: List groups, description: "Each group with `roleIds`, the ids of its roles.", responses: {"200": {$ref: '#/components/responses/list'}}}
     post: {tags: [Admin], x-openconsole-admin: true, summary: Create a group, responses: {"200": {$ref: '#/components/responses/ok'}}}
   /api/admin/groups/export:
     get: {tags: [Admin], x-openconsole-admin: true, summary: Groups as CSV, responses: {"200": {description: CSV.}}}
