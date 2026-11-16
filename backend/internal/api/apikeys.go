@@ -91,7 +91,7 @@ func apiKeyScopeFrom(ctx context.Context) *models.APIKeyScope {
 
 // keyAuth is what AuthMiddleware checks API keys with; nil when FEATURE_API_KEYS=false.
 func (s *Server) keyAuth() auth.KeyAuthenticator {
-	if !featureEnabled(FeatureAPIKeys) {
+	if !s.featureEnabled(FeatureAPIKeys) {
 		return nil
 	}
 	return s
@@ -321,7 +321,7 @@ func (s *Server) ceilingFor(ctx context.Context, user *models.User) (keyCeiling,
 	all := []string{}
 	for _, c := range rbac.Catalog {
 		for _, a := range c.Actions {
-			if featureAllows(c.Resource, a) {
+			if s.featureAllows(c.Resource, a) {
 				all = append(all, c.Resource+":"+a)
 			} else {
 				out.Disabled = append(out.Disabled, c.Resource+":"+a)
@@ -405,7 +405,7 @@ type apiKeyRequest struct {
 // session (a key never manages keys) and a usable account.
 func (s *Server) apiKeyGate(w http.ResponseWriter, r *http.Request, verb string) (*models.User, bool) {
 	e := models.AuditLog{Verb: verb, ResourceType: audit.KindAPIKey, ResourceName: chi.URLParam(r, "id")}
-	if !featureEnabled(FeatureAPIKeys) {
+	if !s.featureEnabled(FeatureAPIKeys) {
 		e.Outcome, e.Reason = audit.Denied, reasonFeatureDisabled
 		s.auditEvent(r, e)
 		writeError(w, http.StatusForbidden, reasonFeatureDisabled)

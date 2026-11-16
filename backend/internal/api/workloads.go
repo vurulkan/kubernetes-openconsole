@@ -122,7 +122,7 @@ func (s *Server) handleStatefulSetScale(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if !allowDeployAction(user.ID) {
+	if !s.allowDeployAction(user.ID) {
 		w.Header().Set("Retry-After", "6")
 		s.recordStatefulSetScaleAudit(r, namespace, name, audit.RateLimited, reasonRateLimited, audit.D{"replicas_to": body.Replicas})
 		writeError(w, http.StatusTooManyRequests, problem.RateLimited)

@@ -8,7 +8,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -24,20 +23,15 @@ import (
 // Guards against accidental runaway scaling; override with MAX_REPLICAS env.
 const defaultMaxReplicas = 100
 
-// deployActionsLimiter is a per-user token bucket limiting write actions.
-// Burst 5, refill 10/min. Reset in tests via resetDeployActionLimiters.
-var (
-	deployActionsLimiters   = map[int]*rate.Limiter{}
-	deployActionsLimitersMu = sync.Mutex{}
-)
-
-func allowDeployAction(userID int) bool {
-	deployActionsLimitersMu.Lock()
-	defer deployActionsLimitersMu.Unlock()
-	limiter, ok := deployActionsLimiters[userID]
+// allowDeployAction is a per-user token bucket limiting write actions:
+// burst 5, refill 10/min.
+func (s *Server) allowDeployAction(userID int) bool {
+	s.deployLimitersMu.Lock()
+	defer s.deployLimitersMu.Unlock()
+	limiter, ok := s.deployLimiters[userID]
 	if !ok {
 		limiter = rate.NewLimiter(rate.Every(6*time.Second), 5)
-		deployActionsLimiters[userID] = limiter
+		s.deployLimiters[userID] = limiter
 	}
 	return limiter.Allow()
 }
@@ -60,7 +54,7 @@ func (s *Server) handleDeploymentRestart(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if !allowDeployAction(user.ID) {
+	if !s.allowDeployAction(user.ID) {
 		w.Header().Set("Retry-After", "6")
 		s.recordDeployAudit(r, namespace, name, audit.VerbRestart, audit.RateLimited, reasonRateLimited, nil)
 		writeError(w, http.StatusTooManyRequests, problem.RateLimited)
@@ -117,7 +111,7 @@ func (s *Server) handleDeploymentScale(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !allowDeployAction(user.ID) {
+	if !s.allowDeployAction(user.ID) {
 		w.Header().Set("Retry-After", "6")
 		s.recordDeployAudit(r, namespace, name, audit.VerbScale, audit.RateLimited, reasonRateLimited, audit.D{"replicas_to": body.Replicas})
 		writeError(w, http.StatusTooManyRequests, problem.RateLimited)

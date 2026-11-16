@@ -28,22 +28,22 @@ import (
 	"k8s-dashboard/backend/internal/recording"
 )
 
-// Exec limits, set from EXEC_IDLE_TIMEOUT / MAX_EXEC_SESSIONS_PER_USER at
-// startup (SetExecLimits).
-var (
-	// execIdleTimeout closes a session after this long without stdin.
-	execIdleTimeout = 5 * time.Minute
-	// maxExecSessionsPerUser caps concurrent shells per user; 0 = no cap.
-	maxExecSessionsPerUser = 3
+// Exec limits by default; EXEC_IDLE_TIMEOUT / MAX_EXEC_SESSIONS_PER_USER
+// change them (SetExecLimits).
+const (
+	defaultExecIdleTimeout        = 5 * time.Minute
+	defaultMaxExecSessionsPerUser = 3
 )
 
-// SetExecLimits applies the configured exec limits.
-func SetExecLimits(idle time.Duration, maxPerUser int) {
+// SetExecLimits applies the configured exec limits: idle closes a session after
+// this long without stdin; maxPerUser caps concurrent shells per user (0 = no
+// cap). Call it before serving.
+func (s *Server) SetExecLimits(idle time.Duration, maxPerUser int) {
 	if idle > 0 {
-		execIdleTimeout = idle
+		s.execIdleTimeout = idle
 	}
 	if maxPerUser >= 0 {
-		maxExecSessionsPerUser = maxPerUser
+		s.execSessions.limit = maxPerUser
 	}
 }
 
@@ -51,6 +51,7 @@ func SetExecLimits(idle time.Duration, maxPerUser int) {
 type execSessionTracker struct {
 	mu     sync.Mutex
 	byUser map[int]int
+	limit  int // 0 = no cap
 }
 
 // acquire reserves a slot; false when the user is at the limit.
@@ -60,7 +61,7 @@ func (t *execSessionTracker) acquire(userID int) bool {
 	if t.byUser == nil {
 		t.byUser = map[int]int{}
 	}
-	if maxExecSessionsPerUser > 0 && t.byUser[userID] >= maxExecSessionsPerUser {
+	if t.limit > 0 && t.byUser[userID] >= t.limit {
 		return false
 	}
 	t.byUser[userID]++
@@ -122,14 +123,14 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 	// frame and close code 4429; any other client gets a plain 429.
 	if !s.execSessions.acquire(claims.UserID) {
 		s.recordExecAudit(r, namespace, pod, audit.RateLimited, "max_sessions",
-			audit.D{"max_sessions": maxExecSessionsPerUser})
-		msg := "too many open shells (limit " + strconv.Itoa(maxExecSessionsPerUser) + " per user); close one first"
+			audit.D{"max_sessions": s.execSessions.limit})
+		msg := "too many open shells (limit " + strconv.Itoa(s.execSessions.limit) + " per user); close one first"
 		if websocket.IsWebSocketUpgrade(r) {
 			upgrader := websocket.Upgrader{CheckOrigin: wsOriginOK}
 			if conn, err := upgrader.Upgrade(w, r, nil); err == nil {
-				writeExecSessionInfo(conn)
+				writeExecSessionInfo(conn, s.execIdleTimeout)
 				_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"error","code":"too_many_sessions","limit":`+
-					strconv.Itoa(maxExecSessionsPerUser)+`,"message":`+jsonString(msg)+`}`))
+					strconv.Itoa(s.execSessions.limit)+`,"message":`+jsonString(msg)+`}`))
 				_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(closeTooManySessions, "too many open shells"),
 					time.Now().Add(time.Second))
 				_ = conn.Close()
@@ -204,7 +205,7 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
-	writeExecSessionInfo(conn)
+	writeExecSessionInfo(conn, s.execIdleTimeout)
 	if rec != nil {
 		// Sent before the bridge starts, so no concurrent writer yet.
 		_ = conn.WriteMessage(websocket.TextMessage,
@@ -219,7 +220,7 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	bridge := newExecBridge(conn, cancel, rec)
+	bridge := newExecBridge(conn, cancel, rec, s.execIdleTimeout)
 	defer bridge.Close()
 	// A shell waiting for input sends nothing; without pings a proxy's idle
 	// timeout (ingress-nginx: 60 s) closes it.
@@ -352,9 +353,9 @@ func splitCommand(cmd string) []string {
 
 // writeExecSessionInfo tells the client the configured idle timeout so its
 // banner shows the real value.
-func writeExecSessionInfo(conn *websocket.Conn) {
+func writeExecSessionInfo(conn *websocket.Conn, idle time.Duration) {
 	_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"session","idleTimeoutSeconds":`+
-		strconv.Itoa(int(execIdleTimeout/time.Second))+`}`))
+		strconv.Itoa(int(idle/time.Second))+`}`))
 }
 
 func jsonString(s string) string {
@@ -428,8 +429,9 @@ func (s *Server) recordRecordingCreateAudit(r *http.Request, namespace, sessionI
 // remotecommand.TerminalSizeQueue expected by remotecommand.StreamOptions.
 // It also enforces the exec idle timeout and surfaces resize messages.
 type execBridge struct {
-	conn   *websocket.Conn
-	cancel context.CancelFunc
+	conn        *websocket.Conn
+	cancel      context.CancelFunc
+	idleTimeout time.Duration // closes the session after this long without stdin
 
 	// rec receives a copy of stdout/stderr and resize events; nil-safe.
 	rec *recording.Session
@@ -457,15 +459,16 @@ type execBridge struct {
 	bytesOut atomic.Int64 // stdout/stderr from the pod
 }
 
-func newExecBridge(conn *websocket.Conn, cancel context.CancelFunc, rec *recording.Session) *execBridge {
+func newExecBridge(conn *websocket.Conn, cancel context.CancelFunc, rec *recording.Session, idleTimeout time.Duration) *execBridge {
 	b := &execBridge{
-		conn:      conn,
-		cancel:    cancel,
-		rec:       rec,
-		stdinCh:   make(chan []byte, 32),
-		sizeCh:    make(chan *remotecommand.TerminalSize, 4),
-		done:      make(chan struct{}),
-		lastInput: time.Now(),
+		idleTimeout: idleTimeout,
+		conn:        conn,
+		cancel:      cancel,
+		rec:         rec,
+		stdinCh:     make(chan []byte, 32),
+		sizeCh:      make(chan *remotecommand.TerminalSize, 4),
+		done:        make(chan struct{}),
+		lastInput:   time.Now(),
 	}
 	go b.readLoop()
 	go b.idleWatchdog()
@@ -480,8 +483,8 @@ func (b *execBridge) markInput() {
 
 func (b *execBridge) idleWatchdog() {
 	tick := 30 * time.Second
-	if execIdleTimeout < 2*tick {
-		tick = execIdleTimeout / 2
+	if b.idleTimeout < 2*tick {
+		tick = b.idleTimeout / 2
 	}
 	t := time.NewTicker(tick)
 	defer t.Stop()
@@ -493,7 +496,7 @@ func (b *execBridge) idleWatchdog() {
 			b.lastMu.Lock()
 			idle := time.Since(b.lastInput)
 			b.lastMu.Unlock()
-			if idle > execIdleTimeout {
+			if idle > b.idleTimeout {
 				b.writeError("session idle timeout")
 				b.cancel()
 				return

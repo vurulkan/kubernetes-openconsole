@@ -96,6 +96,7 @@ func (s *Server) handleTestAzureAD(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	if err := auth.TestAzureConnection(ctx, auth.AzureADConfig{
+		Authority:    s.azureAuthority,
 		Enabled:      cfg.Enabled,
 		TenantID:     cfg.TenantID,
 		ClientID:     cfg.ClientID,

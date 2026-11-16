@@ -377,8 +377,7 @@ func TestAPIKeysFeatureFlag(t *testing.T) {
 	bobID, bob := e.user("bob", false)
 	e.grant(bobID, [4]any{0, "team-a", "pods", "list"})
 	key, _ := e.createKey(bob, keyBody("k", []string{"team-a"}, "pods:list"))
-	SetDisabledFeatures([]string{FeatureAPIKeys})
-	t.Cleanup(func() { SetDisabledFeatures(nil) })
+	e.server.SetDisabledFeatures([]string{FeatureAPIKeys})
 	e = &testEnv{t: t, store: e.store, server: e.server, http: httptest.NewServer(e.server.Router())}
 	t.Cleanup(e.http.Close)
 	e.expect("GET", "/api/namespaces/team-a/pods", key, nil, http.StatusUnauthorized)

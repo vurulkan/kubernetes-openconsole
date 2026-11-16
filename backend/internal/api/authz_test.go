@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"golang.org/x/time/rate"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -674,14 +673,11 @@ func closeAfterPendingWrites(db *sql.DB) {
 	}
 }
 
-// resetGlobalLimiters clears the process-wide login lockout and write-action
-// rate limits. Every test env starts a fresh DB whose user ids repeat (1, 2…),
-// so state left by an earlier test — or an earlier -count iteration — would
-// otherwise lock out or rate-limit unrelated tests.
+// resetGlobalLimiters clears the process-wide login lockout. Every test env
+// starts a fresh DB whose user ids repeat (1, 2…), so state left by an earlier
+// test — or an earlier -count iteration — would otherwise lock out unrelated
+// tests. (Write-action limits live on the Server.)
 func resetGlobalLimiters() {
-	deployActionsLimitersMu.Lock()
-	deployActionsLimiters = map[int]*rate.Limiter{}
-	deployActionsLimitersMu.Unlock()
 	g := LoginGate()
 	g.mu.Lock()
 	g.attempts = map[string]*loginAttempt{}

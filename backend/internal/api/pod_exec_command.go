@@ -113,7 +113,7 @@ func (s *Server) handlePodExecCommand(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, reason)
 	}
 
-	if !featureAllows("pods", "exec") {
+	if !s.featureAllows("pods", "exec") {
 		refuse(http.StatusForbidden, audit.Denied, reasonFeatureDisabled)
 		return
 	}
@@ -173,7 +173,7 @@ func (s *Server) handlePodExecCommand(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !s.execSessions.acquire(claims.UserID) {
-		details["max_sessions"] = maxExecSessionsPerUser
+		details["max_sessions"] = s.execSessions.limit
 		refuse(http.StatusTooManyRequests, audit.RateLimited, "too_many_sessions")
 		return
 	}

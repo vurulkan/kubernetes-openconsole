@@ -326,6 +326,7 @@ func (s *Server) handleAzureStart(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 	url, err := auth.AzureAuthorizeURL(ctx, auth.AzureADConfig{
+		Authority:    s.azureAuthority,
 		Enabled:      cfg.Enabled,
 		TenantID:     cfg.TenantID,
 		ClientID:     cfg.ClientID,
@@ -383,6 +384,7 @@ func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 	identity, err := auth.AzureExchangeCode(ctx, auth.AzureADConfig{
+		Authority:    s.azureAuthority,
 		Enabled:      cfg.Enabled,
 		TenantID:     cfg.TenantID,
 		ClientID:     cfg.ClientID,
@@ -543,7 +545,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, problem.WrongPassword)
 		return
 	}
-	if err := auth.CheckPasswordPolicy(request.NewPassword); err != nil {
+	if err := auth.CheckPasswordPolicy(request.NewPassword, s.passwordMinLength); err != nil {
 		writeErrorDetail(w, http.StatusBadRequest, problem.WeakPassword, err.Error())
 		return
 	}

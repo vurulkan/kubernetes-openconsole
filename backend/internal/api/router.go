@@ -45,8 +45,19 @@ type Server struct {
 	sessionToucher *store.SessionToucher
 	// recorder captures pod exec sessions as asciicast files.
 	recorder *recording.Manager
-	// execSessions enforces MAX_EXEC_SESSIONS_PER_USER.
-	execSessions execSessionTracker
+	// execSessions enforces MAX_EXEC_SESSIONS_PER_USER; execIdleTimeout closes
+	// a shell after this long without stdin (SetExecLimits).
+	execSessions    execSessionTracker
+	execIdleTimeout time.Duration
+	// disabledFeatures: the FEATURE_* flags that are off (SetDisabledFeatures).
+	disabledFeatures map[string]bool
+	// passwordMinLength: PASSWORD_MIN_LENGTH (SetPasswordMinLength).
+	passwordMinLength int
+	// azureAuthority: the Entra ID sign-in host (SetAzureAuthority).
+	azureAuthority string
+	// deployLimiters: per-user token buckets for write actions (allowDeployAction).
+	deployLimitersMu sync.Mutex
+	deployLimiters   map[int]*rate.Limiter
 	// prom caches each cluster's Prometheus client (cluster id → *prom.Client,
 	// nil when none is configured); dropped when the cluster or its settings change.
 	prom sync.Map
@@ -74,6 +85,21 @@ type Server struct {
 	backupInterval time.Duration
 	backupDownload bool
 	keyExternal    bool
+}
+
+// SetPasswordMinLength sets PASSWORD_MIN_LENGTH. Call it before serving.
+func (s *Server) SetPasswordMinLength(n int) {
+	if n > 0 {
+		s.passwordMinLength = n
+	}
+}
+
+// SetAzureAuthority sets the Entra ID sign-in host (AZURE_AD_AUTHORITY) for
+// sign-in and Prometheus tokens. Call it before serving.
+func (s *Server) SetAzureAuthority(v string) {
+	if v != "" {
+		s.azureAuthority = strings.TrimRight(v, "/")
+	}
 }
 
 // BeginShutdown marks the server as stopping, before the base context of
@@ -112,6 +138,13 @@ func NewServer(st *store.Store, auditLogger *audit.Logger, clusters *kube.Regist
 		timezone:       location,
 		sessionToucher: toucher,
 		recorder:       recorder,
+
+		execSessions:      execSessionTracker{limit: defaultMaxExecSessionsPerUser},
+		execIdleTimeout:   defaultExecIdleTimeout,
+		disabledFeatures:  map[string]bool{},
+		passwordMinLength: auth.DefaultMinPasswordLength,
+		azureAuthority:    auth.DefaultAzureAuthority,
+		deployLimiters:    map[int]*rate.Limiter{},
 	}
 	clusterStatusFn = s.clusterStatus
 	// Seed the default cluster id from whatever row is currently is_active.

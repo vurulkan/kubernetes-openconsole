@@ -20,18 +20,18 @@ func ComparePassword(hash, password string) error {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
 }
 
-// MinPasswordLength is the minimum length (in characters) for passwords set
-// on local accounts. Configured from PASSWORD_MIN_LENGTH at startup.
-var MinPasswordLength = 8
+// DefaultMinPasswordLength is the minimum length (in characters) of a local
+// password unless PASSWORD_MIN_LENGTH says otherwise.
+const DefaultMinPasswordLength = 8
 
 // maxPasswordBytes: bcrypt ignores everything past 72 bytes, so a longer
 // password would silently be truncated.
 const maxPasswordBytes = 72
 
-// CheckPasswordPolicy validates a new local password.
-func CheckPasswordPolicy(password string) error {
-	if utf8.RuneCountInString(password) < MinPasswordLength {
-		return fmt.Errorf("password must be at least %d characters", MinPasswordLength)
+// CheckPasswordPolicy validates a new local password of at least minLength characters.
+func CheckPasswordPolicy(password string, minLength int) error {
+	if utf8.RuneCountInString(password) < minLength {
+		return fmt.Errorf("password must be at least %d characters", minLength)
 	}
 	if len(password) > maxPasswordBytes {
 		return fmt.Errorf("password must be at most %d bytes", maxPasswordBytes)

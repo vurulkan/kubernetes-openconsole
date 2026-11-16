@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"k8s-dashboard/backend/internal/auth"
 	"k8s-dashboard/backend/internal/models"
 )
 
@@ -163,9 +162,6 @@ func TestAzureToken(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "aad-token", "expires_in": 3600})
 	}))
 	defer entra.Close()
-	old := auth.AzureAuthority
-	auth.AzureAuthority = entra.URL
-	defer func() { auth.AzureAuthority = old }()
 
 	srv := fakeProm(t, func(r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer aad-token" {
@@ -173,6 +169,7 @@ func TestAzureToken(t *testing.T) {
 		}
 	}, func(string, string) any { return vector("1") })
 	c, _ := New(models.PrometheusConfig{Mode: "url", URL: srv.URL, Auth: "azure", AzureTenantID: "tenant-1", AzureClientID: "app", AzureClientSecret: "s3cret"}, nil)
+	c.AzureAuthority = entra.URL
 	for i := 0; i < 3; i++ {
 		if _, _, err := c.Query(context.Background(), "up"); err != nil {
 			t.Fatal(err)

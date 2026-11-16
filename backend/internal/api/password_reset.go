@@ -54,7 +54,7 @@ func (s *Server) handleResetUserPassword(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
-	if err := auth.CheckPasswordPolicy(body.Password); err != nil {
+	if err := auth.CheckPasswordPolicy(body.Password, s.passwordMinLength); err != nil {
 		writeErrorDetail(w, http.StatusBadRequest, problem.WeakPassword, err.Error())
 		return
 	}

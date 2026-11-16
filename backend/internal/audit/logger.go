@@ -13,6 +13,8 @@ import (
 )
 
 type Logger struct {
+	metricHook    func()
+	failureHook   func()
 	store         *store.Store
 	consoleMirror atomic.Bool
 	pending       sync.WaitGroup
@@ -73,10 +75,10 @@ func (l *Logger) Record(ctx context.Context, entry models.AuditLog) {
 		// The console line below still carries the event, when mirroring is on.
 		slog.Error("audit write failed", slog.String("event", entry.Action), slog.String("user", entry.User),
 			slog.String("request_id", entry.RequestID), slog.Any("error", err))
-		if hook := auditFailureHook; hook != nil {
+		if hook := l.failureHook; hook != nil {
 			hook()
 		}
-	} else if hook := auditMetricHook; hook != nil {
+	} else if hook := l.metricHook; hook != nil {
 		hook()
 	}
 
@@ -123,18 +125,13 @@ func consoleAttrs(e models.AuditLog) []slog.Attr {
 	return attrs
 }
 
-// auditMetricHook, if set, is invoked on every Record() so an outer package
-// can increment a counter without the audit package depending on it.
-var auditMetricHook func()
+// SetMetricHook installs a callback run on every stored event, so an outer
+// package can count them without the audit package depending on it. Call it
+// before recording.
+func (l *Logger) SetMetricHook(h func()) { l.metricHook = h }
 
-// SetMetricHook installs the counter callback.
-func SetMetricHook(h func()) { auditMetricHook = h }
-
-// auditFailureHook, if set, is invoked when an event could not be stored.
-var auditFailureHook func()
-
-// SetFailureHook installs the write-failure counter callback.
-func SetFailureHook(h func()) { auditFailureHook = h }
+// SetFailureHook installs a callback run when an event could not be stored.
+func (l *Logger) SetFailureHook(h func()) { l.failureHook = h }
 
 // StartRetention purges audit entries older than retentionDays (0 = keep
 // everything), and successful API key reads older than keyReadDays (they are

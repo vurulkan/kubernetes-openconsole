@@ -85,7 +85,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	var password string
 	switch source {
 	case models.AuthSourceLocal:
-		if err := auth.CheckPasswordPolicy(request.Password); err != nil {
+		if err := auth.CheckPasswordPolicy(request.Password, s.passwordMinLength); err != nil {
 			writeErrorDetail(w, http.StatusBadRequest, problem.WeakPassword, err.Error())
 			return
 		}

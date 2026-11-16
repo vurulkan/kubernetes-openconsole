@@ -51,7 +51,7 @@ func (s *Server) handleNamespacePermissions(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusForbidden, reasonForbidden)
 		return
 	}
-	permissions := filterByFeatures(engine.AllowedResources(clusterIDFrom(r.Context()), namespace))
+	permissions := s.filterByFeatures(engine.AllowedResources(clusterIDFrom(r.Context()), namespace))
 	if len(permissions) == 0 {
 		writeError(w, http.StatusForbidden, reasonForbidden)
 		return

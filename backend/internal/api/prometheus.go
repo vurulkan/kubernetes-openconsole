@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 
 	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/models"
@@ -150,12 +151,20 @@ func (s *Server) handleTestPrometheus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) promClientFor(ctx context.Context, clusterID int, cfg models.PrometheusConfig) (*prom.Client, error) {
-	m, err := s.clusters.Get(ctx, clusterID)
-	if err != nil {
-		return prom.New(cfg, nil)
+	var client kubernetes.Interface
+	if m, err := s.clusters.Get(ctx, clusterID); err == nil {
+		client, _ = m.Client()
 	}
-	client, _ := m.Client()
-	return prom.New(cfg, client)
+	return s.newProm(cfg, client)
+}
+
+// newProm is prom.New with the server's Azure AD authority.
+func (s *Server) newProm(cfg models.PrometheusConfig, client kubernetes.Interface) (*prom.Client, error) {
+	c, err := prom.New(cfg, client)
+	if c != nil {
+		c.AzureAuthority = s.azureAuthority
+	}
+	return c, err
 }
 
 type promCandidate struct {
@@ -237,7 +246,7 @@ func (s *Server) promFor(r *http.Request) *prom.Client {
 		return nil
 	}
 	client, _ := kubeFor(r).Client()
-	c, err := prom.New(cfg, client)
+	c, err := s.newProm(cfg, client)
 	if err != nil {
 		return nil
 	}

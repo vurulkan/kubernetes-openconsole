@@ -91,7 +91,7 @@ func (s *Server) handleYAMLApply(w http.ResponseWriter, r *http.Request) {
 	// Rate limit only the mutating path. Dry-run is cheap and operators
 	// iterate on it; limiting the preview would make the UI feel broken.
 	if !body.DryRun {
-		if !allowDeployAction(user.ID) {
+		if !s.allowDeployAction(user.ID) {
 			w.Header().Set("Retry-After", "6")
 			s.recordApplyAudit(r, namespace, name, resource, audit.RateLimited, reasonRateLimited, audit.D{"dry_run": false})
 			writeError(w, http.StatusTooManyRequests, problem.RateLimited)

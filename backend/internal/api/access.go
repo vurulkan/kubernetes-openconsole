@@ -99,7 +99,7 @@ func (s *Server) keyAccess(ctx context.Context, user *models.User) (*rbac.Engine
 // the way; forbidden otherwise.
 func (s *Server) denyReason(ctx context.Context, namespace, resource, action string) string {
 	c, ok := auth.FromContext(ctx)
-	if !ok || c.APIKey == nil || !featureAllows(resource, action) {
+	if !ok || c.APIKey == nil || !s.featureAllows(resource, action) {
 		return reasonForbidden
 	}
 	user, err := s.store.GetUserByID(ctx, c.UserID)
@@ -119,7 +119,7 @@ func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, resou
 		return "", false
 	}
 	namespace := chi.URLParam(r, "namespace")
-	if !featureAllows(resource, action) {
+	if !s.featureAllows(resource, action) {
 		s.auditReadDenied(r, resource, action, reasonFeatureDisabled)
 		writeError(w, http.StatusForbidden, reasonFeatureDisabled)
 		return "", false
@@ -144,7 +144,7 @@ func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, resou
 // engineForRequest, it refuses a disabled account and a non-admin who must
 // still change the password, so neither can keep using a session it holds.
 func (s *Server) can(ctx context.Context, userID int, namespace, resource, action string) bool {
-	if !featureAllows(resource, action) {
+	if !s.featureAllows(resource, action) {
 		return false
 	}
 	user, err := s.store.GetUserByID(ctx, userID)

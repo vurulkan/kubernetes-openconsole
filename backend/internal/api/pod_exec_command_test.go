@@ -149,8 +149,7 @@ func TestPodExecCommand(t *testing.T) {
 		t.Fatal(body)
 	}
 	e.waitAudit("pod.exec.denied", `"mode":"command"`)
-	SetDisabledFeatures([]string{FeaturePodExec})
-	t.Cleanup(func() { SetDisabledFeatures(nil) })
+	e.server.SetDisabledFeatures([]string{FeaturePodExec})
 	if body := e.expect("POST", execPath, bob, map[string]any{"command": []string{"cat"}}, http.StatusForbidden); !strings.Contains(body, reasonFeatureDisabled) {
 		t.Fatal(body)
 	}
@@ -163,7 +162,7 @@ func TestPodExecCommandSessionLimit(t *testing.T) {
 	e.runningPod()
 	bobID, bob := e.user("bob", false)
 	e.grant(bobID, [4]any{0, "team-a", "pods", "exec"})
-	for i := 0; i < maxExecSessionsPerUser; i++ {
+	for i := 0; i < e.server.execSessions.limit; i++ {
 		e.server.execSessions.acquire(bobID)
 	}
 	e.expect("POST", execPath, bob, map[string]any{"command": []string{"cat"}}, http.StatusTooManyRequests)
