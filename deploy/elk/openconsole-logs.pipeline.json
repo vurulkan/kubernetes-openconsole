@@ -1,5 +1,5 @@
 {
-  "description": "Kubernetes OpenConsole (LOG_FORMAT=ecs): decode the JSON line (no grok) and route audit / application records to logs-openconsole.audit-* / logs-openconsole.app-*. Lines from other containers are left alone. Handles the nested format (2.16.2+) and the dotted one (2.16.1); audit lines from before 2.17 get the 2.17 shape (event.action without the outcome, openconsole.verb / outcome). See deploy/elk/README.md.",
+  "description": "OpenConsole for Kubernetes (LOG_FORMAT=ecs): decode the JSON line (no grok) and route audit / application records to logs-openconsole.audit-* / logs-openconsole.app-*. Lines from other containers are left alone. Handles the nested format (2.16.2+) and the dotted one (2.16.1); audit lines from before 2.17 get the 2.17 shape (event.action without the outcome, openconsole.verb / outcome). See deploy/elk/README.md.",
   "processors": [
     {
       "json": {

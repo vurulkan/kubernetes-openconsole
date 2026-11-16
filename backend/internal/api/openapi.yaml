@@ -456,6 +456,7 @@ paths:
             text/plain:
               example: "2026-11-12 09:13:58 starting server\npanic: connect to db: connection refused\n"
         "400": {description: "Bad parameter, or `container_not_found` / `previous_unavailable` / `not_ready`.", content: {application/json: {example: {error: previous_unavailable}}}}
+        "403": {description: "`forbidden` (your roles), or `cluster_forbidden`: OpenConsole's own account on the cluster may not read the pod or its log (its ClusterRole).", content: {application/json: {example: {error: cluster_forbidden}}}}
         "404": {description: "`pod_not_found`", content: {application/json: {example: {error: pod_not_found}}}}
         "429": {description: "`rate_limited`: too many log requests at once."}
   /ws/namespaces/{namespace}/pods/{name}/logs:

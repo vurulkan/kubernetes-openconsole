@@ -94,7 +94,7 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
                 </svg>
               </div>
               <div className="flex flex-col leading-tight">
-                <span className="text-sm font-semibold tracking-tight">Kubernetes OpenConsole</span>
+                <span className="text-sm font-semibold tracking-tight">OpenConsole for Kubernetes</span>
                 <span className="text-[10px] font-medium uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
                   {t('login.tagline')}
                 </span>

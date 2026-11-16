@@ -1,4 +1,4 @@
-# Kubernetes OpenConsole
+# OpenConsole for Kubernetes
 
 A web console for several Kubernetes clusters. People see and operate the workloads their roles allow; every action
 is audited. It runs inside Kubernetes, reads each cluster with one ServiceAccount, and decides every access in the app,

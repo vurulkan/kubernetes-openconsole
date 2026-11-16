@@ -1064,7 +1064,7 @@ const en = {
   },
   about: {
     github: 'OpenConsole {{version}} · source on GitHub',
-    loginFooter: 'Kubernetes OpenConsole · GitHub',
+    loginFooter: 'OpenConsole for Kubernetes · GitHub',
     docs: 'Docs',
     docsTitle: 'OpenConsole documentation',
   },
@@ -1273,6 +1273,7 @@ const en = {
     },
     error: {
       forbidden: 'You may not read this log.',
+      cluster_forbidden: 'OpenConsole\'s account on this cluster may not read this log (check its ClusterRole).',
       rate_limited: 'Too many log streams; try again shortly.',
       not_ready: 'The container is not running yet.',
       container_not_found: 'No such container in this pod.',
@@ -2519,7 +2520,7 @@ const tr = {
   },
   about: {
     github: 'OpenConsole {{version}} · GitHub\'da kaynak kodu',
-    loginFooter: 'Kubernetes OpenConsole · GitHub',
+    loginFooter: 'OpenConsole for Kubernetes · GitHub',
     docs: 'Dokümanlar',
     docsTitle: 'OpenConsole dokümanları',
   },
@@ -2728,6 +2729,7 @@ const tr = {
     },
     error: {
       forbidden: 'Bu logu okuma yetkiniz yok.',
+      cluster_forbidden: 'OpenConsole\'un bu cluster\'daki hesabı bu logu okuyamıyor (ClusterRole\'ü kontrol edin).',
       rate_limited: 'Çok fazla log akışı; birazdan tekrar deneyin.',
       not_ready: 'Container henüz çalışmıyor.',
       container_not_found: 'Bu pod\'da böyle bir container yok.',

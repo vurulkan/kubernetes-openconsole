@@ -1,4 +1,4 @@
-# Kubernetes OpenConsole — agent guide
+# OpenConsole for Kubernetes — agent guide
 
 Web console for several Kubernetes clusters: users see and operate workloads in the namespaces their
 roles allow; every action is audited. One Go binary serves the API and the React build from a single
@@ -170,7 +170,7 @@ signature tags. The version comes from the tag (`dev-<run>` on branches; Dockerf
 
 ## Project files
 
-Apache-2.0 (`LICENSE`; docs site CC BY 4.0). `CONTRIBUTING.md`, `GOVERNANCE.md`, `MAINTAINERS.md`, `SECURITY.md`
+Apache-2.0 (`LICENSE`; docs site CC BY 4.0). The product is **OpenConsole for Kubernetes** (short: OpenConsole), never "Kubernetes OpenConsole" (Linux Foundation marks: "Kubernetes" isn't the first word of a product name; the old name stays only in technical identifiers: repo, image, namespace, docs org). `CONTRIBUTING.md`, `GOVERNANCE.md`, `MAINTAINERS.md`, `SECURITY.md`
 (private GitHub reports), `CODE_OF_CONDUCT.md` (CNCF), `ROADMAP.md`, `ADOPTERS.md`, `TRADEMARKS.md`, `.github/`
 issue + PR templates: aimed at a CNCF Sandbox application. Commits are signed off (`git commit -s`, DCO). Keep
 `ROADMAP.md` at the level of themes: open security findings stay in the private milestones repo.
