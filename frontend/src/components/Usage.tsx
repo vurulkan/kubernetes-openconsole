@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { UsageHistory } from '../services/api';
-import { formatCpu, formatMem } from '../utils/format';
+import { formatCpu, formatMem, formatClock } from '../utils/format';
 import { Spinner } from './ui';
 
 type Kind = 'cpu' | 'mem';
@@ -79,7 +79,7 @@ const H = 120;
 const PAD = { l: 44, r: 8, t: 8, b: 18 };
 
 const clock = (t: number) =>
-  new Date(t * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  formatClock(t * 1000);
 
 /** One series over time with an optional dashed limit line; crosshair + tooltip on hover / arrow keys. */
 export const LineChart: React.FC<{

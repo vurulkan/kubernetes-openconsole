@@ -15,6 +15,7 @@ import {
 import { Button, Modal, NativeSelect } from './ui';
 import { openLogStream, type LogFrame, type LogStatus } from '../utils/logStream';
 import { mainContainer } from '../utils/podStatus';
+import { formatClock } from '../utils/format';
 
 export type LogTarget = {
   kind: 'pods' | 'deployments' | 'jobs';
@@ -279,7 +280,7 @@ const LogViewerBody: React.FC<Props> = ({ namespace, target, pod, onClose }) => 
     }
   })();
   const restartTime = status.restartedAt
-    ? new Date(status.restartedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    ? formatClock(status.restartedAt)
     : '';
 
   return (

@@ -103,6 +103,8 @@ const (
 	// reasonInvalid: the request itself was wrong (body, value out of range,
 	// YAML that doesn't parse or names another object).
 	reasonInvalid = "invalid"
+	// reasonOriginNotAllowed: a WebSocket from another site, refused by WS_ORIGIN_CHECK=enforce.
+	reasonOriginNotAllowed = "origin_not_allowed"
 )
 
 const errAPIAccess = "apiAccess must be off, safe_read or full"

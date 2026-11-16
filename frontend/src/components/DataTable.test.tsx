@@ -165,3 +165,21 @@ describe('DataTable column picker', () => {
     expect(screen.queryByRole('button', { name: 'Columns' })).toBeNull();
   });
 });
+
+describe('DataTable actions column', () => {
+  // The actions column (header '') sticks to the right edge: a wide table scrolled sideways
+  // keeps its buttons and the column picker in reach, and opening the picker scrolls nothing.
+  it('is sticky, header and cells', () => {
+    const columns: Column<Row>[] = [
+      { key: 'name', header: 'Name', cell: (r) => r.name },
+      { key: 'actions', header: '', cell: (r) => <IconButton label={`Edit ${r.name}`} onClick={() => {}}>e</IconButton> },
+    ];
+    render(<DataTable rows={rows} columns={columns} rowKey={(r) => r.id} columnsStorageKey="t-sticky" />);
+    const headers = screen.getAllByRole('columnheader');
+    expect(headers[1].className).toMatch(/\bsticky\b/);
+    expect(headers[0].className).not.toMatch(/\bsticky\b/);
+    const cell = screen.getByRole('button', { name: 'Edit alpha' }).closest('td') as HTMLElement;
+    expect(cell.className).toMatch(/\bsticky\b.*\bright-0\b/);
+    expect(cell.className).toMatch(/\bbg-white\b/);
+  });
+});

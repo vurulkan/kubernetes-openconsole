@@ -31,6 +31,7 @@ import {
   type ExpiryPolicy,
 } from './apikeys/ApiKeyParts';
 import ApiDocs from './apikeys/ApiDocs';
+import { formatDateTime } from '../utils/format';
 
 /** Every grant the ceiling holds somewhere, for naming a key "all my permissions". */
 const ceilingGrants = (c: ApiKeyCeiling | null) => new Set(c?.namespaces.flatMap((n) => n.grants) ?? []);
@@ -149,7 +150,7 @@ const ApiKeysPage: React.FC<{ user: User }> = ({ user }) => {
       descFirst: true,
       cell: (k) =>
         k.lastUsedAt ? (
-          <span className="text-xs text-slate-600 dark:text-slate-300" title={`${new Date(k.lastUsedAt).toLocaleString()} · ${k.lastUsedIp}`}>
+          <span className="text-xs text-slate-600 dark:text-slate-300" title={`${formatDateTime(k.lastUsedAt)} · ${k.lastUsedIp}`}>
             {t('apiKeys.ago', { age: ageShort(k.lastUsedAt) })}
           </span>
         ) : (

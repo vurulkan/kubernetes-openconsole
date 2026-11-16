@@ -6,6 +6,7 @@ import { Badge, Spinner } from './ui';
 import { getPodEvents } from '../services/api';
 import { ageShort } from '../utils/age';
 import { exitCodeHint, exitLabel, type ContainerInfo, type ContainerLook, type PodStatus, type Tone } from '../utils/podStatus';
+import { formatDateTime } from '../utils/format';
 
 type Props = {
   namespace: string;
@@ -229,7 +230,7 @@ const LOOK: Record<ContainerLook, string> = {
  * each square's aria-label. Not tab stops: the pod drawer lists the containers too.
  */
 export const ContainerSquares: React.FC<{ containers: ContainerInfo[] }> = ({ containers }) => {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const [tip, setTip] = useState<{ i: number; top?: number; bottom?: number; left: number } | null>(null);
   const lines = (c: ContainerInfo) =>
     [
@@ -237,7 +238,7 @@ export const ContainerSquares: React.FC<{ containers: ContainerInfo[] }> = ({ co
       c.state,
       c.startedAt &&
         t('dashboard.containers.startedAt', {
-          time: new Date(c.startedAt).toLocaleString(i18n.language),
+          time: formatDateTime(c.startedAt),
           ago: t('dashboard.podStatus.ago', { age: ageShort(c.startedAt) }),
         }),
       t('dashboard.podStatus.restartsN', { count: c.restarts }),
