@@ -311,3 +311,34 @@ func TestKubeWriteCodeIsRegistered(t *testing.T) {
 		}
 	}
 }
+
+// The UI turns every reason code into a sentence (frontend/src/services/api.ts
+// ERROR_CODES, with EN / TR text checked by api.test.ts): a code the UI doesn't
+// know would show as a bare code.
+func TestUIKnowsEveryErrorCode(t *testing.T) {
+	src, err := os.ReadFile("../../../frontend/src/services/api.ts")
+	if err != nil {
+		t.Skip("no frontend checkout:", err)
+	}
+	s := string(src)
+	i := strings.Index(s, "export const ERROR_CODES = [")
+	j := strings.Index(s[i:], "];")
+	if i < 0 || j < 0 {
+		t.Fatal("ERROR_CODES not found in api.ts")
+	}
+	var ui []string
+	for _, line := range strings.Split(s[i:i+j], "\n")[1:] {
+		if v := strings.Trim(strings.TrimSpace(line), "',"); v != "" {
+			ui = append(ui, v)
+		}
+	}
+	var want []string
+	for _, c := range problem.Codes {
+		want = append(want, c.Code)
+	}
+	slices.Sort(ui)
+	slices.Sort(want)
+	if !slices.Equal(ui, want) {
+		t.Fatalf("api.ts ERROR_CODES = %v\nproblem.Codes       = %v", ui, want)
+	}
+}
