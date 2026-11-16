@@ -38,6 +38,7 @@ func (s *Server) handleGetAzureAD(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateLDAP(w http.ResponseWriter, r *http.Request) {
+	noteFor(r).Name = "ldap"
 	var request models.LDAPConfig
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		writeError(w, http.StatusBadRequest, problem.InvalidBody)
@@ -52,11 +53,11 @@ func (s *Server) handleUpdateLDAP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
-	s.recordSettingsUpdate(r, "ldap", nil)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
 func (s *Server) handleUpdateAzureAD(w http.ResponseWriter, r *http.Request) {
+	noteFor(r).Name = "azure_ad"
 	var request models.AzureADConfig
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		writeError(w, http.StatusBadRequest, problem.InvalidBody)
@@ -66,7 +67,6 @@ func (s *Server) handleUpdateAzureAD(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
-	s.recordSettingsUpdate(r, "azure_ad", nil)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
@@ -203,6 +203,7 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
+	noteFor(r).Name = "session"
 	// Fields left out of the body keep their value.
 	request, err := s.store.GetSessionSettings(r.Context())
 	if err != nil {
@@ -225,7 +226,7 @@ func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
-	s.recordSettingsUpdate(r, "session", audit.D{"summary": fmt.Sprintf("session_minutes=%d api_key_max_days=%d api_key_allow_no_expiry=%t",
-		request.SessionMinutes, request.APIKeyMaxDays, request.APIKeyAllowNoExpiry)})
+	noteFor(r).Details = audit.D{"summary": fmt.Sprintf("session_minutes=%d api_key_max_days=%d api_key_allow_no_expiry=%t",
+		request.SessionMinutes, request.APIKeyMaxDays, request.APIKeyAllowNoExpiry)}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }

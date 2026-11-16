@@ -11,10 +11,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/yaml"
 
 	"k8s-dashboard/backend/internal/audit"
-	"k8s-dashboard/backend/internal/kube"
 	"k8s-dashboard/backend/internal/models"
 	"k8s-dashboard/backend/internal/problem"
 )
@@ -53,23 +51,7 @@ func (s *Server) handleDaemonSet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDaemonSetYAML(w http.ResponseWriter, r *http.Request) {
-	namespace, ok := s.requirePermission(w, r, "daemonsets", "get")
-	if !ok {
-		return
-	}
-	item, err := s.resources.GetDaemonSet(r.Context(), namespace, chi.URLParam(r, "name"))
-	if err != nil {
-		writeReadError(w, r, err, "daemonsets")
-		return
-	}
-	item.ManagedFields = nil
-	item.TypeMeta = metav1.TypeMeta{Kind: "DaemonSet", APIVersion: "apps/v1"}
-	data, err := yaml.Marshal(item)
-	if err != nil {
-		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to render yaml")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(kube.PrettifyYAML(data))})
+	serveYAML(s, w, r, "daemonsets", metav1.TypeMeta{Kind: "DaemonSet", APIVersion: "apps/v1"}, s.resources.GetDaemonSet)
 }
 
 func (s *Server) handleStatefulSets(w http.ResponseWriter, r *http.Request) {
@@ -101,23 +83,7 @@ func (s *Server) handleStatefulSet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStatefulSetYAML(w http.ResponseWriter, r *http.Request) {
-	namespace, ok := s.requirePermission(w, r, "statefulsets", "get")
-	if !ok {
-		return
-	}
-	item, err := s.resources.GetStatefulSet(r.Context(), namespace, chi.URLParam(r, "name"))
-	if err != nil {
-		writeReadError(w, r, err, "statefulsets")
-		return
-	}
-	item.ManagedFields = nil
-	item.TypeMeta = metav1.TypeMeta{Kind: "StatefulSet", APIVersion: "apps/v1"}
-	data, err := yaml.Marshal(item)
-	if err != nil {
-		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to render yaml")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(kube.PrettifyYAML(data))})
+	serveYAML(s, w, r, "statefulsets", metav1.TypeMeta{Kind: "StatefulSet", APIVersion: "apps/v1"}, s.resources.GetStatefulSet)
 }
 
 // handleStatefulSetScale mirrors handleDeploymentScale: same rate limiter
@@ -209,23 +175,7 @@ func (s *Server) handleHPA(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHPAYAML(w http.ResponseWriter, r *http.Request) {
-	namespace, ok := s.requirePermission(w, r, "hpas", "get")
-	if !ok {
-		return
-	}
-	item, err := s.resources.GetHPA(r.Context(), namespace, chi.URLParam(r, "name"))
-	if err != nil {
-		writeReadError(w, r, err, "hpas")
-		return
-	}
-	item.ManagedFields = nil
-	item.TypeMeta = metav1.TypeMeta{Kind: "HorizontalPodAutoscaler", APIVersion: "autoscaling/v2"}
-	data, err := yaml.Marshal(item)
-	if err != nil {
-		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to render yaml")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(kube.PrettifyYAML(data))})
+	serveYAML(s, w, r, "hpas", metav1.TypeMeta{Kind: "HorizontalPodAutoscaler", APIVersion: "autoscaling/v2"}, s.resources.GetHPA)
 }
 
 func (s *Server) recordStatefulSetScaleAudit(r *http.Request, namespace, name, outcome, reason string, details audit.D) {

@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"k8s-dashboard/backend/internal/audit"
-	"k8s-dashboard/backend/internal/models"
 	"k8s-dashboard/backend/internal/problem"
 )
 
@@ -43,6 +42,8 @@ func (s *Server) handleGetLogo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUploadLogo(w http.ResponseWriter, r *http.Request) {
+	note := noteFor(r)
+	note.Name = "logo"
 	if err := r.ParseMultipartForm(maxLogoSize); err != nil {
 		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "invalid upload")
 		return
@@ -79,13 +80,13 @@ func (s *Server) handleUploadLogo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = os.WriteFile(s.logoMetaPath(), []byte(contentType), 0o600)
-	s.recordSettingsUpdate(r, "logo", audit.D{"size_bytes": len(data)})
+	note.Details = audit.D{"size_bytes": len(data)}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
 func (s *Server) handleDeleteLogo(w http.ResponseWriter, r *http.Request) {
 	_ = os.Remove(s.logoPath())
 	_ = os.Remove(s.logoMetaPath())
-	s.auditEvent(r, models.AuditLog{Verb: audit.VerbDelete, ResourceType: audit.KindSettings, ResourceName: "logo"})
+	noteFor(r).Name = "logo"
 	w.WriteHeader(http.StatusNoContent)
 }

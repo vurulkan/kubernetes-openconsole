@@ -282,6 +282,31 @@ func (s *Server) routes() *chi.Mux {
 		r.Post("/api/admin/users/{id}/reset-password", s.handleResetUserPassword)
 	})
 
+	// Admin writes: adminWrite checks admin itself so that a refusal is
+	// audited too (every answer is).
+	r.Group(func(r chi.Router) {
+		r.Use(auth.AuthMiddleware(s.jwtKey, s.authValidator(), s.keyAuth()))
+		r.Use(s.clusterMiddleware)
+		r.Post("/api/admin/users", s.adminWrite(audit.VerbCreate, audit.KindUser, s.handleCreateUser))
+		r.Put("/api/admin/users/{id}", s.adminWrite(audit.VerbUpdate, audit.KindUser, s.handleUpdateUser))
+		r.Delete("/api/admin/users/{id}", s.adminWrite(audit.VerbDelete, audit.KindUser, s.handleDeleteUser))
+		r.Put("/api/admin/users/{id}/groups", s.adminWrite(audit.VerbUpdate, audit.KindUser, s.handleSetUserGroups))
+		r.Post("/api/admin/groups", s.adminWrite(audit.VerbCreate, audit.KindGroup, s.handleCreateGroup))
+		r.Put("/api/admin/groups/{id}", s.adminWrite(audit.VerbUpdate, audit.KindGroup, s.handleUpdateGroup))
+		r.Delete("/api/admin/groups/{id}", s.adminWrite(audit.VerbDelete, audit.KindGroup, s.handleDeleteGroup))
+		r.Put("/api/admin/groups/{id}/roles", s.adminWrite(audit.VerbUpdate, audit.KindGroup, s.handleSetGroupRoles))
+		r.Post("/api/admin/roles", s.adminWrite(audit.VerbCreate, audit.KindRole, s.handleCreateRole))
+		r.Put("/api/admin/roles/{id}", s.adminWrite(audit.VerbUpdate, audit.KindRole, s.handleUpdateRole))
+		r.Delete("/api/admin/roles/{id}", s.adminWrite(audit.VerbDelete, audit.KindRole, s.handleDeleteRole))
+		r.Post("/api/admin/roles/{id}/permissions", s.adminWrite(audit.VerbCreate, audit.KindPermission, s.handleAddRolePermission))
+		r.Delete("/api/admin/permissions/{id}", s.adminWrite(audit.VerbDelete, audit.KindPermission, s.handleDeletePermission))
+		r.Put("/api/admin/ldap", s.adminWrite(audit.VerbUpdate, audit.KindSettings, s.handleUpdateLDAP))
+		r.Put("/api/admin/azure-ad", s.adminWrite(audit.VerbUpdate, audit.KindSettings, s.handleUpdateAzureAD))
+		r.Put("/api/admin/session", s.adminWrite(audit.VerbUpdate, audit.KindSettings, s.handleUpdateSession))
+		r.Post("/api/admin/customization/logo", s.adminWrite(audit.VerbUpdate, audit.KindSettings, s.handleUploadLogo))
+		r.Delete("/api/admin/customization/logo", s.adminWrite(audit.VerbDelete, audit.KindSettings, s.handleDeleteLogo))
+	})
+
 	r.Group(func(r chi.Router) {
 		r.Use(auth.AuthMiddleware(s.jwtKey, s.authValidator(), s.keyAuth()))
 		r.Use(s.clusterMiddleware)
@@ -295,34 +320,19 @@ func (s *Server) routes() *chi.Mux {
 		r.Post("/api/admin/api-keys/{id}/revoke", s.handleAdminRevokeAPIKey)
 		r.Post("/api/admin/users/{id}/revoke-api-keys", s.handleRevokeUserAPIKeys)
 		r.Get("/api/admin/users/{id}/api-access", s.handleUserAPIAccess)
-		r.Post("/api/admin/users", s.handleCreateUser)
-		r.Put("/api/admin/users/{id}", s.handleUpdateUser)
-		r.Delete("/api/admin/users/{id}", s.handleDeleteUser)
-		r.Put("/api/admin/users/{id}/groups", s.handleSetUserGroups)
 		r.Get("/api/admin/users/{id}/groups", s.handleGetUserGroups)
 
 		r.Get("/api/admin/groups", s.handleListGroups)
-		r.Post("/api/admin/groups", s.handleCreateGroup)
-		r.Put("/api/admin/groups/{id}", s.handleUpdateGroup)
-		r.Delete("/api/admin/groups/{id}", s.handleDeleteGroup)
-		r.Put("/api/admin/groups/{id}/roles", s.handleSetGroupRoles)
 		r.Get("/api/admin/groups/{id}/roles", s.handleGetGroupRoles)
 
 		r.Get("/api/admin/roles", s.handleListRoles)
-		r.Post("/api/admin/roles", s.handleCreateRole)
-		r.Put("/api/admin/roles/{id}", s.handleUpdateRole)
-		r.Delete("/api/admin/roles/{id}", s.handleDeleteRole)
 		r.Get("/api/admin/roles/{id}/permissions", s.handleListRolePermissions)
-		r.Post("/api/admin/roles/{id}/permissions", s.handleAddRolePermission)
-		r.Delete("/api/admin/permissions/{id}", s.handleDeletePermission)
 
 		r.Get("/api/admin/ldap", s.handleGetLDAP)
-		r.Put("/api/admin/ldap", s.handleUpdateLDAP)
 		r.Post("/api/admin/ldap/test", s.handleTestLDAP)
 		r.Post("/api/admin/ldap/users/search", s.handleSearchLDAPUsers)
 		r.Post("/api/admin/ldap/users/import", s.handleImportLDAPUsers)
 		r.Get("/api/admin/azure-ad", s.handleGetAzureAD)
-		r.Put("/api/admin/azure-ad", s.handleUpdateAzureAD)
 		r.Post("/api/admin/azure-ad/test", s.handleTestAzureAD)
 
 		r.Get("/api/admin/backups", s.handleListBackups)
@@ -330,7 +340,6 @@ func (s *Server) routes() *chi.Mux {
 		r.Get("/api/admin/backups/{name}", s.handleDownloadBackup)
 
 		r.Get("/api/admin/session", s.handleGetSession)
-		r.Put("/api/admin/session", s.handleUpdateSession)
 
 		// Multi-cluster CRUD (admin only).
 		r.Get("/api/admin/clusters", s.handleListClusters)
@@ -360,8 +369,6 @@ func (s *Server) routes() *chi.Mux {
 		r.Get("/api/admin/recordings/{id}/cast", s.handleRecordingCast)
 		r.Post("/api/admin/users/{id}/revoke-sessions", s.handleRevokeAllForUser)
 
-		r.Post("/api/admin/customization/logo", s.handleUploadLogo)
-		r.Delete("/api/admin/customization/logo", s.handleDeleteLogo)
 	})
 
 	// An unknown /api or /ws path answers JSON (an agent would otherwise get

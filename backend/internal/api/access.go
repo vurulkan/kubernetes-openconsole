@@ -126,6 +126,7 @@ func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, resou
 	}
 	engine, ok := s.engineForRequest(r)
 	if !ok {
+		s.auditReadDenied(r, resource, action, reasonForbidden)
 		writeError(w, http.StatusForbidden, reasonForbidden)
 		return "", false
 	}

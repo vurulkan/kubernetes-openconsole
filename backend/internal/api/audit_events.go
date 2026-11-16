@@ -160,21 +160,10 @@ func (s *Server) recordLoginAudit(r *http.Request, user, outcome, reason string,
 	})
 }
 
-// recordSettingsUpdate records a change to an admin setting (ldap,
-// azure_ad, session, logo).
-func (s *Server) recordSettingsUpdate(r *http.Request, name string, details audit.D) {
-	s.auditEvent(r, models.AuditLog{
-		Verb:         audit.VerbUpdate,
-		ResourceType: audit.KindSettings,
-		ResourceName: name,
-		Details:      details,
-	})
-}
-
-// recordPermissionAudit records a grant added to or removed from a role. The
-// event's cluster and namespace are the grant's, not the admin's current
-// cluster; a grant for all clusters has no cluster.
-func (s *Server) recordPermissionAudit(r *http.Request, verb string, p models.NamespacePermission) {
+// notePermission names a grant added to or removed from a role on the
+// adminWrite entry. The event's cluster and namespace are the grant's, not the
+// admin's current cluster; a grant for all clusters has no cluster.
+func (s *Server) notePermission(r *http.Request, p models.NamespacePermission) {
 	d := audit.D{"role": s.roleNameByID(r, p.RoleID)}
 	if p.Resource != "" {
 		d["grant"] = p.Resource + ":" + p.Action
@@ -182,15 +171,8 @@ func (s *Server) recordPermissionAudit(r *http.Request, verb string, p models.Na
 	if p.ID > 0 {
 		d["id"] = p.ID
 	}
-	s.auditEvent(r, models.AuditLog{
-		Verb:         verb,
-		ResourceType: audit.KindPermission,
-		ResourceName: d["role"].(string),
-		Namespace:    p.Namespace,
-		Cluster:      p.ClusterName,
-		ClusterID:    p.ClusterID,
-		Details:      d,
-	})
+	note := noteFor(r)
+	note.Name, note.Namespace, note.Cluster, note.ClusterID, note.Details = d["role"].(string), p.Namespace, p.ClusterName, p.ClusterID, d
 }
 
 func (s *Server) userNameByID(r *http.Request, id int) string {

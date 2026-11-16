@@ -1,11 +1,13 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/yaml"
 
 	"k8s-dashboard/backend/internal/audit"
@@ -169,90 +171,55 @@ func (s *Server) handleConfigMap(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, item)
 }
 
-// Typed client-go objects return with an empty TypeMeta (apiVersion/kind are
-// omitempty on marshal), so without this the YAML the UI shows is missing the
-// first two lines — which also makes a round-trip POST .../apply fail at the
-// API server with "object has no kind". Set TypeMeta explicitly before every
-// marshal.
+// yamlObject is a typed client-go object (*corev1.Pod, …).
+type yamlObject interface {
+	metav1.Object
+	runtime.Object
+}
 
-func (s *Server) handlePodYAML(w http.ResponseWriter, r *http.Request) {
-	namespace, ok := s.requirePermission(w, r, "pods", "get")
+// serveYAML answers a namespaced object as YAML for the viewer / editor and
+// records the read. Secrets have their own handler (values hidden).
+//
+// Typed client-go objects return with an empty TypeMeta (apiVersion/kind are
+// omitempty on marshal), so without tm the YAML the UI shows is missing the
+// first two lines — which also makes a round-trip POST .../apply fail at the
+// API server with "object has no kind".
+func serveYAML[T yamlObject](s *Server, w http.ResponseWriter, r *http.Request, resource string, tm metav1.TypeMeta,
+	get func(context.Context, string, string) (T, error)) {
+	namespace, ok := s.requirePermission(w, r, resource, "get")
 	if !ok {
 		return
 	}
-	pod, err := s.resources.GetPod(r.Context(), namespace, chi.URLParam(r, "name"))
+	item, err := get(r.Context(), namespace, chi.URLParam(r, "name"))
 	if err != nil {
-		writeReadError(w, r, err, "pods")
+		writeReadError(w, r, err, resource)
 		return
 	}
-	pod.ManagedFields = nil
-	pod.TypeMeta = metav1.TypeMeta{Kind: "Pod", APIVersion: "v1"}
-	data, err := yaml.Marshal(pod)
+	item.SetManagedFields(nil)
+	item.GetObjectKind().SetGroupVersionKind(tm.GroupVersionKind())
+	data, err := yaml.Marshal(item)
 	if err != nil {
 		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to render yaml")
 		return
 	}
+	s.auditRead(r, audit.VerbGet, resource, namespace, item.GetName())
 	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(kube.PrettifyYAML(data))})
+}
+
+func (s *Server) handlePodYAML(w http.ResponseWriter, r *http.Request) {
+	serveYAML(s, w, r, "pods", metav1.TypeMeta{Kind: "Pod", APIVersion: "v1"}, s.resources.GetPod)
 }
 
 func (s *Server) handleDeploymentYAML(w http.ResponseWriter, r *http.Request) {
-	namespace, ok := s.requirePermission(w, r, "deployments", "get")
-	if !ok {
-		return
-	}
-	item, err := s.resources.GetDeployment(r.Context(), namespace, chi.URLParam(r, "name"))
-	if err != nil {
-		writeReadError(w, r, err, "deployments")
-		return
-	}
-	item.ManagedFields = nil
-	item.TypeMeta = metav1.TypeMeta{Kind: "Deployment", APIVersion: "apps/v1"}
-	data, err := yaml.Marshal(item)
-	if err != nil {
-		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to render yaml")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(kube.PrettifyYAML(data))})
+	serveYAML(s, w, r, "deployments", metav1.TypeMeta{Kind: "Deployment", APIVersion: "apps/v1"}, s.resources.GetDeployment)
 }
 
 func (s *Server) handleServiceYAML(w http.ResponseWriter, r *http.Request) {
-	namespace, ok := s.requirePermission(w, r, "services", "get")
-	if !ok {
-		return
-	}
-	item, err := s.resources.GetService(r.Context(), namespace, chi.URLParam(r, "name"))
-	if err != nil {
-		writeReadError(w, r, err, "services")
-		return
-	}
-	item.ManagedFields = nil
-	item.TypeMeta = metav1.TypeMeta{Kind: "Service", APIVersion: "v1"}
-	data, err := yaml.Marshal(item)
-	if err != nil {
-		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to render yaml")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(kube.PrettifyYAML(data))})
+	serveYAML(s, w, r, "services", metav1.TypeMeta{Kind: "Service", APIVersion: "v1"}, s.resources.GetService)
 }
 
 func (s *Server) handleConfigMapYAML(w http.ResponseWriter, r *http.Request) {
-	namespace, ok := s.requirePermission(w, r, "configmaps", "get")
-	if !ok {
-		return
-	}
-	item, err := s.resources.GetConfigMap(r.Context(), namespace, chi.URLParam(r, "name"))
-	if err != nil {
-		writeReadError(w, r, err, "configmaps")
-		return
-	}
-	item.ManagedFields = nil
-	item.TypeMeta = metav1.TypeMeta{Kind: "ConfigMap", APIVersion: "v1"}
-	data, err := yaml.Marshal(item)
-	if err != nil {
-		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to render yaml")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(kube.PrettifyYAML(data))})
+	serveYAML(s, w, r, "configmaps", metav1.TypeMeta{Kind: "ConfigMap", APIVersion: "v1"}, s.resources.GetConfigMap)
 }
 
 func (s *Server) handleConfigMapData(w http.ResponseWriter, r *http.Request) {
@@ -297,24 +264,7 @@ func (s *Server) handleCronJobs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCronJobYAML(w http.ResponseWriter, r *http.Request) {
-	namespace, ok := s.requirePermission(w, r, "cronjobs", "get")
-	if !ok {
-		return
-	}
-	item, err := s.resources.GetCronJob(r.Context(), namespace, chi.URLParam(r, "name"))
-	if err != nil {
-		writeReadError(w, r, err, "cronjobs")
-		return
-	}
-	item.ManagedFields = nil
-	item.TypeMeta = metav1.TypeMeta{Kind: "CronJob", APIVersion: "batch/v1"}
-	data, err := yaml.Marshal(item)
-	if err != nil {
-		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to render yaml")
-		return
-	}
-	s.auditRead(r, audit.VerbGet, "cronjobs", namespace, item.Name)
-	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(kube.PrettifyYAML(data))})
+	serveYAML(s, w, r, "cronjobs", metav1.TypeMeta{Kind: "CronJob", APIVersion: "batch/v1"}, s.resources.GetCronJob)
 }
 
 func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
@@ -332,45 +282,11 @@ func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleJobYAML(w http.ResponseWriter, r *http.Request) {
-	namespace, ok := s.requirePermission(w, r, "jobs", "get")
-	if !ok {
-		return
-	}
-	item, err := s.resources.GetJob(r.Context(), namespace, chi.URLParam(r, "name"))
-	if err != nil {
-		writeReadError(w, r, err, "jobs")
-		return
-	}
-	item.ManagedFields = nil
-	item.TypeMeta = metav1.TypeMeta{Kind: "Job", APIVersion: "batch/v1"}
-	data, err := yaml.Marshal(item)
-	if err != nil {
-		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to render yaml")
-		return
-	}
-	s.auditRead(r, audit.VerbGet, "jobs", namespace, item.Name)
-	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(kube.PrettifyYAML(data))})
+	serveYAML(s, w, r, "jobs", metav1.TypeMeta{Kind: "Job", APIVersion: "batch/v1"}, s.resources.GetJob)
 }
 
 func (s *Server) handleIngressYAML(w http.ResponseWriter, r *http.Request) {
-	namespace, ok := s.requirePermission(w, r, "ingresses", "get")
-	if !ok {
-		return
-	}
-	item, err := s.resources.GetIngress(r.Context(), namespace, chi.URLParam(r, "name"))
-	if err != nil {
-		writeReadError(w, r, err, "ingresses")
-		return
-	}
-	item.ManagedFields = nil
-	item.TypeMeta = metav1.TypeMeta{Kind: "Ingress", APIVersion: "networking.k8s.io/v1"}
-	data, err := yaml.Marshal(item)
-	if err != nil {
-		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to render yaml")
-		return
-	}
-	s.auditRead(r, audit.VerbGet, "ingresses", namespace, item.Name)
-	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(kube.PrettifyYAML(data))})
+	serveYAML(s, w, r, "ingresses", metav1.TypeMeta{Kind: "Ingress", APIVersion: "networking.k8s.io/v1"}, s.resources.GetIngress)
 }
 
 func (s *Server) handlePodEvents(w http.ResponseWriter, r *http.Request) {

@@ -57,6 +57,8 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	request.Username = strings.TrimSpace(request.Username)
+	note := noteFor(r)
+	note.Name = request.Username
 	if msg := checkUsername(request.Username); msg != "" {
 		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, msg)
 		return
@@ -109,8 +111,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.auditEvent(r, models.AuditLog{Verb: audit.VerbCreate, ResourceType: audit.KindUser, ResourceName: user.Username,
-		Details: audit.D{"account_source": source, "is_admin": user.IsAdmin, "groups": len(request.GroupIDs)}})
+	note.Details = audit.D{"account_source": source, "is_admin": user.IsAdmin, "groups": len(request.GroupIDs)}
 	writeJSON(w, http.StatusCreated, user)
 }
 
@@ -143,6 +144,8 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, problem.NotFound)
 		return
 	}
+	note := noteFor(r)
+	note.Name = user.Username
 	// Guard: do not let the last active admin be demoted or deactivated — the
 	// system would be unmanageable afterwards. "Last" is counted BEFORE this
 	// update is applied; if the user is currently admin+active and is about
@@ -198,7 +201,7 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 			d["api_access"] = "roles"
 		}
 	}
-	s.auditEvent(r, models.AuditLog{Verb: audit.VerbUpdate, ResourceType: audit.KindUser, ResourceName: user.Username, Details: d})
+	note.Name, note.Details = user.Username, d
 	writeJSON(w, http.StatusOK, user)
 }
 
@@ -219,6 +222,8 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, problem.NotFound)
 		return
 	}
+	note := noteFor(r)
+	note.Name = target.Username
 	// Guard: deleting the last active admin would strand the system.
 	if target.IsAdmin && target.IsActive {
 		count, err := s.store.CountActiveAdmins(r.Context())
@@ -236,8 +241,7 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
-	s.auditEvent(r, models.AuditLog{Verb: audit.VerbDelete, ResourceType: audit.KindUser, ResourceName: target.Username,
-		Details: audit.D{"account_source": target.AuthSource, "is_admin": target.IsAdmin}})
+	note.Details = audit.D{"account_source": target.AuthSource, "is_admin": target.IsAdmin}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -254,9 +258,10 @@ func (s *Server) handleSetUserGroups(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
+	note := noteFor(r)
+	note.Name = s.userNameByID(r, id)
 	if err := s.store.SetUserGroups(r.Context(), id, request.GroupIDs); err != nil {
-		s.auditEvent(r, models.AuditLog{Verb: audit.VerbUpdate, Outcome: audit.Failed, Reason: failReason(err),
-			ResourceType: audit.KindUser, ResourceName: s.userNameByID(r, id), Details: failDetails(err, audit.D{"changed": []string{"groups"}})})
+		note.Reason, note.Details = failReason(err), failDetails(err, audit.D{"changed": []string{"groups"}})
 		if errors.Is(err, store.ErrUnknownReference) {
 			writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "unknown user or group id")
 			return
@@ -264,8 +269,7 @@ func (s *Server) handleSetUserGroups(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
-	s.auditEvent(r, models.AuditLog{Verb: audit.VerbUpdate, ResourceType: audit.KindUser, ResourceName: s.userNameByID(r, id),
-		Details: audit.D{"changed": []string{"groups"}, "groups": len(request.GroupIDs)}})
+	note.Details = audit.D{"changed": []string{"groups"}, "groups": len(request.GroupIDs)}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
@@ -300,12 +304,12 @@ func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
+	noteFor(r).Name = request.Name
 	id, err := s.store.CreateGroup(r.Context(), request.Name)
 	if err != nil {
 		writeErrorDetail(w, http.StatusConflict, problem.Conflict, "the name already exists")
 		return
 	}
-	s.auditEvent(r, models.AuditLog{Verb: audit.VerbCreate, ResourceType: audit.KindGroup, ResourceName: request.Name})
 	writeJSON(w, http.StatusCreated, models.Group{ID: id, Name: request.Name})
 }
 
@@ -322,11 +326,12 @@ func (s *Server) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
+	note := noteFor(r)
+	note.Name, note.Details = request.Name, audit.D{"changed": []string{"name"}}
 	if err := s.store.UpdateGroup(r.Context(), id, request.Name); err != nil {
 		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
-	s.auditEvent(r, models.AuditLog{Verb: audit.VerbUpdate, ResourceType: audit.KindGroup, ResourceName: request.Name, Details: audit.D{"changed": []string{"name"}}})
 	writeJSON(w, http.StatusOK, models.Group{ID: id, Name: request.Name})
 }
 
@@ -336,12 +341,12 @@ func (s *Server) handleDeleteGroup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, problem.InvalidID)
 		return
 	}
-	name := s.groupNameByID(r, id)
+	note := noteFor(r)
+	note.Name, note.Details = s.groupNameByID(r, id), audit.D{"id": id}
 	if err := s.store.DeleteGroup(r.Context(), id); err != nil {
 		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
-	s.auditEvent(r, models.AuditLog{Verb: audit.VerbDelete, ResourceType: audit.KindGroup, ResourceName: name, Details: audit.D{"id": id}})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -358,9 +363,10 @@ func (s *Server) handleSetGroupRoles(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
+	note := noteFor(r)
+	note.Name = s.groupNameByID(r, id)
 	if err := s.store.SetGroupRoles(r.Context(), id, request.RoleIDs); err != nil {
-		s.auditEvent(r, models.AuditLog{Verb: audit.VerbUpdate, Outcome: audit.Failed, Reason: failReason(err),
-			ResourceType: audit.KindGroup, ResourceName: s.groupNameByID(r, id), Details: failDetails(err, audit.D{"changed": []string{"roles"}})})
+		note.Reason, note.Details = failReason(err), failDetails(err, audit.D{"changed": []string{"roles"}})
 		if errors.Is(err, store.ErrUnknownReference) {
 			writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "unknown group or role id")
 			return
@@ -368,8 +374,7 @@ func (s *Server) handleSetGroupRoles(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
-	s.auditEvent(r, models.AuditLog{Verb: audit.VerbUpdate, ResourceType: audit.KindGroup, ResourceName: s.groupNameByID(r, id),
-		Details: audit.D{"changed": []string{"roles"}, "count": len(request.RoleIDs)}})
+	note.Details = audit.D{"changed": []string{"roles"}, "count": len(request.RoleIDs)}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
@@ -406,6 +411,8 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
+	note := noteFor(r)
+	note.Name = request.Name
 	if request.APIAccess == "" {
 		request.APIAccess = rbac.AccessSafeRead
 	}
@@ -424,8 +431,7 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.auditEvent(r, models.AuditLog{Verb: audit.VerbCreate, ResourceType: audit.KindRole, ResourceName: request.Name,
-		Details: audit.D{"api_access": request.APIAccess}})
+	note.Details = audit.D{"api_access": request.APIAccess}
 	writeJSON(w, http.StatusCreated, models.Role{ID: id, Name: request.Name, Description: request.Description, APIAccess: request.APIAccess})
 }
 
@@ -444,6 +450,8 @@ func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
+	note := noteFor(r)
+	note.Name = request.Name
 	if request.APIAccess != nil && !rbac.ValidMode(*request.APIAccess) {
 		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, errAPIAccess)
 		return
@@ -472,7 +480,7 @@ func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request) {
 		role.APIAccess = *request.APIAccess
 		d = audit.D{"changed": []string{"api_access"}, "api_access": role.APIAccess}
 	}
-	s.auditEvent(r, models.AuditLog{Verb: audit.VerbUpdate, ResourceType: audit.KindRole, ResourceName: request.Name, Details: d})
+	note.Details = d
 	writeJSON(w, http.StatusOK, role)
 }
 
@@ -482,12 +490,12 @@ func (s *Server) handleDeleteRole(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, problem.InvalidID)
 		return
 	}
-	name := s.roleNameByID(r, id)
+	note := noteFor(r)
+	note.Name, note.Details = s.roleNameByID(r, id), audit.D{"id": id}
 	if err := s.store.DeleteRole(r.Context(), id); err != nil {
 		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
-	s.auditEvent(r, models.AuditLog{Verb: audit.VerbDelete, ResourceType: audit.KindRole, ResourceName: name, Details: audit.D{"id": id}})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -522,9 +530,9 @@ func (s *Server) handleAddRolePermission(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := s.store.AddNamespacePermission(r.Context(), roleID, request.ClusterID, request.Namespace, request.Resource, request.Action); err != nil {
-		s.auditEvent(r, models.AuditLog{Verb: audit.VerbCreate, Outcome: audit.Failed, Reason: failReason(err),
-			ResourceType: audit.KindPermission, ResourceName: strconv.Itoa(roleID), Namespace: request.Namespace,
-			Details: failDetails(err, audit.D{"grant": request.Resource + ":" + request.Action})})
+		note := noteFor(r)
+		note.Name, note.Namespace = strconv.Itoa(roleID), request.Namespace
+		note.Reason, note.Details = failReason(err), failDetails(err, audit.D{"grant": request.Resource + ":" + request.Action})
 		if errors.Is(err, store.ErrUnknownReference) {
 			writeErrorDetail(w, http.StatusNotFound, problem.NotFound, "role not found")
 			return
@@ -536,7 +544,7 @@ func (s *Server) handleAddRolePermission(w http.ResponseWriter, r *http.Request)
 	if request.ClusterID > 0 {
 		clusterName, _ = s.store.GetClusterName(r.Context(), request.ClusterID)
 	}
-	s.recordPermissionAudit(r, audit.VerbCreate, models.NamespacePermission{
+	s.notePermission(r, models.NamespacePermission{
 		RoleID: roleID, ClusterID: request.ClusterID, ClusterName: clusterName,
 		Namespace: request.Namespace, Resource: request.Resource, Action: request.Action,
 	})
@@ -553,10 +561,11 @@ func (s *Server) handleDeletePermission(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		perm = &models.NamespacePermission{ID: id}
 	}
+	s.notePermission(r, *perm)
 	if err := s.store.DeleteNamespacePermission(r.Context(), id); err != nil {
 		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
-	s.recordPermissionAudit(r, audit.VerbDelete, *perm)
+	s.notePermission(r, *perm)
 	w.WriteHeader(http.StatusNoContent)
 }

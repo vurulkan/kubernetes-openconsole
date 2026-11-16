@@ -31,6 +31,15 @@ func TestScanAuditActions(t *testing.T) {
 	if got["api_key.use"]["success"] {
 		t.Error("api_key.use is only recorded when refused")
 	}
+	// adminWrite(verb, kind, …): each route's own pair, not every verb with every type.
+	if !got["user.delete"]["denied"] || !got["role.create"]["failed"] {
+		t.Errorf("adminWrite actions missing: %v %v", got["user.delete"], got["role.create"])
+	}
+	for _, a := range []string{"permission.update", "settings.create", "group.import"} {
+		if got[a] != nil {
+			t.Errorf("%s is not an action of any route", a)
+		}
+	}
 }
 
 func TestClusterRoleRules(t *testing.T) {

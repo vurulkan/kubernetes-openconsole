@@ -19,11 +19,14 @@ func writeJSON(w http.ResponseWriter, status int, payload interface{}) {
 // writeError answers an error as problem details (see package problem): code is
 // one of problem's constants, never free text.
 func writeError(w http.ResponseWriter, status int, code string) {
-	problem.Write(w, status, code, "")
+	writeErrorDetail(w, status, code, "")
 }
 
 // writeErrorDetail is writeError with an English detail for a human: which
 // field, which name. Clients switch on the code, never on the detail.
 func writeErrorDetail(w http.ResponseWriter, status int, code, detail string) {
+	if n, ok := w.(interface{ noteProblem(string) }); ok {
+		n.noteProblem(code) // adminWrite audits it as the reason
+	}
 	problem.Write(w, status, code, detail)
 }
