@@ -964,7 +964,13 @@ const en = {
     downloadOn: 'Admins may download backups (BACKUP_ALLOW_DOWNLOAD=true); each download is audited.',
     downloadOff: 'Downloading is off. A backup is the whole database, every cluster credential included; to allow it, set BACKUP_ALLOW_DOWNLOAD=true on the Deployment.',
     keyInside: 'The encryption key is kept in the database, so a backup also holds the key that decrypts the cluster credentials. Set ENCRYPTION_KEY_FILE to keep it outside (see the docs).',
-    schedule: 'A backup every {{every}}; the newest {{keep}} are kept in {{dir}}.',
+    schedule: 'A backup {{every}}; the newest {{keep}} are kept in {{dir}}.',
+    every: {
+      hours_one: 'every hour',
+      hours_other: 'every {{count}} hours',
+      minutes_one: 'every minute',
+      minutes_other: 'every {{count}} minutes',
+    },
     noSchedule: 'No scheduled backups (BACKUP_INTERVAL=0); the newest {{keep}} are kept in {{dir}}.',
   },
   sessions: {
@@ -2420,7 +2426,13 @@ const tr = {
     downloadOn: 'Adminler yedekleri indirebilir (BACKUP_ALLOW_DOWNLOAD=true); her indirme audit\'e yazılır.',
     downloadOff: 'İndirme kapalı. Bir yedek, bütün cluster kimlik bilgileri dahil veritabanının tamamıdır; izin vermek için Deployment\'ta BACKUP_ALLOW_DOWNLOAD=true ayarlayın.',
     keyInside: 'Şifreleme anahtarı veritabanında duruyor, bu yüzden bir yedek cluster kimlik bilgilerini çözen anahtarı da içerir. Anahtarı dışarıda tutmak için ENCRYPTION_KEY_FILE ayarlayın (dokümana bakın).',
-    schedule: 'Her {{every}} bir yedek; en yeni {{keep}} tanesi {{dir}} içinde tutulur.',
+    schedule: '{{every}} yedek alınır; en yeni {{keep}} tanesi {{dir}} içinde tutulur.',
+    every: {
+      hours_one: 'Saatte bir',
+      hours_other: '{{count}} saatte bir',
+      minutes_one: 'Dakikada bir',
+      minutes_other: '{{count}} dakikada bir',
+    },
     noSchedule: 'Zamanlanmış yedek yok (BACKUP_INTERVAL=0); en yeni {{keep}} tanesi {{dir}} içinde tutulur.',
   },
   sessions: {

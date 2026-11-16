@@ -29,6 +29,7 @@ import {
   type ExpiryChoice,
   type KeyTemplate,
 } from './ApiKeyParts';
+import { formatDateTime } from '../../utils/format';
 
 const labelClass = 'text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400';
 
@@ -251,7 +252,7 @@ const ApiKeyFormPage: React.FC<{ user: User }> = ({ user }) => {
             <Section title={t('apiKeys.expiry')}>
               {editing ? (
                 <p className="text-sm text-slate-600 dark:text-slate-300">
-                  {editing.expiresAt ? new Date(editing.expiresAt).toLocaleString() : t('apiKeys.noExpiry')} ·{' '}
+                  {editing.expiresAt ? formatDateTime(editing.expiresAt) : t('apiKeys.noExpiry')} ·{' '}
                   <span className="text-slate-500 dark:text-slate-400">{t('apiKeys.expiryReadOnly')}</span>
                 </p>
               ) : (

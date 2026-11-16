@@ -69,6 +69,23 @@ func corsMiddleware(next http.Handler) http.Handler {
 // from a trusted proxy), ALLOWED_ORIGINS. Anything else is logged as
 // ws.origin_mismatch and refused only with WS_ORIGIN_CHECK=enforce.
 func wsOriginOK(r *http.Request) bool {
+	if originAllowed(r) {
+		return true
+	}
+	origin := r.Header.Get("Origin")
+	slog.Warn("ws.origin_mismatch",
+		slog.String("origin", origin),
+		slog.String("host", r.Host),
+		slog.String("path", r.URL.Path),
+		slog.Bool("refused", wsOriginEnforce),
+		slog.String("remote_ip", clientIP(r)),
+		slog.String("request_id", logpkg.RequestIDFrom(r.Context())))
+	return !wsOriginEnforce
+}
+
+// originAllowed: no Origin (not a browser), an ALLOWED_ORIGINS entry, or the
+// request's own host (Host, or X-Forwarded-Host from a trusted proxy).
+func originAllowed(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" || allowedOrigins[strings.ToLower(origin)] {
 		return true
@@ -81,15 +98,12 @@ func wsOriginOK(r *http.Request) bool {
 			return true
 		}
 	}
-	slog.Warn("ws.origin_mismatch",
-		slog.String("origin", origin),
-		slog.String("host", r.Host),
-		slog.String("path", r.URL.Path),
-		slog.Bool("refused", wsOriginEnforce),
-		slog.String("remote_ip", clientIP(r)),
-		slog.String("request_id", logpkg.RequestIDFrom(r.Context())))
-	return !wsOriginEnforce
+	return false
 }
+
+// wsOriginRefused: the WebSocket upgrade will be refused for its Origin
+// (WS_ORIGIN_CHECK=enforce). Lets a handler stop before it opens anything.
+func wsOriginRefused(r *http.Request) bool { return wsOriginEnforce && !originAllowed(r) }
 
 // forwardedHost is X-Forwarded-Host when the connection comes from a trusted
 // proxy (TRUSTED_PROXIES), else "".

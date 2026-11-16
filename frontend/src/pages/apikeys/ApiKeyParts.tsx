@@ -4,6 +4,7 @@ import { AlertTriangle, Check, Copy } from 'lucide-react';
 import { Alert, Badge, Button, Input } from '../../components/ui';
 import { RESOURCE_CATALOG } from '../../components/PermissionMatrix';
 import type { ApiKey, ApiKeyCeiling } from '../../services/api';
+import { formatDateTime } from '../../utils/format';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const READ_ACTIONS = ['list', 'get', 'logs'];
@@ -72,7 +73,7 @@ export const ExpiryBadge: React.FC<{ apiKey: ApiKey }> = ({ apiKey }) => {
       : ([st.days > 7 ? 'success' : 'warning', t('apiKeys.daysLeft', { count: st.days })] as const);
   const when = apiKey.revokedAt ?? apiKey.expiresAt;
   return (
-    <span title={when ? new Date(when).toLocaleString() : undefined}>
+    <span title={when ? formatDateTime(when) : undefined}>
       <Badge variant={variant}>
         <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />
         {label}

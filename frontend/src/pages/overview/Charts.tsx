@@ -1,4 +1,5 @@
 import React, { useRef, useState } from 'react';
+import { formatClock } from '../../utils/format';
 
 /**
  * A stat tile's trend: one 2px line in the de-emphasis gray, the latest point in the accent.
@@ -49,7 +50,7 @@ export const HourlyBars: React.FC<{
   const slot = (W - PAD.l - PAD.r) / counts.length;
   const bw = Math.min(24, slot - 2);
   const y = (v: number) => PAD.t + (1 - v / max) * (H - PAD.t - PAD.b);
-  const hourText = (i: number) => new Date((hourStart + i * 3600) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const hourText = (i: number) => formatClock((hourStart + i * 3600) * 1000);
   const pick = (clientX: number) => {
     const box = ref.current?.getBoundingClientRect();
     if (!box) return;

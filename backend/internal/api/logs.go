@@ -265,15 +265,15 @@ func (s *Server) handlePodLogsWS(w http.ResponseWriter, r *http.Request) {
 		container = defaultContainer(pod)
 		podLogs.Details["container"] = container
 	}
-	// Reconnects after a drop are the same viewing session: audited once, when opened.
-	if q.Get("resume") != "true" {
-		s.auditEvent(r, podLogs)
-	}
-
 	conn, err := logUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		logWarnf("logs ws upgrade failed: %v", err)
 		return
+	}
+	// Audited once the socket is open (a refused one isn't a viewing session); reconnects
+	// after a drop are the same session: audited once, when opened.
+	if q.Get("resume") != "true" {
+		s.auditEvent(r, podLogs)
 	}
 	defer conn.Close()
 	MetricsLogStreamIncr()

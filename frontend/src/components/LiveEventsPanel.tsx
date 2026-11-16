@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { Button } from './ui';
 import { wsUrl } from '../services/api';
 import { MAX_BACKOFF_MS } from '../utils/logStream';
+import { formatClock } from '../utils/format';
 
 export type LiveEvent = {
   verb: string;
@@ -233,7 +234,7 @@ const LiveEventsPanel: React.FC<Props> = ({ namespace, open, onClose, initialFil
                 </span>
               </div>
               <time className="shrink-0 text-[10px] tabular-nums text-slate-500 dark:text-slate-400">
-                {formatTime(e.at)}
+                {formatClock(e.at, true)}
               </time>
             </div>
             <div className="mt-0.5 truncate text-[11px] text-slate-600 dark:text-slate-300">
@@ -274,16 +275,5 @@ const VerbBadge: React.FC<{ verb: string; type?: string }> = ({ verb, type }) =>
   );
 };
 
-function formatTime(iso: string): string {
-  try {
-    const d = new Date(iso);
-    const h = String(d.getHours()).padStart(2, '0');
-    const m = String(d.getMinutes()).padStart(2, '0');
-    const s = String(d.getSeconds()).padStart(2, '0');
-    return `${h}:${m}:${s}`;
-  } catch {
-    return '';
-  }
-}
 
 export default LiveEventsPanel;

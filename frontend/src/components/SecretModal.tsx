@@ -3,7 +3,7 @@ import { AlertTriangle, Check, Copy, Eye, EyeOff, Lock, ShieldAlert } from 'luci
 import { useTranslation } from 'react-i18next';
 import { Alert, Badge, Button, Modal, Spinner } from './ui';
 import { getSecret, revealSecretKey, SecretSummary } from '../services/api';
-import { formatBytes } from '../utils/format';
+import { formatBytes, formatDateTime } from '../utils/format';
 
 type Props = {
   open: boolean;
@@ -114,7 +114,7 @@ export const SecretModal: React.FC<Props> = ({ open, namespace, name, canReveal,
               <span className="font-mono text-slate-500 dark:text-slate-400">
                 {namespace}/{secret.metadata.name}
               </span>
-              <span>· {new Date(secret.metadata.creationTimestamp).toLocaleString()}</span>
+              <span>· {formatDateTime(secret.metadata.creationTimestamp)}</span>
             </div>
 
             {(labels.length > 0 || annotations.length > 0) && (
