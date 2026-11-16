@@ -211,4 +211,3 @@ func (s *Server) recordSecretAudit(r *http.Request, namespace, name, verb, outco
 		Details:      details,
 	})
 }
-
