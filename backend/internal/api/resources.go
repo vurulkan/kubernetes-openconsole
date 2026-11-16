@@ -304,7 +304,7 @@ func (s *Server) handlePodEvents(w http.ResponseWriter, r *http.Request) {
 		FieldSelector: fmt.Sprintf("involvedObject.kind=Pod,involvedObject.name=%s", name),
 	})
 	if err != nil {
-		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to fetch events")
+		writeReadError(w, r, err, "events")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"items": events.Items})
@@ -329,7 +329,7 @@ func (s *Server) handleWorkloadEvents(resource string) http.HandlerFunc {
 			FieldSelector: fmt.Sprintf("involvedObject.kind=%s,involvedObject.name=%s", kind, name),
 		})
 		if err != nil {
-			writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to fetch events")
+			writeReadError(w, r, err, "events")
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"items": events.Items})
