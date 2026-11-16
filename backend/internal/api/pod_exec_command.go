@@ -145,16 +145,16 @@ func (s *Server) handlePodExecCommand(w http.ResponseWriter, r *http.Request) {
 
 	client, ok := kubeFor(r).Client()
 	if !ok {
-		refuse(http.StatusServiceUnavailable, audit.Failed, "not_connected")
+		refuse(http.StatusServiceUnavailable, audit.Failed, problem.NotConnected)
 		return
 	}
 	pod, err := client.CoreV1().Pods(namespace).Get(r.Context(), podName, metav1.GetOptions{})
 	switch {
 	case apierrors.IsNotFound(err):
-		refuse(http.StatusNotFound, audit.Failed, "pod_not_found")
+		refuse(http.StatusNotFound, audit.Failed, problem.PodNotFound)
 		return
 	case err != nil:
-		refuse(http.StatusBadGateway, audit.Failed, "unavailable")
+		refuse(http.StatusBadGateway, audit.Failed, problem.Unavailable)
 		return
 	}
 	container := strings.TrimSpace(req.Container)
@@ -164,17 +164,17 @@ func (s *Server) handlePodExecCommand(w http.ResponseWriter, r *http.Request) {
 	details["container"] = container
 	cs := containerStatus(pod, container)
 	if !hasContainer(pod, container) {
-		refuse(http.StatusBadRequest, audit.Failed, "container_not_found")
+		refuse(http.StatusBadRequest, audit.Failed, problem.ContainerNotFound)
 		return
 	}
 	if cs == nil || cs.State.Running == nil {
-		refuse(http.StatusBadRequest, audit.Failed, "not_ready")
+		refuse(http.StatusBadRequest, audit.Failed, problem.NotReady)
 		return
 	}
 
 	if !s.execSessions.acquire(claims.UserID) {
 		details["max_sessions"] = s.execSessions.limit
-		refuse(http.StatusTooManyRequests, audit.RateLimited, "too_many_sessions")
+		refuse(http.StatusTooManyRequests, audit.RateLimited, problem.TooManySessions)
 		return
 	}
 	defer s.execSessions.release(claims.UserID)
@@ -184,7 +184,7 @@ func (s *Server) handlePodExecCommand(w http.ResponseWriter, r *http.Request) {
 	defer rec.Close()
 	if rec == nil && claims.APIKey != nil {
 		// Same rule as the shell: what a key runs is always recorded.
-		refuse(http.StatusServiceUnavailable, audit.Failed, "recording_unavailable")
+		refuse(http.StatusServiceUnavailable, audit.Failed, problem.RecordingUnavailable)
 		return
 	}
 	// The recording reads like a terminal: the command line, then its output.

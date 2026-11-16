@@ -121,13 +121,18 @@ components:
             - `cluster_unreachable`: The cluster's API server can't be reached, or it refused OpenConsole's credentials.
             - `cluster_error`: The cluster's API server refused the change; detail has its message.
             - `not_connected`: There is no connection to the cluster.
+            - `pod_not_found`: The pod doesn't exist (any more).
+            - `container_not_found`: The pod has no container of that name.
+            - `not_ready`: The container isn't running yet (waiting to start, ContainerCreating).
+            - `previous_unavailable`: There is no previous container log (the container hasn't restarted, or the log is gone).
+            - `unavailable`: The cluster couldn't serve the log or command; try again.
             - `exec_failed`: The command could not be started in the container (no such program, container not running).
             - `connection_failed`: A connection test or directory search (LDAP, Azure AD) failed; detail has the error.
             - `not_configured`: The feature isn't set up on this server (backups, Azure AD, …).
             - `sign_in_failed`: The external sign-in (Azure AD) failed or doesn't match this account.
             - `recording_unavailable`: The shell can't be recorded right now, and this session must be; try again later.
             - `internal_error`: The server failed; the request id in the server log has the cause.
-          enum: [unauthorized, api_key_expired, api_key_revoked, password_change_required, forbidden, admin_only, feature_disabled, api_key_not_allowed, api_access_policy, api_access_off, backup_download_disabled, rate_limited, too_many_sessions, not_found, method_not_allowed, invalid_id, invalid_body, invalid_input, body_too_large, conflict, wrong_password, weak_password, password_unchanged, cannot_delete_self, kubeconfig_unsupported, cluster_invalid, cluster_forbidden, cluster_timeout, cluster_unreachable, cluster_error, not_connected, exec_failed, connection_failed, not_configured, sign_in_failed, recording_unavailable, internal_error]
+          enum: [unauthorized, api_key_expired, api_key_revoked, password_change_required, forbidden, admin_only, feature_disabled, api_key_not_allowed, api_access_policy, api_access_off, backup_download_disabled, rate_limited, too_many_sessions, not_found, method_not_allowed, invalid_id, invalid_body, invalid_input, body_too_large, conflict, wrong_password, weak_password, password_unchanged, cannot_delete_self, kubeconfig_unsupported, cluster_invalid, cluster_forbidden, cluster_timeout, cluster_unreachable, cluster_error, not_connected, pod_not_found, container_not_found, not_ready, previous_unavailable, unavailable, exec_failed, connection_failed, not_configured, sign_in_failed, recording_unavailable, internal_error]
   responses:
     list:
       description: A Kubernetes list.

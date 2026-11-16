@@ -52,6 +52,11 @@ const (
 	NotConfigured          = "not_configured"
 	ConnectionFailed       = "connection_failed"
 	ExecFailed             = "exec_failed"
+	PodNotFound            = "pod_not_found"
+	ContainerNotFound      = "container_not_found"
+	NotReady               = "not_ready"
+	PreviousUnavailable    = "previous_unavailable"
+	Unavailable            = "unavailable"
 	SignInFailed           = "sign_in_failed"
 	RecordingUnavailable   = "recording_unavailable"
 	InternalError          = "internal_error"
@@ -96,6 +101,11 @@ var Codes = []Code{
 	{ClusterUnreachable, "The cluster's API server can't be reached, or it refused OpenConsole's credentials."},
 	{ClusterError, "The cluster's API server refused the change; detail has its message."},
 	{NotConnected, "There is no connection to the cluster."},
+	{PodNotFound, "The pod doesn't exist (any more)."},
+	{ContainerNotFound, "The pod has no container of that name."},
+	{NotReady, "The container isn't running yet (waiting to start, ContainerCreating)."},
+	{PreviousUnavailable, "There is no previous container log (the container hasn't restarted, or the log is gone)."},
+	{Unavailable, "The cluster couldn't serve the log or command; try again."},
 	{ExecFailed, "The command could not be started in the container (no such program, container not running)."},
 	{ConnectionFailed, "A connection test or directory search (LDAP, Azure AD) failed; detail has the error."},
 	{NotConfigured, "The feature isn't set up on this server (backups, Azure AD, …)."},

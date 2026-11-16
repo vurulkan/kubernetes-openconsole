@@ -78,7 +78,7 @@ func TestErrorCodesAreRegistered(t *testing.T) {
 	}
 	// Variables that carry a code from a constant through (checked at their source).
 	passThrough := map[string]bool{"reason": true, "code": true, "logsEvent.Reason": true, "podLogs.Reason": true,
-		"kubeWriteCode()": true}
+		"kubeWriteCode()": true, "s.denyReason()": true}
 	checked := 0
 	for _, f := range files {
 		ast.Inspect(f, func(n ast.Node) bool {
@@ -87,7 +87,7 @@ func TestErrorCodesAreRegistered(t *testing.T) {
 				return true
 			}
 			name := exprString(call.Fun, nil)
-			if name != "writeError" && name != "writeErrorDetail" && name != "problem.Write" && name != "Write" && name != "wsFail" {
+			if name != "writeError" && name != "writeErrorDetail" && name != "problem.Write" && name != "Write" && name != "wsFail" && name != "refuse" {
 				return true
 			}
 			idx := 2

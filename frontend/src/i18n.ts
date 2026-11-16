@@ -945,6 +945,11 @@ const en = {
     sign_in_failed: 'Sign-in failed.',
     recording_unavailable: 'The shell can\'t be recorded right now, and this session must be. Try again later.',
     internal_error: 'Something went wrong on the server. Try again; if it keeps failing, tell your administrator.',
+    pod_not_found: 'The pod no longer exists.',
+    container_not_found: 'The pod has no container of that name.',
+    not_ready: 'The container is not running yet.',
+    previous_unavailable: 'There is no previous container log.',
+    unavailable: 'The cluster could not serve this right now. Try again.',
     network: 'The server cannot be reached. Check your connection and try again.',
   },
   backups: {
@@ -2395,6 +2400,11 @@ const tr = {
     sign_in_failed: 'Giriş başarısız oldu.',
     recording_unavailable: 'Shell şu an kaydedilemiyor ve bu oturumun kaydedilmesi gerekiyor. Daha sonra tekrar deneyin.',
     internal_error: 'Sunucuda bir hata oluştu. Tekrar deneyin; sürerse yöneticinize bildirin.',
+    pod_not_found: 'Pod artık yok.',
+    container_not_found: 'Pod\'da bu adda bir container yok.',
+    not_ready: 'Container henüz çalışmıyor.',
+    previous_unavailable: 'Önceki container\'ın logu yok.',
+    unavailable: 'Cluster bunu şu an sunamadı. Tekrar deneyin.',
     network: 'Sunucuya ulaşılamıyor. Bağlantınızı kontrol edip tekrar deneyin.',
   },
   backups: {
