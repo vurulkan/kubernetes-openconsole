@@ -15,9 +15,6 @@ const ALLOWED = new Set([
   'X-Scope-OrgID',
   'Admin API', // the name of a key scope
   'Unnamed', // a Kubernetes object without a name (never happens)
-  'ConfigMap Data', // internal key of the data modal, mapped to i18n
-  'PODS Events',
-  'DEPLOYMENTS Events',
   'Auto (bash → ash → sh)', // a value list of shells
 ]);
 

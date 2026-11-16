@@ -5,7 +5,6 @@ import { useTranslation } from 'react-i18next';
 import { Spinner } from '../../components/ui';
 import { ageShort } from '../../utils/age';
 
-export type Item = Record<string, any>;
 
 export const Section: React.FC<{ title: string; aside?: React.ReactNode; children: React.ReactNode }> = ({
   title,
