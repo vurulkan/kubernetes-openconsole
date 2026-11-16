@@ -13,7 +13,6 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"k8s-dashboard/backend/internal/auth"
 	"k8s-dashboard/backend/internal/models"
 	"k8s-dashboard/backend/internal/testutil/ldapfake"
 )
@@ -109,5 +108,4 @@ func TestLDAPSignInFailureIsLogged(t *testing.T) {
 	if l := logs(); !strings.Contains(l, `msg="ldap sign-in failed" user=newcomer`) {
 		t.Fatalf("auto-provision log: %s", l)
 	}
-	_ = auth.LDAPConfig{}
 }

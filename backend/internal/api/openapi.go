@@ -16,23 +16,29 @@ import (
 var openapiYAML []byte
 
 // openapiJSON is converted once; the file is embedded, so a broken one fails the tests, not a user.
-// info.version is the build's version (a local build keeps the file's).
-var openapiJSON = func() []byte {
+var openapiJSON = openapiDoc(version.Version)
+
+// openapiDoc is openapi.yaml as JSON with info.version = v (a local build, "dev", keeps the file's).
+func openapiDoc(v string) []byte {
 	b, err := yaml.YAMLToJSON(openapiYAML)
 	if err != nil {
 		panic("openapi.yaml: " + err.Error())
 	}
-	if version.Version == "dev" {
+	if v == "dev" {
 		return b
 	}
-	var doc map[string]any
-	if err := json.Unmarshal(b, &doc); err != nil {
-		panic("openapi.yaml: " + err.Error())
+	var doc struct {
+		Info map[string]any `json:"info"`
 	}
-	doc["info"].(map[string]any)["version"] = version.Version
-	b, _ = json.Marshal(doc)
+	var all map[string]any
+	if json.Unmarshal(b, &doc) != nil || json.Unmarshal(b, &all) != nil || doc.Info == nil {
+		panic("openapi.yaml: no info block")
+	}
+	doc.Info["version"] = v
+	all["info"] = doc.Info
+	b, _ = json.Marshal(all)
 	return b
-}()
+}
 
 // handleOpenAPI serves the description without sign-in: it holds paths and
 // permissions only (no hostname, user or secret), and an agent reads it first.

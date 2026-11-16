@@ -86,7 +86,7 @@ func TestErrorCodesAreRegistered(t *testing.T) {
 			if !ok {
 				return true
 			}
-			name := exprString(call.Fun, nil)
+			name := exprString(call.Fun)
 			if name != "writeError" && name != "writeErrorDetail" && name != "problem.Write" && name != "Write" && name != "wsFail" && name != "refuse" {
 				return true
 			}
@@ -99,11 +99,10 @@ func TestErrorCodesAreRegistered(t *testing.T) {
 			}
 			arg := call.Args[idx]
 			pos := fset.Position(arg.Pos())
-			if lit, ok := arg.(*ast.BasicLit); ok && name == "wsFail" {
-				_ = lit // wsFail's literal reasons are log-frame reasons; their HTTP answer maps them
-				return true
+			if _, ok := arg.(*ast.BasicLit); ok && name == "wsFail" {
+				return true // wsFail's literal reasons are log-frame reasons; its HTTP answer maps them
 			}
-			src := exprString(arg, nil)
+			src := exprString(arg)
 			if lit, ok := arg.(*ast.BasicLit); ok {
 				t.Errorf("%s: %s gets the literal %s; use a problem constant", pos, name, lit.Value)
 				return true
@@ -128,27 +127,17 @@ func TestErrorCodesAreRegistered(t *testing.T) {
 	}
 }
 
-func exprString(e ast.Expr, consts map[string]string) string {
+func exprString(e ast.Expr) string {
 	switch v := e.(type) {
 	case *ast.Ident:
-		if consts != nil {
-			if s, ok := consts[v.Name]; ok {
-				return s
-			}
-		}
 		return v.Name
 	case *ast.SelectorExpr:
-		if consts != nil {
-			if s, ok := consts[v.Sel.Name]; ok {
-				return s
-			}
-		}
-		return exprString(v.X, nil) + "." + v.Sel.Name
+		return exprString(v.X) + "." + v.Sel.Name
 	case *ast.BasicLit:
 		s, _ := strconv.Unquote(v.Value)
 		return s
 	case *ast.CallExpr:
-		return exprString(v.Fun, nil) + "()"
+		return exprString(v.Fun) + "()"
 	}
 	return "?"
 }
@@ -340,5 +329,19 @@ func TestUIKnowsEveryErrorCode(t *testing.T) {
 	slices.Sort(want)
 	if !slices.Equal(ui, want) {
 		t.Fatalf("api.ts ERROR_CODES = %v\nproblem.Codes       = %v", ui, want)
+	}
+}
+
+// A release build serves its own version; the rest of the description is unchanged.
+func TestServedOpenAPIVersion(t *testing.T) {
+	var doc struct {
+		Info  struct{ Version, Title string }
+		Paths map[string]any
+	}
+	if err := json.Unmarshal(openapiDoc("2.23.1"), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Info.Version != "2.23.1" || doc.Info.Title != "OpenConsole API" || len(doc.Paths) < 100 {
+		t.Fatalf("info %+v, %d paths", doc.Info, len(doc.Paths))
 	}
 }

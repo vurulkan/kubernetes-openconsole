@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"strings"
@@ -62,5 +61,4 @@ func TestYAMLViews(t *testing.T) {
 		b, _ := json.MarshalIndent(dump, "", " ")
 		_ = os.WriteFile(f, b, 0o600)
 	}
-	_ = context.Background
 }
