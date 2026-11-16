@@ -119,7 +119,7 @@ components:
             - `cluster_forbidden`: OpenConsole's own account on the cluster may not read this (its ClusterRole).
             - `cluster_timeout`: The cluster's API server didn't answer in time.
             - `cluster_unreachable`: The cluster's API server can't be reached, or it refused OpenConsole's credentials.
-            - `cluster_error`: The cluster's API server refused the change; detail has its message.
+            - `cluster_error`: The cluster's API server answered with another error (a refused change, a server error); detail has its message.
             - `not_connected`: There is no connection to the cluster.
             - `pod_not_found`: The pod doesn't exist (any more).
             - `container_not_found`: The pod has no container of that name.

@@ -99,7 +99,7 @@ var Codes = []Code{
 	{ClusterForbidden, "OpenConsole's own account on the cluster may not read this (its ClusterRole)."},
 	{ClusterTimeout, "The cluster's API server didn't answer in time."},
 	{ClusterUnreachable, "The cluster's API server can't be reached, or it refused OpenConsole's credentials."},
-	{ClusterError, "The cluster's API server refused the change; detail has its message."},
+	{ClusterError, "The cluster's API server answered with another error (a refused change, a server error); detail has its message."},
 	{NotConnected, "There is no connection to the cluster."},
 	{PodNotFound, "The pod doesn't exist (any more)."},
 	{ContainerNotFound, "The pod has no container of that name."},
