@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+
+	"k8s-dashboard/backend/internal/problem"
 )
 
 func writeJSON(w http.ResponseWriter, status int, payload interface{}) {
@@ -14,6 +16,14 @@ func writeJSON(w http.ResponseWriter, status int, payload interface{}) {
 	}
 }
 
-func writeError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, map[string]string{"error": message})
+// writeError answers an error as problem details (see package problem): code is
+// one of problem's constants, never free text.
+func writeError(w http.ResponseWriter, status int, code string) {
+	problem.Write(w, status, code, "")
+}
+
+// writeErrorDetail is writeError with an English detail for a human: which
+// field, which name. Clients switch on the code, never on the detail.
+func writeErrorDetail(w http.ResponseWriter, status int, code, detail string) {
+	problem.Write(w, status, code, detail)
 }

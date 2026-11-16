@@ -24,6 +24,7 @@ import (
 	"k8s-dashboard/backend/internal/auth"
 	"k8s-dashboard/backend/internal/logging"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/problem"
 	"k8s-dashboard/backend/internal/recording"
 )
 
@@ -105,7 +106,7 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 	defer s.ws.Done()
 	claims, ok := auth.FromContext(r.Context())
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return
 	}
 	namespace := chi.URLParam(r, "namespace")
@@ -138,7 +139,7 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		writeError(w, http.StatusTooManyRequests, msg)
+		writeErrorDetail(w, http.StatusTooManyRequests, problem.TooManySessions, msg)
 		return
 	}
 	defer s.execSessions.release(claims.UserID)
@@ -151,18 +152,18 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 
 	client, ok := kubeFor(r).Client()
 	if !ok {
-		w.WriteHeader(http.StatusServiceUnavailable)
+		writeError(w, http.StatusServiceUnavailable, problem.NotConnected)
 		return
 	}
 	cfg, ok := kubeFor(r).RESTConfig()
 	if !ok {
-		w.WriteHeader(http.StatusServiceUnavailable)
+		writeError(w, http.StatusServiceUnavailable, problem.NotConnected)
 		return
 	}
 
 	if !websocket.IsWebSocketUpgrade(r) {
 		// Checked before a recording is opened for a session that never starts.
-		writeError(w, http.StatusBadRequest, "a WebSocket upgrade is required")
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "a WebSocket upgrade is required")
 		return
 	}
 	// Built before a recording is opened, so a failure leaves none behind.
@@ -183,7 +184,7 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 	executor, err := remotecommand.NewSPDYExecutor(cfg, "POST", req.URL())
 	if err != nil {
 		s.recordExecAudit(r, namespace, pod, audit.Failed, "spdy_init", failDetails(err, audit.D{"container": container, "command": command}))
-		writeError(w, http.StatusBadGateway, "spdy init failed: "+err.Error())
+		writeErrorDetail(w, http.StatusBadGateway, problem.ClusterError, "spdy init failed: "+err.Error())
 		return
 	}
 
@@ -195,7 +196,7 @@ func (s *Server) handlePodExecWS(w http.ResponseWriter, r *http.Request) {
 	if rec == nil && claims.APIKey != nil {
 		// A shell opened with an API key runs with nobody watching: no recording, no shell.
 		s.recordExecAudit(r, namespace, pod, audit.Failed, "recording_unavailable", audit.D{"container": container, "command": command})
-		writeError(w, http.StatusServiceUnavailable, "the session cannot be recorded, and a shell opened with an API key always is; try again later")
+		writeErrorDetail(w, http.StatusServiceUnavailable, problem.RecordingUnavailable, "the session cannot be recorded, and a shell opened with an API key always is; try again later")
 		return
 	}
 

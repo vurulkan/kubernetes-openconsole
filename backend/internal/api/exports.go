@@ -5,6 +5,7 @@ import (
 	"io"
 	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/problem"
 	"net/http"
 	"sort"
 	"strconv"
@@ -20,12 +21,12 @@ func (s *Server) handleExportUsers(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	users, err := s.store.ListUsers(ctx)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list users")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to list users")
 		return
 	}
 	groupNames, err := s.groupNames(r)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list groups")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to list groups")
 		return
 	}
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
@@ -52,12 +53,12 @@ func (s *Server) handleExportGroups(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	groups, err := s.store.ListGroups(ctx)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list groups")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to list groups")
 		return
 	}
 	roles, err := s.store.ListRoles(ctx)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list roles")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to list roles")
 		return
 	}
 	roleNames := map[int]string{}
@@ -66,7 +67,7 @@ func (s *Server) handleExportGroups(w http.ResponseWriter, r *http.Request) {
 	}
 	users, err := s.store.ListUsers(ctx)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list users")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to list users")
 		return
 	}
 	members := map[int][]string{}

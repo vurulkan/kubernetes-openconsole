@@ -10,6 +10,7 @@ import (
 
 	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/kube"
+	"k8s-dashboard/backend/internal/problem"
 )
 
 func (s *Server) handleNamespaces(w http.ResponseWriter, r *http.Request) {
@@ -19,7 +20,7 @@ func (s *Server) handleNamespaces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, ok := s.userForRequest(r); !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return
 	}
 	engine, ok := s.engineForRequest(r)
@@ -40,7 +41,7 @@ func (s *Server) handleNamespaces(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleNamespacePermissions(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 	if _, ok := s.userForRequest(r); !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return
 	}
 	engine, ok := s.engineForRequest(r)
@@ -188,7 +189,7 @@ func (s *Server) handlePodYAML(w http.ResponseWriter, r *http.Request) {
 	pod.TypeMeta = metav1.TypeMeta{Kind: "Pod", APIVersion: "v1"}
 	data, err := yaml.Marshal(pod)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to render yaml")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to render yaml")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(kube.PrettifyYAML(data))})
@@ -208,7 +209,7 @@ func (s *Server) handleDeploymentYAML(w http.ResponseWriter, r *http.Request) {
 	item.TypeMeta = metav1.TypeMeta{Kind: "Deployment", APIVersion: "apps/v1"}
 	data, err := yaml.Marshal(item)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to render yaml")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to render yaml")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(kube.PrettifyYAML(data))})
@@ -228,7 +229,7 @@ func (s *Server) handleServiceYAML(w http.ResponseWriter, r *http.Request) {
 	item.TypeMeta = metav1.TypeMeta{Kind: "Service", APIVersion: "v1"}
 	data, err := yaml.Marshal(item)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to render yaml")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to render yaml")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(kube.PrettifyYAML(data))})
@@ -248,7 +249,7 @@ func (s *Server) handleConfigMapYAML(w http.ResponseWriter, r *http.Request) {
 	item.TypeMeta = metav1.TypeMeta{Kind: "ConfigMap", APIVersion: "v1"}
 	data, err := yaml.Marshal(item)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to render yaml")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to render yaml")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(kube.PrettifyYAML(data))})
@@ -309,7 +310,7 @@ func (s *Server) handleCronJobYAML(w http.ResponseWriter, r *http.Request) {
 	item.TypeMeta = metav1.TypeMeta{Kind: "CronJob", APIVersion: "batch/v1"}
 	data, err := yaml.Marshal(item)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to render yaml")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to render yaml")
 		return
 	}
 	s.auditRead(r, audit.VerbGet, "cronjobs", namespace, item.Name)
@@ -344,7 +345,7 @@ func (s *Server) handleJobYAML(w http.ResponseWriter, r *http.Request) {
 	item.TypeMeta = metav1.TypeMeta{Kind: "Job", APIVersion: "batch/v1"}
 	data, err := yaml.Marshal(item)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to render yaml")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to render yaml")
 		return
 	}
 	s.auditRead(r, audit.VerbGet, "jobs", namespace, item.Name)
@@ -365,7 +366,7 @@ func (s *Server) handleIngressYAML(w http.ResponseWriter, r *http.Request) {
 	item.TypeMeta = metav1.TypeMeta{Kind: "Ingress", APIVersion: "networking.k8s.io/v1"}
 	data, err := yaml.Marshal(item)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to render yaml")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to render yaml")
 		return
 	}
 	s.auditRead(r, audit.VerbGet, "ingresses", namespace, item.Name)
@@ -379,7 +380,7 @@ func (s *Server) handlePodEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	client, ok := kubeFor(r).Client()
 	if !ok || !kubeFor(r).Ready() {
-		writeError(w, http.StatusServiceUnavailable, "kubernetes client not ready")
+		writeError(w, http.StatusServiceUnavailable, problem.NotConnected)
 		return
 	}
 	name := chi.URLParam(r, "name")
@@ -387,7 +388,7 @@ func (s *Server) handlePodEvents(w http.ResponseWriter, r *http.Request) {
 		FieldSelector: fmt.Sprintf("involvedObject.kind=Pod,involvedObject.name=%s", name),
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to fetch events")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to fetch events")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"items": events.Items})
@@ -404,7 +405,7 @@ func (s *Server) handleWorkloadEvents(resource string) http.HandlerFunc {
 		}
 		client, ok := kubeFor(r).Client()
 		if !ok || !kubeFor(r).Ready() {
-			writeError(w, http.StatusServiceUnavailable, "kubernetes client not ready")
+			writeError(w, http.StatusServiceUnavailable, problem.NotConnected)
 			return
 		}
 		name := chi.URLParam(r, "name")
@@ -412,7 +413,7 @@ func (s *Server) handleWorkloadEvents(resource string) http.HandlerFunc {
 			FieldSelector: fmt.Sprintf("involvedObject.kind=%s,involvedObject.name=%s", kind, name),
 		})
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to fetch events")
+			writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to fetch events")
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"items": events.Items})

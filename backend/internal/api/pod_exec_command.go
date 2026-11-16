@@ -25,6 +25,7 @@ import (
 	"k8s-dashboard/backend/internal/kube"
 	"k8s-dashboard/backend/internal/logging"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/problem"
 )
 
 // Limits of POST /api/namespaces/{namespace}/pods/{name}/exec (M16).
@@ -102,7 +103,7 @@ func (c *capped) result() (string, int64, bool) {
 func (s *Server) handlePodExecCommand(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.FromContext(r.Context())
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return
 	}
 	namespace, podName := chi.URLParam(r, "namespace"), chi.URLParam(r, "name")
@@ -123,11 +124,11 @@ func (s *Server) handlePodExecCommand(w http.ResponseWriter, r *http.Request) {
 
 	var req execCommandRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "the body must be JSON: {\"command\": [\"cat\", \"/etc/os-release\"], \"container\": \"…\", \"timeoutSeconds\": 30}")
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "the body must be JSON: {\"command\": [\"cat\", \"/etc/os-release\"], \"container\": \"…\", \"timeoutSeconds\": 30}")
 		return
 	}
 	if len(req.Command) == 0 || strings.TrimSpace(req.Command[0]) == "" {
-		writeError(w, http.StatusBadRequest, "command must be a non-empty array, e.g. [\"cat\", \"/etc/os-release\"]; it is not run in a shell")
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "command must be a non-empty array, e.g. [\"cat\", \"/etc/os-release\"]; it is not run in a shell")
 		return
 	}
 	details["program"] = req.Command[0]
@@ -136,7 +137,7 @@ func (s *Server) handlePodExecCommand(w http.ResponseWriter, r *http.Request) {
 		timeout = *req.TimeoutSeconds
 	}
 	if timeout < 1 || timeout > execCommandMaxTimeout {
-		writeError(w, http.StatusBadRequest, "timeoutSeconds must be between 1 and "+strconv.Itoa(execCommandMaxTimeout))
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "timeoutSeconds must be between 1 and "+strconv.Itoa(execCommandMaxTimeout))
 		return
 	}
 	// The command may run longer than the server's WriteTimeout (60 s).
@@ -228,7 +229,7 @@ func (s *Server) handlePodExecCommand(w http.ResponseWriter, r *http.Request) {
 	if failed != nil {
 		// The error text comes from the API server / kubelet, not from the command line.
 		s.recordExecAudit(r, namespace, podName, audit.Failed, "exec_failed", failDetails(failed, details))
-		writeError(w, http.StatusBadGateway, "exec_failed")
+		writeError(w, http.StatusBadGateway, problem.ExecFailed)
 		return
 	}
 	s.recordExecAudit(r, namespace, podName, audit.Success, "", details)

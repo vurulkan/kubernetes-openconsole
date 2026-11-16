@@ -2,6 +2,8 @@ package api
 
 import (
 	_ "embed"
+	"encoding/json"
+	"k8s-dashboard/backend/internal/version"
 	"net/http"
 
 	"sigs.k8s.io/yaml"
@@ -14,11 +16,21 @@ import (
 var openapiYAML []byte
 
 // openapiJSON is converted once; the file is embedded, so a broken one fails the tests, not a user.
+// info.version is the build's version (a local build keeps the file's).
 var openapiJSON = func() []byte {
 	b, err := yaml.YAMLToJSON(openapiYAML)
 	if err != nil {
 		panic("openapi.yaml: " + err.Error())
 	}
+	if version.Version == "dev" {
+		return b
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(b, &doc); err != nil {
+		panic("openapi.yaml: " + err.Error())
+	}
+	doc["info"].(map[string]any)["version"] = version.Version
+	b, _ = json.Marshal(doc)
 	return b
 }()
 

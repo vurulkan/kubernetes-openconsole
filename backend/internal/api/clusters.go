@@ -6,12 +6,14 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
 	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/kube"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/problem"
 )
 
 // Multi-cluster management. Admins save N cluster definitions and mark one as
@@ -66,7 +68,7 @@ func (p clusterPayload) toCreds() (models.KubeCredentials, error) {
 func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 	items, err := s.store.ListClusters(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list clusters")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to list clusters")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
@@ -78,7 +80,7 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListClustersPublic(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.userForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return
 	}
 	items, err := s.store.ListClusters(r.Context())
@@ -131,27 +133,27 @@ func (s *Server) handleGetActiveCluster(w http.ResponseWriter, r *http.Request) 
 func (s *Server) handleCreateCluster(w http.ResponseWriter, r *http.Request) {
 	var p clusterPayload
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid body")
+		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
 	if p.Name == "" {
-		writeError(w, http.StatusBadRequest, "name is required")
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "name is required")
 		return
 	}
 	creds, err := p.toCreds()
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, err.Error())
 		return
 	}
 	// Validate credentials against the cluster BEFORE persisting; a bad kubeconfig
 	// should fail here rather than silently stuck in the DB.
 	if err := kube.ValidateCredentials(creds); err != nil {
-		writeError(w, http.StatusBadRequest, clusterValidationError(err))
+		writeClusterValidationError(w, err)
 		return
 	}
 	id, err := s.store.CreateCluster(r.Context(), p.Name, p.Description, creds)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to save cluster")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to save cluster")
 		return
 	}
 	// Connected right away, like the clusters connected at start: its cache
@@ -164,36 +166,36 @@ func (s *Server) handleCreateCluster(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUpdateClusterByID(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+		writeError(w, http.StatusBadRequest, problem.InvalidID)
 		return
 	}
 	var p clusterPayload
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid body")
+		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
 	creds, cErr := p.toCreds()
 	if p.ReplaceSecrets && cErr != nil {
-		writeError(w, http.StatusBadRequest, cErr.Error())
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, cErr.Error())
 		return
 	}
 	if p.ReplaceSecrets && p.Method == "token" && len(creds.CACert) == 0 && !p.RemoveCACert {
 		// A new token, the same API server certificate: keep the stored CA.
 		old, err := s.store.GetCluster(r.Context(), id)
 		if err != nil {
-			writeError(w, http.StatusNotFound, "cluster not found")
+			writeErrorDetail(w, http.StatusNotFound, problem.NotFound, "cluster not found")
 			return
 		}
 		creds.CACert = old.Credentials.CACert
 	}
 	if p.ReplaceSecrets {
 		if err := kube.ValidateCredentials(creds); err != nil {
-			writeError(w, http.StatusBadRequest, clusterValidationError(err))
+			writeClusterValidationError(w, err)
 			return
 		}
 	}
 	if err := s.store.UpdateCluster(r.Context(), id, p.Name, p.Description, creds, p.ReplaceSecrets); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to update cluster")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to update cluster")
 		return
 	}
 	// New credentials: drop the live connection; the next request for this
@@ -211,12 +213,12 @@ func (s *Server) handleUpdateClusterByID(w http.ResponseWriter, r *http.Request)
 func (s *Server) handleDeleteCluster(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+		writeError(w, http.StatusBadRequest, problem.InvalidID)
 		return
 	}
 	name, _ := s.store.GetClusterName(r.Context(), id)
 	if err := s.store.DeleteCluster(r.Context(), id); err != nil {
-		writeError(w, http.StatusConflict, err.Error())
+		writeErrorDetail(w, http.StatusConflict, problem.Conflict, err.Error())
 		return
 	}
 	s.clusters.Invalidate(id)
@@ -231,11 +233,11 @@ func (s *Server) handleDeleteCluster(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeactivateCluster(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+		writeError(w, http.StatusBadRequest, problem.InvalidID)
 		return
 	}
 	if err := s.store.DeactivateCluster(r.Context(), id); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, err.Error())
 		return
 	}
 	// Only the default changes: users who picked this cluster explicitly
@@ -249,12 +251,12 @@ func (s *Server) handleDeactivateCluster(w http.ResponseWriter, r *http.Request)
 func (s *Server) handleActivateCluster(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+		writeError(w, http.StatusBadRequest, problem.InvalidID)
 		return
 	}
 	name, err := s.store.GetClusterName(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "cluster not found")
+		writeErrorDetail(w, http.StatusNotFound, problem.NotFound, "cluster not found")
 		return
 	}
 	// Connect first: a cluster that can't be reached must not become the
@@ -264,11 +266,11 @@ func (s *Server) handleActivateCluster(w http.ResponseWriter, r *http.Request) {
 		err = m.Check(r.Context())
 	}
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "activation failed: "+err.Error())
+		writeErrorDetail(w, http.StatusBadGateway, problem.ClusterInvalid, "activation failed: "+err.Error())
 		return
 	}
 	if err := s.store.ActivateCluster(r.Context(), id); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, err.Error())
 		return
 	}
 	s.defaultClusterID.Store(int64(id))
@@ -298,9 +300,11 @@ func (s *Server) recordClusterAudit(r *http.Request, verb, name string, id int) 
 // clusterValidationError is the 400 message for credentials that don't
 // validate; a kubeconfig that runs a program or reads a file starts with the
 // reason code kubeconfig_unsupported.
-func clusterValidationError(err error) string {
+func writeClusterValidationError(w http.ResponseWriter, err error) {
 	if errors.Is(err, kube.ErrKubeconfigUnsupported) {
-		return err.Error()
+		writeErrorDetail(w, http.StatusBadRequest, problem.KubeconfigUnsupported,
+			strings.TrimPrefix(err.Error(), problem.KubeconfigUnsupported+": "))
+		return
 	}
-	return "cluster validation failed: " + err.Error()
+	writeErrorDetail(w, http.StatusBadRequest, problem.ClusterInvalid, err.Error())
 }

@@ -14,6 +14,7 @@ import (
 	"k8s-dashboard/backend/internal/auth"
 	logpkg "k8s-dashboard/backend/internal/logging"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/problem"
 	"k8s-dashboard/backend/internal/rbac"
 )
 
@@ -114,7 +115,7 @@ func (s *Server) denyReason(ctx context.Context, namespace, resource, action str
 
 func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, resource, action string) (string, bool) {
 	if _, ok := s.userForRequest(r); !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return "", false
 	}
 	namespace := chi.URLParam(r, "namespace")

@@ -10,7 +10,7 @@
 openapi: 3.1.0
 info:
   title: OpenConsole API
-  version: "2.22"
+  version: "2.23"  # served as the build's version (openapi.go)
   description: |
     Kubernetes workloads across several clusters, limited to what your roles allow; every action is audited.
 
@@ -26,16 +26,22 @@ info:
     then connect to that path with `?ticket=<ticket>` (single use, short-lived). For one command or a log
     snapshot, use the plain HTTP endpoints instead: `POST …/pods/{name}/exec`, `GET …/pods/{name}/logs`.
 
-    **Errors** have a JSON body `{"error": "<reason>"}`:
-    - `401`: the key (or session) is not valid: unknown, expired or revoked.
+    **Errors** are problem details (RFC 9457, `application/problem+json`) with one extra member, `error`,
+    the reason code to switch on; `detail` is optional English text for a human (which field, which name):
+    `{"type": "about:blank", "title": "Forbidden", "status": 403, "error": "forbidden"}`. The codes are
+    listed in the `Problem` schema. The ones you will meet most:
+    - `401 unauthorized`, `api_key_expired`, `api_key_revoked`: the key (or session) is not valid.
     - `403`: the key is valid but may not do this. Reasons: `forbidden` (no permission here),
       `api_access_policy` (the owner has it, the admin's policy keeps it from keys), `api_access_off`
       (the policy turns API access off for this user), `api_key_not_allowed` (web session only),
-      `feature_disabled` (switched off by the operator), `admin_only`.
-    - `429`: too many requests (10 per second per key, bursts of 30) or too many open shells / log streams.
+      `feature_disabled` (switched off by the operator), `admin_only`, `password_change_required`.
+    - `429 rate_limited` (10 requests per second per key, bursts of 30; wait `Retry-After` seconds) or
+      `too_many_sessions` (too many open shells / log streams).
     - The cluster failed a read: `403 cluster_forbidden` (OpenConsole's credentials for the cluster may not
       read this; see its ClusterRole), `404 not_found`, `502 cluster_unreachable`, `503 not_connected`,
       `504 cluster_timeout`.
+    - An unknown `/api/…` or `/ws/…` path: `404 not_found`; a known path with the wrong method:
+      `405 method_not_allowed` with an `Allow` header.
 
     Every action and every resource read made with a key is written to the audit log with the key's name;
     helper calls such as `/api/auth/me` and `/api/ws-ticket` are not.
@@ -71,6 +77,57 @@ components:
       description: Cluster name or id; defaults to your selected cluster.
     ticket: {name: ticket, in: query, required: true, schema: {type: string}, description: From POST /api/ws-ticket.}
     container: {name: container, in: query, schema: {type: string}, description: Container name; defaults to the pod's default container.}
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status, error]
+      properties:
+        type: {type: string, description: Always about:blank.}
+        title: {type: string, description: The HTTP status text.}
+        status: {type: integer}
+        detail: {type: string, description: Optional English text for a human; never parse it.}
+        error:
+          type: string
+          description: |
+            The reason code:
+            - `unauthorized`: Not signed in, or the session or API key is no longer valid (unknown, signed out, owner deactivated).
+            - `api_key_expired`: The API key has expired.
+            - `api_key_revoked`: The API key was revoked.
+            - `password_change_required`: The account must change its password before it can do anything else.
+            - `forbidden`: Your roles don't allow this action.
+            - `admin_only`: Only an administrator may do this.
+            - `feature_disabled`: The feature is switched off on this server (FEATURE_* setting).
+            - `api_key_not_allowed`: This can't be done with an API key; sign in to the web console.
+            - `api_access_policy`: The key's owner may do this, but the administrator's API access policy doesn't allow it with a key.
+            - `api_access_off`: API access is switched off for the key's owner.
+            - `backup_download_disabled`: Backup downloads are switched off (BACKUP_ALLOW_DOWNLOAD).
+            - `rate_limited`: Too many requests; wait and retry (see Retry-After).
+            - `too_many_sessions`: Too many shells open at once for this user.
+            - `not_found`: The object or path doesn't exist.
+            - `method_not_allowed`: The path exists but not with this HTTP method.
+            - `invalid_id`: An id in the path isn't a number.
+            - `invalid_body`: The request body is missing or isn't valid JSON of the expected shape.
+            - `invalid_input`: A value in the request isn't accepted; detail says which.
+            - `body_too_large`: The request body is over the size limit.
+            - `conflict`: The change conflicts with the current state (a name that exists, a revoked key, a recording still running).
+            - `wrong_password`: The current password is wrong.
+            - `weak_password`: The new password doesn't meet the password policy; detail says why.
+            - `password_unchanged`: The new password must differ from the current one.
+            - `cannot_delete_self`: You can't delete your own account.
+            - `kubeconfig_unsupported`: The kubeconfig runs a program, uses an auth provider or points to a file; only inline credentials are accepted.
+            - `cluster_invalid`: The cluster credentials were refused or the API server couldn't be reached; detail says why.
+            - `cluster_forbidden`: OpenConsole's own account on the cluster may not read this (its ClusterRole).
+            - `cluster_timeout`: The cluster's API server didn't answer in time.
+            - `cluster_unreachable`: The cluster's API server can't be reached, or it refused OpenConsole's credentials.
+            - `cluster_error`: The cluster's API server refused the change; detail has its message.
+            - `not_connected`: There is no connection to the cluster.
+            - `exec_failed`: The command could not be started in the container (no such program, container not running).
+            - `connection_failed`: A connection test or directory search (LDAP, Azure AD) failed; detail has the error.
+            - `not_configured`: The feature isn't set up on this server (backups, Azure AD, …).
+            - `sign_in_failed`: The external sign-in (Azure AD) failed or doesn't match this account.
+            - `recording_unavailable`: The shell can't be recorded right now, and this session must be; try again later.
+            - `internal_error`: The server failed; the request id in the server log has the cause.
+          enum: [unauthorized, api_key_expired, api_key_revoked, password_change_required, forbidden, admin_only, feature_disabled, api_key_not_allowed, api_access_policy, api_access_off, backup_download_disabled, rate_limited, too_many_sessions, not_found, method_not_allowed, invalid_id, invalid_body, invalid_input, body_too_large, conflict, wrong_password, weak_password, password_unchanged, cannot_delete_self, kubeconfig_unsupported, cluster_invalid, cluster_forbidden, cluster_timeout, cluster_unreachable, cluster_error, not_connected, exec_failed, connection_failed, not_configured, sign_in_failed, recording_unavailable, internal_error]
   responses:
     list:
       description: A Kubernetes list.
@@ -92,11 +149,11 @@ components:
     websocket:
       description: Switching protocols (WebSocket). Connect with ?ticket= from POST /api/ws-ticket.
     error:
-      description: Error with a reason.
+      description: Error with a reason code (problem details, RFC 9457).
       content:
-        application/json:
-          schema: {type: object, properties: {error: {type: string}}}
-          example: {error: forbidden}
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+          example: {type: about:blank, title: Forbidden, status: 403, error: forbidden}
 
 paths:
   # ─── Account ────────────────────────────────────────────────────────────────

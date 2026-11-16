@@ -21,6 +21,7 @@ import (
 
 	logpkg "k8s-dashboard/backend/internal/logging"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/problem"
 )
 
 // Request body limits: maxBody for every request, more for a YAML apply (an
@@ -43,7 +44,7 @@ func limitBody(next http.Handler) http.Handler {
 			limit = maxLogoSize + maxBody
 		}
 		if r.ContentLength > limit {
-			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			writeError(w, http.StatusRequestEntityTooLarge, problem.BodyTooLarge)
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, limit)
@@ -200,7 +201,7 @@ func recoverMiddleware(next http.Handler) http.Handler {
 					slog.String("path", r.URL.Path),
 					slog.String("request_id", logpkg.RequestIDFrom(r.Context())),
 				)
-				writeError(w, http.StatusInternalServerError, "internal server error")
+				writeError(w, http.StatusInternalServerError, problem.InternalError)
 			}
 		}()
 		next.ServeHTTP(w, r)

@@ -2,7 +2,7 @@ package auth
 
 import (
 	"context"
-	"encoding/json"
+	"k8s-dashboard/backend/internal/problem"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -45,7 +45,8 @@ const APIKeyPrefix = "oc_"
 
 // KeyAuthenticator checks an API key: the secret from the Authorization
 // header, or (keyID > 0) the key a WebSocket ticket was issued with. A
-// non-zero status rejects the request with that status (and the message, if any, as {"error": …}).
+// non-zero status rejects the request with that status and reason code (see
+// package problem); a 429 tells the client to retry after a second.
 type KeyAuthenticator interface {
 	AuthenticateKey(r *http.Request, secret string, keyID int) (*Claims, int, string)
 }
@@ -60,18 +61,15 @@ func AuthMiddleware(secret []byte, sessions SessionValidator, keys KeyAuthentica
 	return func(next http.Handler) http.Handler {
 		serveKey := func(w http.ResponseWriter, r *http.Request, secret string, keyID int, cluster string) {
 			if keys == nil {
-				w.WriteHeader(http.StatusUnauthorized)
+				problem.Write(w, http.StatusUnauthorized, problem.Unauthorized, "")
 				return
 			}
-			claims, status, message := keys.AuthenticateKey(r, secret, keyID)
+			claims, status, code := keys.AuthenticateKey(r, secret, keyID)
 			if status != 0 {
-				if message != "" {
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(status)
-					_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
-					return
+				if status == http.StatusTooManyRequests {
+					w.Header().Set("Retry-After", "1")
 				}
-				w.WriteHeader(status)
+				problem.Write(w, status, code, "")
 				return
 			}
 			claims.Cluster = cluster
@@ -93,7 +91,7 @@ func AuthMiddleware(secret []byte, sessions SessionValidator, keys KeyAuthentica
 			} else if token != "" {
 				parsed, err := ParseToken(secret, token)
 				if err != nil {
-					w.WriteHeader(http.StatusUnauthorized)
+					problem.Write(w, http.StatusUnauthorized, problem.Unauthorized, "")
 					return
 				}
 				claims = parsed
@@ -101,7 +99,7 @@ func AuthMiddleware(secret []byte, sessions SessionValidator, keys KeyAuthentica
 				// WebSockets: the JWT never goes into a URL (see ticket.go).
 				redeemed, ok := RedeemTicket(id, r.URL.Path)
 				if !ok {
-					w.WriteHeader(http.StatusUnauthorized)
+					problem.Write(w, http.StatusUnauthorized, problem.Unauthorized, "")
 					return
 				}
 				if redeemed.APIKey != nil {
@@ -111,7 +109,7 @@ func AuthMiddleware(secret []byte, sessions SessionValidator, keys KeyAuthentica
 				}
 				claims = redeemed
 			} else {
-				w.WriteHeader(http.StatusUnauthorized)
+				problem.Write(w, http.StatusUnauthorized, problem.Unauthorized, "")
 				return
 			}
 			if sessions != nil && claims.ID != "" {
@@ -119,7 +117,7 @@ func AuthMiddleware(secret []byte, sessions SessionValidator, keys KeyAuthentica
 				if lookupErr != nil {
 					slog.Warn("session lookup failed; allowing", "error", lookupErr.Error())
 				} else if !live {
-					w.WriteHeader(http.StatusUnauthorized)
+					problem.Write(w, http.StatusUnauthorized, problem.Unauthorized, "")
 					return
 				}
 				// A screen's automatic refresh is not activity: a tab left open still times out.

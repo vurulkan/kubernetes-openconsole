@@ -17,6 +17,7 @@ import (
 	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/auth"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/problem"
 	"k8s-dashboard/backend/internal/rbac"
 	"k8s-dashboard/backend/internal/store"
 )
@@ -62,7 +63,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil || len(request.Username) > maxUsernameLen {
-		w.WriteHeader(http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
 
@@ -70,7 +71,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if ok, retry := LoginGate().check(gateKeys); !ok {
 		w.Header().Set("Retry-After", strconv.Itoa(retry))
 		s.recordLoginAudit(r, request.Username, audit.Locked, "too_many_failures", nil)
-		w.WriteHeader(http.StatusTooManyRequests)
+		writeError(w, http.StatusTooManyRequests, problem.RateLimited)
 		return
 	}
 
@@ -87,7 +88,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if err != nil || !user.IsActive {
 		LoginGate().recordFailure(gateKeys)
 		s.recordLoginAudit(r, request.Username, audit.Failed, "unknown_user", nil)
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return
 	}
 
@@ -120,7 +121,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		s.recordLoginAudit(r, request.Username, audit.Failed, failReason, audit.D{"account_source": user.AuthSource})
 		// Same answer for every failure, so the response doesn't reveal
 		// whether an account exists or where it signs in.
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return
 	}
 
@@ -238,13 +239,13 @@ func (s *Server) ldapAuthenticate(ctx context.Context, username, password string
 
 func (s *Server) issueTokenForUser(w http.ResponseWriter, r *http.Request, user *models.User) {
 	if user == nil || !user.IsActive {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return
 	}
 
 	token, err := s.newSession(r, user)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 
@@ -309,7 +310,7 @@ func (s *Server) handleAuthProviders(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAzureStart(w http.ResponseWriter, r *http.Request) {
 	cfg, err := s.store.GetAzureADConfig(r.Context())
 	if err != nil || !cfg.Enabled || cfg.ClientID == "" || cfg.TenantID == "" || cfg.RedirectURL == "" {
-		writeError(w, http.StatusBadRequest, "azure ad is not configured")
+		writeErrorDetail(w, http.StatusBadRequest, problem.NotConfigured, "azure ad is not configured")
 		return
 	}
 	state := randomPassword()
@@ -332,7 +333,7 @@ func (s *Server) handleAzureStart(w http.ResponseWriter, r *http.Request) {
 		RedirectURL:  cfg.RedirectURL,
 	}, state)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to initialize azure login")
+		writeErrorDetail(w, http.StatusBadGateway, problem.SignInFailed, "failed to initialize azure login")
 		return
 	}
 	http.Redirect(w, r, url, http.StatusFound)
@@ -353,7 +354,7 @@ func (s *Server) checkAzureOwner(r *http.Request, user *models.User, oid string)
 func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 	stateCookie, err := r.Cookie("azure_oauth_state")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "missing oauth state")
+		writeErrorDetail(w, http.StatusBadRequest, problem.SignInFailed, "missing oauth state")
 		return
 	}
 	http.SetCookie(w, &http.Cookie{
@@ -366,17 +367,17 @@ func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 		Secure:   r.TLS != nil,
 	})
 	if r.URL.Query().Get("state") == "" || stateCookie.Value != r.URL.Query().Get("state") {
-		writeError(w, http.StatusBadRequest, "invalid oauth state")
+		writeErrorDetail(w, http.StatusBadRequest, problem.SignInFailed, "invalid oauth state")
 		return
 	}
 	code := r.URL.Query().Get("code")
 	if code == "" {
-		writeError(w, http.StatusBadRequest, "missing oauth code")
+		writeErrorDetail(w, http.StatusBadRequest, problem.SignInFailed, "missing oauth code")
 		return
 	}
 	cfg, err := s.store.GetAzureADConfig(r.Context())
 	if err != nil || !cfg.Enabled {
-		writeError(w, http.StatusBadRequest, "azure ad is not configured")
+		writeErrorDetail(w, http.StatusBadRequest, problem.NotConfigured, "azure ad is not configured")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
@@ -389,7 +390,7 @@ func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 		RedirectURL:  cfg.RedirectURL,
 	}, code)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "azure authentication failed")
+		writeErrorDetail(w, http.StatusUnauthorized, problem.SignInFailed, "azure authentication failed")
 		return
 	}
 
@@ -398,7 +399,7 @@ func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 	// signed in (and no account is created).
 	if identity.OID == "" {
 		s.recordLoginAudit(r, username, audit.Failed, "azure_no_oid", audit.D{"login_method": models.AuthSourceAzure})
-		writeError(w, http.StatusForbidden, "this account can't sign in with this Microsoft account")
+		writeErrorDetail(w, http.StatusForbidden, problem.SignInFailed, "this account can't sign in with this Microsoft account")
 		return
 	}
 	linkedBy := ""
@@ -422,28 +423,28 @@ func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
-			writeError(w, http.StatusInternalServerError, "failed to load user")
+			writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to load user")
 			return
 		}
 		randomHash, hashErr := auth.HashPassword(randomPassword())
 		if hashErr != nil {
-			writeError(w, http.StatusInternalServerError, "failed to initialize user")
+			writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to initialize user")
 			return
 		}
 		userID, createErr := s.store.CreateUser(r.Context(), username, randomHash)
 		if createErr != nil {
-			writeError(w, http.StatusInternalServerError, "failed to create user")
+			writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to create user")
 			return
 		}
 		_ = s.store.SetUserAuthSource(r.Context(), userID, models.AuthSourceAzure)
 		user, err = s.store.GetUserByID(r.Context(), userID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to load user")
+			writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to load user")
 			return
 		}
 	}
 	if !user.IsActive {
-		writeError(w, http.StatusForbidden, "user is disabled")
+		writeErrorDetail(w, http.StatusForbidden, problem.SignInFailed, "user is disabled")
 		return
 	}
 	// Only an Azure AD account signs in here: a local or LDAP account with the
@@ -453,14 +454,14 @@ func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 	if reason := s.checkAzureOwner(r, user, identity.OID); reason != "" {
 		s.recordLoginAudit(r, username, audit.Failed, reason,
 			audit.D{"login_method": models.AuthSourceAzure, "account_source": user.AuthSource})
-		writeError(w, http.StatusForbidden, "this account can't sign in with this Microsoft account")
+		writeErrorDetail(w, http.StatusForbidden, problem.SignInFailed, "this account can't sign in with this Microsoft account")
 		return
 	}
 	_ = s.store.MarkLogin(r.Context(), user.ID)
 
 	token, err := s.newSession(r, user)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to start the session")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to start the session")
 		return
 	}
 	login := audit.D{"login_method": models.AuthSourceAzure}
@@ -477,7 +478,7 @@ func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 	// response only — same middleware check lets handler-set headers win.
 	var nonceBytes [16]byte
 	if _, err := rand.Read(nonceBytes[:]); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to generate nonce")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to generate nonce")
 		return
 	}
 	nonce := base64.RawStdEncoding.EncodeToString(nonceBytes[:])
@@ -501,12 +502,12 @@ window.location.replace('/overview'); // admins land on the overview, the route 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.userForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return
 	}
 	perms, err := s.store.ListPermissionsByUser(r.Context(), user.ID)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	out := map[string]interface{}{"user": user}
@@ -523,7 +524,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.userForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return
 	}
 	if s.denyAPIKey(w, r, models.AuditLog{Verb: audit.VerbChangePassword, ResourceType: audit.KindUser, ResourceName: user.Username}) {
@@ -534,29 +535,29 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		NewPassword     string `json:"newPassword"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
 	if err := auth.ComparePassword(user.PasswordHash, request.CurrentPassword); err != nil {
 		// Not 401: the session is fine, and the UI signs out on 401.
-		writeError(w, http.StatusBadRequest, "the current password is incorrect")
+		writeError(w, http.StatusBadRequest, problem.WrongPassword)
 		return
 	}
 	if err := auth.CheckPasswordPolicy(request.NewPassword); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorDetail(w, http.StatusBadRequest, problem.WeakPassword, err.Error())
 		return
 	}
 	if request.NewPassword == request.CurrentPassword {
-		writeError(w, http.StatusBadRequest, "the new password must differ from the current one")
+		writeError(w, http.StatusBadRequest, problem.PasswordUnchanged)
 		return
 	}
 	hash, err := auth.HashPassword(request.NewPassword)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	if err := s.store.UpdateUserPassword(r.Context(), user.ID, hash, false); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	// Password change invalidates every session this user holds — including

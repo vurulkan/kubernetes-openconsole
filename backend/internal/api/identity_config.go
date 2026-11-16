@@ -14,12 +14,13 @@ import (
 	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/auth"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/problem"
 )
 
 func (s *Server) handleGetLDAP(w http.ResponseWriter, r *http.Request) {
 	cfg, err := s.store.GetLDAPConfig(r.Context())
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	cfg.BindPassword = ""
@@ -29,7 +30,7 @@ func (s *Server) handleGetLDAP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetAzureAD(w http.ResponseWriter, r *http.Request) {
 	cfg, err := s.store.GetAzureADConfig(r.Context())
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	cfg.ClientSecret = ""
@@ -39,16 +40,16 @@ func (s *Server) handleGetAzureAD(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUpdateLDAP(w http.ResponseWriter, r *http.Request) {
 	var request models.LDAPConfig
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
 	request.CACert = strings.TrimSpace(request.CACert)
 	if request.CACert != "" && !x509.NewCertPool().AppendCertsFromPEM([]byte(request.CACert)) {
-		writeError(w, http.StatusBadRequest, "ldap CA certificate: no PEM certificate found")
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "ldap CA certificate: no PEM certificate found")
 		return
 	}
 	if err := s.store.UpdateLDAPConfig(r.Context(), request); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	s.recordSettingsUpdate(r, "ldap", nil)
@@ -58,11 +59,11 @@ func (s *Server) handleUpdateLDAP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUpdateAzureAD(w http.ResponseWriter, r *http.Request) {
 	var request models.AzureADConfig
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
 	if err := s.store.UpdateAzureADConfig(r.Context(), request); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	s.recordSettingsUpdate(r, "azure_ad", nil)
@@ -72,11 +73,11 @@ func (s *Server) handleUpdateAzureAD(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleTestLDAP(w http.ResponseWriter, r *http.Request) {
 	cfg, err := s.store.GetLDAPConfig(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load ldap config")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to load ldap config")
 		return
 	}
 	if err := auth.TestConnection(ldapAuthConfig(cfg)); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorDetail(w, http.StatusBadRequest, problem.ConnectionFailed, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -85,11 +86,11 @@ func (s *Server) handleTestLDAP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleTestAzureAD(w http.ResponseWriter, r *http.Request) {
 	cfg, err := s.store.GetAzureADConfig(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load azure ad config")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to load azure ad config")
 		return
 	}
 	if cfg.TenantID == "" || cfg.ClientID == "" {
-		writeError(w, http.StatusBadRequest, "tenant and client id are required")
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "tenant and client id are required")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -101,7 +102,7 @@ func (s *Server) handleTestAzureAD(w http.ResponseWriter, r *http.Request) {
 		ClientSecret: cfg.ClientSecret,
 		RedirectURL:  cfg.RedirectURL,
 	}); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorDetail(w, http.StatusBadRequest, problem.ConnectionFailed, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -112,17 +113,17 @@ func (s *Server) handleSearchLDAPUsers(w http.ResponseWriter, r *http.Request) {
 		Query string `json:"query"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request")
+		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
 	cfg, err := s.store.GetLDAPConfig(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load ldap config")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to load ldap config")
 		return
 	}
 	users, err := auth.SearchUsers(ldapAuthConfig(cfg), request.Query)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorDetail(w, http.StatusBadRequest, problem.ConnectionFailed, err.Error())
 		return
 	}
 	type result struct {
@@ -146,7 +147,7 @@ func (s *Server) handleImportLDAPUsers(w http.ResponseWriter, r *http.Request) {
 		GroupIDs []int `json:"groupIds"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request")
+		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
 	var created, skipped, failed []string
@@ -195,7 +196,7 @@ func randomPassword() string {
 func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	settings, err := s.store.GetSessionSettings(r.Context())
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	writeJSON(w, http.StatusOK, settings)
@@ -205,23 +206,23 @@ func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 	// Fields left out of the body keep their value.
 	request, err := s.store.GetSessionSettings(r.Context())
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
 	if request.SessionMinutes <= 0 {
-		w.WriteHeader(http.StatusBadRequest)
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "sessionMinutes must be a positive number")
 		return
 	}
 	if request.APIKeyMaxDays < 0 || request.APIKeyMaxDays > 3650 {
-		writeError(w, http.StatusBadRequest, "the longest API key lifetime is 0 (no limit) to 3650 days")
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "the longest API key lifetime is 0 (no limit) to 3650 days")
 		return
 	}
 	if err := s.store.UpdateSessionSettings(r.Context(), request); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	s.recordSettingsUpdate(r, "session", audit.D{"summary": fmt.Sprintf("session_minutes=%d api_key_max_days=%d api_key_allow_no_expiry=%t",

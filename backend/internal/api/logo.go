@@ -9,6 +9,7 @@ import (
 
 	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/problem"
 )
 
 const (
@@ -28,7 +29,7 @@ func (s *Server) logoMetaPath() string {
 func (s *Server) handleGetLogo(w http.ResponseWriter, r *http.Request) {
 	data, err := os.ReadFile(s.logoPath())
 	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
+		writeError(w, http.StatusNotFound, problem.NotFound)
 		return
 	}
 	contentType := http.DetectContentType(data)
@@ -43,23 +44,23 @@ func (s *Server) handleGetLogo(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleUploadLogo(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(maxLogoSize); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid upload")
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "invalid upload")
 		return
 	}
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "missing file")
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "missing file")
 		return
 	}
 	defer file.Close()
 
 	data, err := io.ReadAll(io.LimitReader(file, maxLogoSize+1))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to read file")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to read file")
 		return
 	}
 	if len(data) == 0 || len(data) > maxLogoSize {
-		writeError(w, http.StatusBadRequest, "invalid file size")
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "invalid file size")
 		return
 	}
 
@@ -69,12 +70,12 @@ func (s *Server) handleUploadLogo(w http.ResponseWriter, r *http.Request) {
 		contentType = "image/svg+xml"
 	}
 	if !strings.HasPrefix(contentType, "image/") {
-		writeError(w, http.StatusBadRequest, "unsupported file type")
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "unsupported file type")
 		return
 	}
 
 	if err := os.WriteFile(s.logoPath(), data, 0o600); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to store logo")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to store logo")
 		return
 	}
 	_ = os.WriteFile(s.logoMetaPath(), []byte(contentType), 0o600)

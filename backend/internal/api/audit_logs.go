@@ -12,6 +12,7 @@ import (
 	"k8s-dashboard/backend/internal/audit"
 	logpkg "k8s-dashboard/backend/internal/logging"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/problem"
 	"k8s-dashboard/backend/internal/store"
 )
 
@@ -47,12 +48,12 @@ func (s *Server) handleAuditLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	logs, err := s.store.ListAuditLogsFiltered(r.Context(), limit, offset, filter)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	total, err := s.store.CountAuditLogsFiltered(r.Context(), filter)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	type auditItem struct {
@@ -94,11 +95,11 @@ func auditFilterFrom(w http.ResponseWriter, r *http.Request) (store.AuditFilter,
 		End:          parseTimeParam(q.Get("end")),
 	}
 	if f.Outcome != "" && !slices.Contains(audit.Outcomes, f.Outcome) {
-		writeError(w, http.StatusBadRequest, "outcome must be one of "+strings.Join(audit.Outcomes, ", "))
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "outcome must be one of "+strings.Join(audit.Outcomes, ", "))
 		return f, false
 	}
 	if f.Verb != "" && !slices.Contains(audit.Verbs, f.Verb) {
-		writeError(w, http.StatusBadRequest, "unknown verb")
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "unknown verb")
 		return f, false
 	}
 	return f, true
@@ -113,7 +114,7 @@ func (s *Server) handleAuditFacets(w http.ResponseWriter, r *http.Request) {
 	}
 	facets, err := s.store.AuditFacets(r.Context(), 1000)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to read audit facets")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to read audit facets")
 		return
 	}
 	s.facets.Store(&facetsEntry{at: time.Now(), facets: facets})

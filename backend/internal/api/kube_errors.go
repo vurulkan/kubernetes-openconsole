@@ -11,15 +11,16 @@ import (
 
 	"k8s-dashboard/backend/internal/kube"
 	logpkg "k8s-dashboard/backend/internal/logging"
+	"k8s-dashboard/backend/internal/problem"
 )
 
 // Reason codes of a read the cluster answered with an error (the body's "error").
 const (
-	reasonClusterForbidden   = "cluster_forbidden"   // the cluster credentials may not read this (ClusterRole)
-	reasonClusterTimeout     = "cluster_timeout"     // the API server didn't answer in time
-	reasonClusterUnreachable = "cluster_unreachable" // no answer at all, or the cluster refused the credentials
-	reasonNotConnected       = "not_connected"       // no connection to the cluster
-	reasonNotFound           = "not_found"
+	reasonClusterForbidden   = problem.ClusterForbidden   // the cluster credentials may not read this (ClusterRole)
+	reasonClusterTimeout     = problem.ClusterTimeout     // the API server didn't answer in time
+	reasonClusterUnreachable = problem.ClusterUnreachable // no answer at all, or the cluster refused the credentials
+	reasonNotConnected       = problem.NotConnected       // no connection to the cluster
+	reasonNotFound           = problem.NotFound
 )
 
 // kubeReadError maps an error from reading the cluster to a status and a
@@ -66,4 +67,24 @@ func writeReadError(w http.ResponseWriter, r *http.Request, err error, resource 
 		slog.Any("error", err),
 	)
 	writeError(w, code, reason)
+}
+
+// kubeWriteCode is the reason code for a write the cluster refused, by the
+// status httpStatusFor gave it.
+func kubeWriteCode(status int) string {
+	switch status {
+	case http.StatusForbidden:
+		return problem.ClusterForbidden
+	case http.StatusNotFound:
+		return problem.NotFound
+	case http.StatusConflict:
+		return problem.Conflict
+	case http.StatusBadRequest, http.StatusUnprocessableEntity:
+		return problem.InvalidInput
+	case http.StatusBadGateway:
+		return problem.ClusterUnreachable
+	case http.StatusGatewayTimeout:
+		return problem.ClusterTimeout
+	}
+	return problem.ClusterError
 }

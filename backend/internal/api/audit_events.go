@@ -13,6 +13,7 @@ import (
 	"k8s-dashboard/backend/internal/auth"
 	logpkg "k8s-dashboard/backend/internal/logging"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/problem"
 	"k8s-dashboard/backend/internal/store"
 )
 
@@ -89,15 +90,15 @@ func (s *Server) auditReadDenied(r *http.Request, resource, verb, reason string)
 
 // Reasons for denied and failed outcomes.
 const (
-	reasonForbidden       = "forbidden"
-	reasonFeatureDisabled = "feature_disabled"
-	reasonAdminOnly       = "admin_only"
-	reasonRateLimited     = "rate_limited"
+	reasonForbidden       = problem.Forbidden
+	reasonFeatureDisabled = problem.FeatureDisabled
+	reasonAdminOnly       = problem.AdminOnly
+	reasonRateLimited     = problem.RateLimited
 	// reasonAPIAccessPolicy: the key lists the grant and its owner holds it,
 	// but the admin's API access policy keeps it from keys.
-	reasonAPIAccessPolicy = "api_access_policy"
+	reasonAPIAccessPolicy = problem.APIAccessPolicy
 	// reasonAPIAccessOff: the policy leaves the owner's keys nothing.
-	reasonAPIAccessOff = "api_access_off"
+	reasonAPIAccessOff = problem.APIAccessOff
 )
 
 const errAPIAccess = "apiAccess must be off, safe_read or full"

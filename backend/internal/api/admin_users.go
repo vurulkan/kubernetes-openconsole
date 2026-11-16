@@ -13,6 +13,7 @@ import (
 	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/auth"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/problem"
 	"k8s-dashboard/backend/internal/rbac"
 	"k8s-dashboard/backend/internal/store"
 )
@@ -35,7 +36,7 @@ func checkUsername(name string) string {
 func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 	users, err := s.store.ListUsers(r.Context())
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"items": users})
@@ -52,12 +53,12 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		GroupIDs []int  `json:"groupIds"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
 	request.Username = strings.TrimSpace(request.Username)
 	if msg := checkUsername(request.Username); msg != "" {
-		writeError(w, http.StatusBadRequest, msg)
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, msg)
 		return
 	}
 	source := strings.ToLower(strings.TrimSpace(request.Source))
@@ -68,7 +69,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	switch source {
 	case models.AuthSourceLocal:
 		if err := auth.CheckPasswordPolicy(request.Password); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeErrorDetail(w, http.StatusBadRequest, problem.WeakPassword, err.Error())
 			return
 		}
 		password = request.Password
@@ -76,17 +77,17 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		// Never usable: Azure AD accounts don't sign in with a password.
 		password = randomPassword()
 	default:
-		writeError(w, http.StatusBadRequest, "source must be local or azure (LDAP users are imported)")
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "source must be local or azure (LDAP users are imported)")
 		return
 	}
 	hash, err := auth.HashPassword(password)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	id, err := s.store.CreateUser(r.Context(), request.Username, hash)
 	if err != nil {
-		writeError(w, http.StatusConflict, "a user with this name already exists")
+		writeErrorDetail(w, http.StatusConflict, problem.Conflict, "a user with this name already exists")
 		return
 	}
 	if source != models.AuthSourceLocal {
@@ -94,17 +95,17 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	user, err := s.store.GetUserByID(r.Context(), id)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	user.IsAdmin = request.IsAdmin
 	if err := s.store.UpdateUser(r.Context(), *user); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	if len(request.GroupIDs) > 0 {
 		if err := s.store.SetUserGroups(r.Context(), id, request.GroupIDs); err != nil {
-			writeError(w, http.StatusBadRequest, "user created, but the groups could not be set: "+err.Error())
+			writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "user created, but the groups could not be set: "+err.Error())
 			return
 		}
 	}
@@ -116,7 +117,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, problem.InvalidID)
 		return
 	}
 	var request struct {
@@ -127,19 +128,19 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		APIAccessOverride *string `json:"apiAccessOverride"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
 	// The UI always sends the name; a script that leaves it out must not
 	// blank it (the account could no longer sign in).
 	request.Username = strings.TrimSpace(request.Username)
 	if msg := checkUsername(request.Username); msg != "" {
-		writeError(w, http.StatusBadRequest, msg)
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, msg)
 		return
 	}
 	user, err := s.store.GetUserByID(r.Context(), id)
 	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
+		writeError(w, http.StatusNotFound, problem.NotFound)
 		return
 	}
 	// Guard: do not let the last active admin be demoted or deactivated — the
@@ -149,17 +150,17 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	if user.IsAdmin && user.IsActive && (!request.IsAdmin || !request.IsActive) {
 		count, err := s.store.CountActiveAdmins(r.Context())
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, problem.InternalError)
 			return
 		}
 		if count <= 1 {
-			writeError(w, http.StatusConflict,
+			writeErrorDetail(w, http.StatusConflict, problem.Conflict,
 				"cannot demote or deactivate the last active administrator")
 			return
 		}
 	}
 	if o := request.APIAccessOverride; o != nil && *o != "" && !rbac.ValidMode(*o) {
-		writeError(w, http.StatusBadRequest, errAPIAccess)
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, errAPIAccess)
 		return
 	}
 	before := *user
@@ -167,7 +168,7 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	user.IsActive = request.IsActive
 	user.IsAdmin = request.IsAdmin
 	if err := s.store.UpdateUser(r.Context(), *user); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	// A disabled account loses its sessions now, not when the token expires.
@@ -187,7 +188,7 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	d := audit.D{"changed": changed, "is_admin": user.IsAdmin, "is_active": user.IsActive}
 	if o := request.APIAccessOverride; o != nil && *o != before.APIAccessOverride {
 		if err := s.store.SetUserAPIAccess(r.Context(), user.ID, *o); err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, problem.InternalError)
 			return
 		}
 		user.APIAccessOverride = *o
@@ -204,35 +205,35 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, problem.InvalidID)
 		return
 	}
 
 	caller, _ := s.userForRequest(r)
 	if caller != nil && caller.ID == id {
-		writeError(w, http.StatusConflict, "you cannot delete your own account")
+		writeError(w, http.StatusConflict, problem.CannotDeleteSelf)
 		return
 	}
 	target, err := s.store.GetUserByID(r.Context(), id)
 	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
+		writeError(w, http.StatusNotFound, problem.NotFound)
 		return
 	}
 	// Guard: deleting the last active admin would strand the system.
 	if target.IsAdmin && target.IsActive {
 		count, err := s.store.CountActiveAdmins(r.Context())
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, problem.InternalError)
 			return
 		}
 		if count <= 1 {
-			writeError(w, http.StatusConflict,
+			writeErrorDetail(w, http.StatusConflict, problem.Conflict,
 				"cannot delete the last active administrator")
 			return
 		}
 	}
 	if err := s.store.DeleteUser(r.Context(), id); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	s.auditEvent(r, models.AuditLog{Verb: audit.VerbDelete, ResourceType: audit.KindUser, ResourceName: target.Username,
@@ -243,24 +244,24 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSetUserGroups(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, problem.InvalidID)
 		return
 	}
 	var request struct {
 		GroupIDs []int `json:"groupIds"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
 	if err := s.store.SetUserGroups(r.Context(), id, request.GroupIDs); err != nil {
 		s.auditEvent(r, models.AuditLog{Verb: audit.VerbUpdate, Outcome: audit.Failed, Reason: failReason(err),
 			ResourceType: audit.KindUser, ResourceName: s.userNameByID(r, id), Details: failDetails(err, audit.D{"changed": []string{"groups"}})})
 		if errors.Is(err, store.ErrUnknownReference) {
-			writeError(w, http.StatusBadRequest, "unknown user or group id")
+			writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "unknown user or group id")
 			return
 		}
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	s.auditEvent(r, models.AuditLog{Verb: audit.VerbUpdate, ResourceType: audit.KindUser, ResourceName: s.userNameByID(r, id),
@@ -271,12 +272,12 @@ func (s *Server) handleSetUserGroups(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetUserGroups(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, problem.InvalidID)
 		return
 	}
 	ids, err := s.store.GetUserGroups(r.Context(), id)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"groupIds": ids})
@@ -285,7 +286,7 @@ func (s *Server) handleGetUserGroups(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListGroups(w http.ResponseWriter, r *http.Request) {
 	groups, err := s.store.ListGroups(r.Context())
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"items": groups})
@@ -296,12 +297,12 @@ func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 		Name string `json:"name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
 	id, err := s.store.CreateGroup(r.Context(), request.Name)
 	if err != nil {
-		w.WriteHeader(http.StatusConflict)
+		writeErrorDetail(w, http.StatusConflict, problem.Conflict, "the name already exists")
 		return
 	}
 	s.auditEvent(r, models.AuditLog{Verb: audit.VerbCreate, ResourceType: audit.KindGroup, ResourceName: request.Name})
@@ -311,18 +312,18 @@ func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, problem.InvalidID)
 		return
 	}
 	var request struct {
 		Name string `json:"name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
 	if err := s.store.UpdateGroup(r.Context(), id, request.Name); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	s.auditEvent(r, models.AuditLog{Verb: audit.VerbUpdate, ResourceType: audit.KindGroup, ResourceName: request.Name, Details: audit.D{"changed": []string{"name"}}})
@@ -332,12 +333,12 @@ func (s *Server) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteGroup(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, problem.InvalidID)
 		return
 	}
 	name := s.groupNameByID(r, id)
 	if err := s.store.DeleteGroup(r.Context(), id); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	s.auditEvent(r, models.AuditLog{Verb: audit.VerbDelete, ResourceType: audit.KindGroup, ResourceName: name, Details: audit.D{"id": id}})
@@ -347,24 +348,24 @@ func (s *Server) handleDeleteGroup(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSetGroupRoles(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, problem.InvalidID)
 		return
 	}
 	var request struct {
 		RoleIDs []int `json:"roleIds"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
 	if err := s.store.SetGroupRoles(r.Context(), id, request.RoleIDs); err != nil {
 		s.auditEvent(r, models.AuditLog{Verb: audit.VerbUpdate, Outcome: audit.Failed, Reason: failReason(err),
 			ResourceType: audit.KindGroup, ResourceName: s.groupNameByID(r, id), Details: failDetails(err, audit.D{"changed": []string{"roles"}})})
 		if errors.Is(err, store.ErrUnknownReference) {
-			writeError(w, http.StatusBadRequest, "unknown group or role id")
+			writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "unknown group or role id")
 			return
 		}
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	s.auditEvent(r, models.AuditLog{Verb: audit.VerbUpdate, ResourceType: audit.KindGroup, ResourceName: s.groupNameByID(r, id),
@@ -375,12 +376,12 @@ func (s *Server) handleSetGroupRoles(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetGroupRoles(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, problem.InvalidID)
 		return
 	}
 	ids, err := s.store.GetGroupRoles(r.Context(), id)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"roleIds": ids})
@@ -389,7 +390,7 @@ func (s *Server) handleGetGroupRoles(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListRoles(w http.ResponseWriter, r *http.Request) {
 	roles, err := s.store.ListRoles(r.Context())
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"items": roles})
@@ -402,24 +403,24 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 		APIAccess   string `json:"apiAccess"` // "" = safe_read
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
 	if request.APIAccess == "" {
 		request.APIAccess = rbac.AccessSafeRead
 	}
 	if !rbac.ValidMode(request.APIAccess) {
-		writeError(w, http.StatusBadRequest, errAPIAccess)
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, errAPIAccess)
 		return
 	}
 	id, err := s.store.CreateRole(r.Context(), request.Name, request.Description)
 	if err != nil {
-		w.WriteHeader(http.StatusConflict)
+		writeErrorDetail(w, http.StatusConflict, problem.Conflict, "the name already exists")
 		return
 	}
 	if request.APIAccess != rbac.AccessSafeRead {
 		if err := s.store.SetRoleAPIAccess(r.Context(), id, request.APIAccess); err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, problem.InternalError)
 			return
 		}
 	}
@@ -431,7 +432,7 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, problem.InvalidID)
 		return
 	}
 	var request struct {
@@ -440,32 +441,32 @@ func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request) {
 		APIAccess   *string `json:"apiAccess"` // absent = unchanged
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
 	if request.APIAccess != nil && !rbac.ValidMode(*request.APIAccess) {
-		writeError(w, http.StatusBadRequest, errAPIAccess)
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, errAPIAccess)
 		return
 	}
 	roles, err := s.store.ListRoles(r.Context())
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	i := slices.IndexFunc(roles, func(x models.Role) bool { return x.ID == id })
 	if i < 0 {
-		w.WriteHeader(http.StatusNotFound)
+		writeError(w, http.StatusNotFound, problem.NotFound)
 		return
 	}
 	role := models.Role{ID: id, Name: request.Name, Description: request.Description, APIAccess: roles[i].APIAccess}
 	if err := s.store.UpdateRole(r.Context(), role); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	var d audit.D
 	if request.APIAccess != nil && *request.APIAccess != role.APIAccess {
 		if err := s.store.SetRoleAPIAccess(r.Context(), id, *request.APIAccess); err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, problem.InternalError)
 			return
 		}
 		role.APIAccess = *request.APIAccess
@@ -478,12 +479,12 @@ func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteRole(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, problem.InvalidID)
 		return
 	}
 	name := s.roleNameByID(r, id)
 	if err := s.store.DeleteRole(r.Context(), id); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	s.auditEvent(r, models.AuditLog{Verb: audit.VerbDelete, ResourceType: audit.KindRole, ResourceName: name, Details: audit.D{"id": id}})
@@ -493,12 +494,12 @@ func (s *Server) handleDeleteRole(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListRolePermissions(w http.ResponseWriter, r *http.Request) {
 	roleID, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, problem.InvalidID)
 		return
 	}
 	permissions, err := s.store.ListNamespacePermissions(r.Context(), roleID)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"items": permissions})
@@ -507,7 +508,7 @@ func (s *Server) handleListRolePermissions(w http.ResponseWriter, r *http.Reques
 func (s *Server) handleAddRolePermission(w http.ResponseWriter, r *http.Request) {
 	roleID, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, problem.InvalidID)
 		return
 	}
 	var request struct {
@@ -517,7 +518,7 @@ func (s *Server) handleAddRolePermission(w http.ResponseWriter, r *http.Request)
 		Action    string `json:"action"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
 	if err := s.store.AddNamespacePermission(r.Context(), roleID, request.ClusterID, request.Namespace, request.Resource, request.Action); err != nil {
@@ -525,10 +526,10 @@ func (s *Server) handleAddRolePermission(w http.ResponseWriter, r *http.Request)
 			ResourceType: audit.KindPermission, ResourceName: strconv.Itoa(roleID), Namespace: request.Namespace,
 			Details: failDetails(err, audit.D{"grant": request.Resource + ":" + request.Action})})
 		if errors.Is(err, store.ErrUnknownReference) {
-			writeError(w, http.StatusNotFound, "role not found")
+			writeErrorDetail(w, http.StatusNotFound, problem.NotFound, "role not found")
 			return
 		}
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	clusterName := ""
@@ -545,7 +546,7 @@ func (s *Server) handleAddRolePermission(w http.ResponseWriter, r *http.Request)
 func (s *Server) handleDeletePermission(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, problem.InvalidID)
 		return
 	}
 	perm, err := s.store.GetNamespacePermission(r.Context(), id)
@@ -553,7 +554,7 @@ func (s *Server) handleDeletePermission(w http.ResponseWriter, r *http.Request) 
 		perm = &models.NamespacePermission{ID: id}
 	}
 	if err := s.store.DeleteNamespacePermission(r.Context(), id); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
 	s.recordPermissionAudit(r, audit.VerbDelete, *perm)

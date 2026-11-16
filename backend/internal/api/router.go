@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"k8s-dashboard/backend/internal/auth"
 	"k8s-dashboard/backend/internal/backup"
 	"k8s-dashboard/backend/internal/kube"
+	"k8s-dashboard/backend/internal/problem"
 	"k8s-dashboard/backend/internal/recording"
 	"k8s-dashboard/backend/internal/store"
 	"k8s-dashboard/backend/internal/version"
@@ -330,8 +332,7 @@ func (s *Server) routes() *chi.Mux {
 		r.Get("/api/admin/session", s.handleGetSession)
 		r.Put("/api/admin/session", s.handleUpdateSession)
 
-		// Multi-cluster CRUD (admin only). The legacy /api/admin/cluster
-		// endpoint stays for backward compat; new UI uses these.
+		// Multi-cluster CRUD (admin only).
 		r.Get("/api/admin/clusters", s.handleListClusters)
 		r.Post("/api/admin/clusters", s.handleCreateCluster)
 		r.Put("/api/admin/clusters/{id}", s.handleUpdateClusterByID)
@@ -363,10 +364,31 @@ func (s *Server) routes() *chi.Mux {
 		r.Delete("/api/admin/customization/logo", s.handleDeleteLogo)
 	})
 
-	if s.staticDir != "" {
-		r.NotFound(s.serveSPA)
-		r.MethodNotAllowed(s.serveSPA)
-	}
+	// An unknown /api or /ws path answers JSON (an agent would otherwise get
+	// the SPA's index.html with 200); everything else is the SPA.
+	r.NotFound(func(w http.ResponseWriter, req *http.Request) {
+		if isAPIPath(req.URL.Path) || s.staticDir == "" {
+			writeError(w, http.StatusNotFound, problem.NotFound)
+			return
+		}
+		s.serveSPA(w, req)
+	})
+	r.MethodNotAllowed(func(w http.ResponseWriter, req *http.Request) {
+		if isAPIPath(req.URL.Path) || s.staticDir == "" {
+			for _, m := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+				if r.Match(chi.NewRouteContext(), m, req.URL.Path) {
+					w.Header().Add("Allow", m)
+				}
+			}
+			writeError(w, http.StatusMethodNotAllowed, problem.MethodNotAllowed)
+			return
+		}
+		s.serveSPA(w, req)
+	})
 
 	return r
+}
+
+func isAPIPath(p string) bool {
+	return p == "/api" || p == "/ws" || strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/ws/")
 }

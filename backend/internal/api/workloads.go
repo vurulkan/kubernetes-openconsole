@@ -16,6 +16,7 @@ import (
 	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/kube"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/problem"
 )
 
 // Handlers for the newer workload tabs added in 2.4.0: DaemonSet,
@@ -65,7 +66,7 @@ func (s *Server) handleDaemonSetYAML(w http.ResponseWriter, r *http.Request) {
 	item.TypeMeta = metav1.TypeMeta{Kind: "DaemonSet", APIVersion: "apps/v1"}
 	data, err := yaml.Marshal(item)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to render yaml")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to render yaml")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(kube.PrettifyYAML(data))})
@@ -113,7 +114,7 @@ func (s *Server) handleStatefulSetYAML(w http.ResponseWriter, r *http.Request) {
 	item.TypeMeta = metav1.TypeMeta{Kind: "StatefulSet", APIVersion: "apps/v1"}
 	data, err := yaml.Marshal(item)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to render yaml")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to render yaml")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(kube.PrettifyYAML(data))})
@@ -124,7 +125,7 @@ func (s *Server) handleStatefulSetYAML(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleStatefulSetScale(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.userForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return
 	}
 	namespace := chi.URLParam(r, "namespace")
@@ -141,7 +142,7 @@ func (s *Server) handleStatefulSetScale(w http.ResponseWriter, r *http.Request) 
 		Replicas int32 `json:"replicas"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid body")
+		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
 	max := int32(defaultMaxReplicas)
@@ -151,14 +152,14 @@ func (s *Server) handleStatefulSetScale(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if body.Replicas < 0 || body.Replicas > max {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("replicas must be between 0 and %d", max))
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, fmt.Sprintf("replicas must be between 0 and %d", max))
 		return
 	}
 
 	if !allowDeployAction(user.ID) {
 		w.Header().Set("Retry-After", "6")
 		s.recordStatefulSetScaleAudit(r, namespace, name, audit.RateLimited, reasonRateLimited, audit.D{"replicas_to": body.Replicas})
-		writeError(w, http.StatusTooManyRequests, "rate limited")
+		writeError(w, http.StatusTooManyRequests, problem.RateLimited)
 		return
 	}
 
@@ -221,7 +222,7 @@ func (s *Server) handleHPAYAML(w http.ResponseWriter, r *http.Request) {
 	item.TypeMeta = metav1.TypeMeta{Kind: "HorizontalPodAutoscaler", APIVersion: "autoscaling/v2"}
 	data, err := yaml.Marshal(item)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to render yaml")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to render yaml")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"yaml": string(kube.PrettifyYAML(data))})
@@ -295,7 +296,7 @@ func (s *Server) restartHistory(w http.ResponseWriter, r *http.Request, namespac
 	since := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
 	items, err := s.store.ListTerminations(r.Context(), clusterIDFrom(r.Context()), namespace, deployment, pod, since, 500)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not read restart history")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "could not read restart history")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})

@@ -16,6 +16,7 @@ import (
 	"k8s-dashboard/backend/internal/kube"
 	logpkg "k8s-dashboard/backend/internal/logging"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/problem"
 )
 
 // Every user works on the cluster they picked in the header switcher
@@ -71,7 +72,11 @@ func (s *Server) clusterMiddleware(next http.Handler) http.Handler {
 		if value != "" {
 			var status int
 			if ci, status = s.headerCluster(r, user, claims.APIKey, value); status != 0 {
-				writeError(w, status, "cluster "+strconv.Quote(value)+" is unknown or not yours to use")
+				code := problem.Forbidden
+				if status == http.StatusBadRequest {
+					code = problem.InvalidInput
+				}
+				writeErrorDetail(w, status, code, "cluster "+strconv.Quote(value)+" is unknown or not yours to use")
 				return
 			}
 		}
@@ -160,7 +165,7 @@ func (s *Server) headerCluster(r *http.Request, user *models.User, key *models.A
 func (s *Server) handleSelectCluster(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.userForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return
 	}
 	// An agent's pick must not change the user's web screen; keys send X-OpenConsole-Cluster instead.
@@ -171,19 +176,19 @@ func (s *Server) handleSelectCluster(w http.ResponseWriter, r *http.Request) {
 		ClusterID int `json:"clusterId"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ClusterID < 0 {
-		writeError(w, http.StatusBadRequest, "clusterId is required")
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "clusterId is required")
 		return
 	}
 	name := "default"
 	if body.ClusterID > 0 {
 		n, err := s.store.GetClusterName(r.Context(), body.ClusterID)
 		if err != nil {
-			writeError(w, http.StatusNotFound, "cluster not found")
+			writeErrorDetail(w, http.StatusNotFound, problem.NotFound, "cluster not found")
 			return
 		}
 		if !s.canUseCluster(r.Context(), user, body.ClusterID) {
 			s.recordClusterSelectAudit(r, n, body.ClusterID, audit.Denied, reasonForbidden)
-			writeError(w, http.StatusForbidden, "you have no permissions on this cluster")
+			writeErrorDetail(w, http.StatusForbidden, problem.Forbidden, "you have no permissions on this cluster")
 			return
 		}
 		// Connect and ask the cluster once, so a broken cluster (unreachable,
@@ -194,13 +199,13 @@ func (s *Server) handleSelectCluster(w http.ResponseWriter, r *http.Request) {
 		}
 		if err != nil {
 			s.recordClusterSelectAudit(r, n, body.ClusterID, audit.Failed, "unreachable")
-			writeError(w, http.StatusBadGateway, "cannot connect to cluster: "+err.Error())
+			writeErrorDetail(w, http.StatusBadGateway, problem.ClusterUnreachable, "cannot connect to cluster: "+err.Error())
 			return
 		}
 		name = n
 	}
 	if err := s.store.SetUserActiveCluster(r.Context(), user.ID, body.ClusterID); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to save selection")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to save selection")
 		return
 	}
 	s.recordClusterSelectAudit(r, name, body.ClusterID, audit.Success, "")

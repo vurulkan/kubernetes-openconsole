@@ -17,6 +17,7 @@ import (
 
 	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/problem"
 )
 
 // maxReplicas caps the replica count a client may request via the Scale endpoint.
@@ -46,7 +47,7 @@ func allowDeployAction(userID int) bool {
 func (s *Server) handleDeploymentRestart(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.userForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return
 	}
 	namespace := chi.URLParam(r, "namespace")
@@ -62,7 +63,7 @@ func (s *Server) handleDeploymentRestart(w http.ResponseWriter, r *http.Request)
 	if !allowDeployAction(user.ID) {
 		w.Header().Set("Retry-After", "6")
 		s.recordDeployAudit(r, namespace, name, audit.VerbRestart, audit.RateLimited, reasonRateLimited, nil)
-		writeError(w, http.StatusTooManyRequests, "rate limited")
+		writeError(w, http.StatusTooManyRequests, problem.RateLimited)
 		return
 	}
 
@@ -85,7 +86,7 @@ func (s *Server) handleDeploymentRestart(w http.ResponseWriter, r *http.Request)
 func (s *Server) handleDeploymentScale(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.userForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return
 	}
 	namespace := chi.URLParam(r, "namespace")
@@ -102,7 +103,7 @@ func (s *Server) handleDeploymentScale(w http.ResponseWriter, r *http.Request) {
 		Replicas int32 `json:"replicas"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid body")
+		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
 	max := int32(defaultMaxReplicas)
@@ -112,14 +113,14 @@ func (s *Server) handleDeploymentScale(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if body.Replicas < 0 || body.Replicas > max {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("replicas must be between 0 and %d", max))
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, fmt.Sprintf("replicas must be between 0 and %d", max))
 		return
 	}
 
 	if !allowDeployAction(user.ID) {
 		w.Header().Set("Retry-After", "6")
 		s.recordDeployAudit(r, namespace, name, audit.VerbScale, audit.RateLimited, reasonRateLimited, audit.D{"replicas_to": body.Replicas})
-		writeError(w, http.StatusTooManyRequests, "rate limited")
+		writeError(w, http.StatusTooManyRequests, problem.RateLimited)
 		return
 	}
 
@@ -160,8 +161,9 @@ func (s *Server) recordDeployAudit(r *http.Request, namespace, name, verb, outco
 func writeActionError(w http.ResponseWriter, err error, fallback string) {
 	var status apierrors.APIStatus
 	if errors.As(err, &status) {
-		writeError(w, httpStatusFor(err), fallback+": "+err.Error())
+		st := httpStatusFor(err)
+		writeErrorDetail(w, st, kubeWriteCode(st), fallback+": "+err.Error())
 		return
 	}
-	writeError(w, http.StatusBadGateway, fallback)
+	writeErrorDetail(w, http.StatusBadGateway, problem.ClusterUnreachable, fallback)
 }

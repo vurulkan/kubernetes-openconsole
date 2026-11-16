@@ -27,6 +27,7 @@ import (
 	"k8s-dashboard/backend/internal/kube"
 	logpkg "k8s-dashboard/backend/internal/logging"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/problem"
 	"k8s-dashboard/backend/internal/rbac"
 	"k8s-dashboard/backend/internal/store"
 )
@@ -48,7 +49,7 @@ const (
 	clusterHeader = "X-OpenConsole-Cluster"
 )
 
-const reasonAPIKeyNotAllowed = "api_key_not_allowed"
+const reasonAPIKeyNotAllowed = problem.APIKeyNotAllowed
 
 const base62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
@@ -163,18 +164,18 @@ func (s *Server) AuthenticateKey(r *http.Request, secret string, keyID int) (*au
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		slog.Warn("unknown API key", slog.String("remote_ip", clientIP(r)), slog.String("request_id", logpkg.RequestIDFrom(ctx)))
-		return nil, http.StatusUnauthorized, ""
+		return nil, http.StatusUnauthorized, problem.Unauthorized
 	}
 	if err != nil {
 		slog.Warn("API key lookup failed; refusing", slog.Any("error", err), slog.String("request_id", logpkg.RequestIDFrom(ctx)))
-		return nil, http.StatusUnauthorized, ""
+		return nil, http.StatusUnauthorized, problem.Unauthorized
 	}
 	// Named on the request's log line from here on, refused (expired, revoked, policy off) or not.
 	noteRequestKey(ctx, key)
 	user, err := s.store.GetUserByID(ctx, key.UserID)
 	if err != nil {
 		slog.Warn("API key owner lookup failed; refusing", slog.Any("error", err), slog.String("request_id", logpkg.RequestIDFrom(ctx)))
-		return nil, http.StatusUnauthorized, ""
+		return nil, http.StatusUnauthorized, problem.Unauthorized
 	}
 	deny := func(outcome, reason string) {
 		if !s.keyLimits.dueAudit(key.ID, reason) {
@@ -186,22 +187,22 @@ func (s *Server) AuthenticateKey(r *http.Request, secret string, keyID int) (*au
 	switch {
 	case key.RevokedAt != nil:
 		deny(audit.Denied, "revoked")
-		return nil, http.StatusUnauthorized, ""
+		return nil, http.StatusUnauthorized, problem.APIKeyRevoked
 	case key.ExpiresAt != nil && !time.Now().Before(*key.ExpiresAt):
 		deny(audit.Denied, "expired")
-		return nil, http.StatusUnauthorized, ""
+		return nil, http.StatusUnauthorized, problem.APIKeyExpired
 	case !user.IsActive:
 		deny(audit.Denied, "owner_inactive")
-		return nil, http.StatusUnauthorized, ""
+		return nil, http.StatusUnauthorized, problem.Unauthorized
 	case user.MustChangePassword:
 		// The key is valid, its owner just cannot use anything yet: 403, not 401.
 		deny(audit.Denied, "must_change_password")
-		return nil, http.StatusForbidden, "change your password first"
+		return nil, http.StatusForbidden, problem.PasswordChangeRequired
 	}
 	refused, err := s.keysRefused(ctx, user)
 	if err != nil {
 		slog.Warn("API access policy lookup failed; refusing", slog.Any("error", err), slog.String("request_id", logpkg.RequestIDFrom(ctx)))
-		return nil, http.StatusUnauthorized, ""
+		return nil, http.StatusUnauthorized, problem.Unauthorized
 	}
 	if refused {
 		deny(audit.Denied, reasonAPIAccessOff)
@@ -209,7 +210,7 @@ func (s *Server) AuthenticateKey(r *http.Request, secret string, keyID int) (*au
 	}
 	if !s.keyLimits.allow(key.ID) {
 		deny(audit.RateLimited, reasonRateLimited)
-		return nil, http.StatusTooManyRequests, ""
+		return nil, http.StatusTooManyRequests, problem.RateLimited
 	}
 	if s.keyLimits.dueTouch(key.ID) {
 		ip := clientIP(r)
@@ -425,11 +426,11 @@ func (s *Server) apiKeyGate(w http.ResponseWriter, r *http.Request, verb string)
 	}
 	user, ok := s.userForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return nil, false
 	}
 	if user.MustChangePassword {
-		writeError(w, http.StatusForbidden, "change your password first")
+		writeError(w, http.StatusForbidden, problem.PasswordChangeRequired)
 		return nil, false
 	}
 	return user, true
@@ -439,12 +440,12 @@ func (s *Server) apiKeyGate(w http.ResponseWriter, r *http.Request, verb string)
 func (s *Server) ownKey(w http.ResponseWriter, r *http.Request, user *models.User) (*models.APIKey, bool) {
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+		writeError(w, http.StatusBadRequest, problem.InvalidID)
 		return nil, false
 	}
 	k, err := s.store.GetAPIKey(r.Context(), id)
 	if err != nil || k.UserID != user.ID {
-		writeError(w, http.StatusNotFound, "API key not found")
+		writeErrorDetail(w, http.StatusNotFound, problem.NotFound, "API key not found")
 		return nil, false
 	}
 	return k, true
@@ -457,12 +458,12 @@ func (s *Server) handleListAPIKeys(w http.ResponseWriter, r *http.Request) {
 	}
 	keys, err := s.store.ListAPIKeys(r.Context(), user.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not list API keys")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "could not list API keys")
 		return
 	}
 	ceiling, err := s.ceilingFor(r.Context(), user)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not read your permissions")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "could not read your permissions")
 		return
 	}
 	out := make([]apiKeyView, 0, len(keys))
@@ -479,7 +480,7 @@ func (s *Server) handleAPIKeyCeiling(w http.ResponseWriter, r *http.Request) {
 	}
 	ceiling, err := s.ceilingFor(r.Context(), user)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not read your permissions")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "could not read your permissions")
 		return
 	}
 	writeJSON(w, http.StatusOK, ceiling)
@@ -600,11 +601,11 @@ func expiryError(p models.SessionSettings, t *time.Time, now time.Time) error {
 func (s *Server) checkExpiry(w http.ResponseWriter, r *http.Request, t *time.Time) bool {
 	p, err := s.store.GetSessionSettings(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not read the expiry policy")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "could not read the expiry policy")
 		return false
 	}
 	if err := expiryError(p, t, time.Now()); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, err.Error())
 		return false
 	}
 	return true
@@ -617,7 +618,7 @@ func (s *Server) handleCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	}
 	var req apiKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid body")
+		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
 	if !s.checkExpiry(w, r, req.ExpiresAt) {
@@ -625,12 +626,12 @@ func (s *Server) handleCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.validateAPIKeyRequest(r.Context(), user, &req, nil); err != nil {
 		s.auditAPIKey(r, audit.VerbCreate, audit.Denied, "outside_ceiling", req.Name, failDetails(err, nil))
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, err.Error())
 		return
 	}
 	secret, prefix, hash, err := newAPIKeySecret()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not generate a key")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "could not generate a key")
 		return
 	}
 	k := models.APIKey{UserID: user.ID, Name: req.Name, Note: req.Note, Prefix: prefix, Hash: hash, AdminScope: req.AdminScope,
@@ -638,11 +639,11 @@ func (s *Server) handleCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 			Namespaces: req.Namespaces, Grants: req.Grants}}
 	if k.ID, err = s.store.CreateAPIKey(r.Context(), k); err != nil {
 		if errors.Is(err, store.ErrAPIKeyNameTaken) {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, err.Error())
 			return
 		}
 		s.auditAPIKey(r, audit.VerbCreate, audit.Failed, failReason(err), req.Name, failDetails(err, nil))
-		writeError(w, http.StatusInternalServerError, "could not save the key")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "could not save the key")
 		return
 	}
 	s.auditAPIKey(r, audit.VerbCreate, audit.Success, "", k.Name, keyAuditDetails(k))
@@ -661,12 +662,12 @@ func (s *Server) handleUpdateAPIKey(w http.ResponseWriter, r *http.Request) {
 	}
 	var req apiKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid body")
+		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
 	if err := s.validateAPIKeyRequest(r.Context(), user, &req, before); err != nil {
 		s.auditAPIKey(r, audit.VerbUpdate, audit.Denied, "outside_ceiling", before.Name, failDetails(err, audit.D{"id": before.ID}))
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, err.Error())
 		return
 	}
 	k := *before
@@ -674,11 +675,11 @@ func (s *Server) handleUpdateAPIKey(w http.ResponseWriter, r *http.Request) {
 	k.APIKeyScope = models.APIKeyScope{Clusters: req.Clusters, AllNamespaces: req.AllNamespaces, Namespaces: req.Namespaces, Grants: req.Grants}
 	if err := s.store.UpdateAPIKey(r.Context(), k); err != nil {
 		if errors.Is(err, store.ErrAPIKeyNameTaken) {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, err.Error())
 			return
 		}
 		s.auditAPIKey(r, audit.VerbUpdate, audit.Failed, failReason(err), before.Name, failDetails(err, audit.D{"id": k.ID}))
-		writeError(w, http.StatusInternalServerError, "could not save the key")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "could not save the key")
 		return
 	}
 	var changed []string
@@ -714,7 +715,7 @@ func (s *Server) handleRegenerateAPIKey(w http.ResponseWriter, r *http.Request) 
 		ExpiresAt *time.Time `json:"expiresAt"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid body")
+		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
 	if !s.checkExpiry(w, r, req.ExpiresAt) {
@@ -722,18 +723,18 @@ func (s *Server) handleRegenerateAPIKey(w http.ResponseWriter, r *http.Request) 
 	}
 	secret, prefix, hash, err := newAPIKeySecret()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not generate a key")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "could not generate a key")
 		return
 	}
 	// Revoked (by its owner or an admin) is final: regenerating would bring
 	// back a key the admin took away. Expired keys can be regenerated.
 	if err := s.store.RegenerateAPIKey(r.Context(), k.ID, prefix, hash, req.ExpiresAt); errors.Is(err, store.ErrAPIKeyRevoked) {
 		s.auditAPIKey(r, audit.VerbRegenerate, audit.Failed, "revoked", k.Name, audit.D{"id": k.ID})
-		writeError(w, http.StatusConflict, "a revoked key can't be regenerated; create a new one")
+		writeErrorDetail(w, http.StatusConflict, problem.Conflict, "a revoked key can't be regenerated; create a new one")
 		return
 	} else if err != nil {
 		s.auditAPIKey(r, audit.VerbRegenerate, audit.Failed, failReason(err), k.Name, failDetails(err, audit.D{"id": k.ID}))
-		writeError(w, http.StatusInternalServerError, "could not save the key")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "could not save the key")
 		return
 	}
 	k.ExpiresAt = req.ExpiresAt
@@ -753,7 +754,7 @@ func (s *Server) handleRevokeAPIKey(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.store.RevokeAPIKey(r.Context(), k.ID); err != nil {
 		s.auditAPIKey(r, audit.VerbRevoke, audit.Failed, failReason(err), k.Name, failDetails(err, audit.D{"id": k.ID}))
-		writeError(w, http.StatusInternalServerError, "could not revoke the key")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "could not revoke the key")
 		return
 	}
 	s.auditAPIKey(r, audit.VerbRevoke, audit.Success, "", k.Name, audit.D{"id": k.ID})
@@ -772,7 +773,7 @@ func (s *Server) handleDeleteAPIKey(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.store.DeleteAPIKey(r.Context(), k.ID); err != nil {
 		s.auditAPIKey(r, audit.VerbDelete, audit.Failed, failReason(err), k.Name, failDetails(err, audit.D{"id": k.ID}))
-		writeError(w, http.StatusInternalServerError, "could not delete the key")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "could not delete the key")
 		return
 	}
 	s.auditAPIKey(r, audit.VerbDelete, audit.Success, "", k.Name, audit.D{"id": k.ID})

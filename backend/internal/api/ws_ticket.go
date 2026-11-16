@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"k8s-dashboard/backend/internal/auth"
+	"k8s-dashboard/backend/internal/problem"
 )
 
 // handleWSTicket trades the caller's bearer token for a single-use ticket the
@@ -15,7 +16,7 @@ func (s *Server) handleWSTicket(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.FromContext(r.Context())
 	user, active := s.userForRequest(r)
 	if !ok || !active {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return
 	}
 	if user.MustChangePassword && !user.IsAdmin {
@@ -26,7 +27,7 @@ func (s *Server) handleWSTicket(w http.ResponseWriter, r *http.Request) {
 		Path string `json:"path"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || !strings.HasPrefix(body.Path, "/ws/") {
-		writeError(w, http.StatusBadRequest, "path must be a /ws/ endpoint")
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "path must be a /ws/ endpoint")
 		return
 	}
 	// The socket works on the cluster this request named (the tab's cluster),
