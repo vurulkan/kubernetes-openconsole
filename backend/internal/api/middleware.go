@@ -74,7 +74,12 @@ func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if !ok {
 		return nil, nil, fmt.Errorf("hijacker not supported")
 	}
-	return hijacker.Hijack()
+	conn, rw, err := hijacker.Hijack()
+	if err == nil {
+		// The WebSocket upgrade writes its 101 on the raw connection.
+		r.status = http.StatusSwitchingProtocols
+	}
+	return conn, rw, err
 }
 
 func (r *statusRecorder) Flush() {

@@ -259,6 +259,7 @@ func handleMetrics(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	writeMetric(w, "openconsole_http_requests_total", metricsStore.requestsTotal.Load(), "")
 
+	metricHeader(w, "openconsole_http_requests_status_total")
 	metricsStore.requestsByStatus.Range(func(key, value any) bool {
 		bucket := key.(string)
 		count := value.(*atomic.Int64).Load()

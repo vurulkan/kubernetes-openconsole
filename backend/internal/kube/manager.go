@@ -274,9 +274,9 @@ func buildConfig(creds models.KubeCredentials) (*rest.Config, error) {
 	// (no-op when tracing is off). Background informer list/watch traffic
 	// has no parent span and is not traced.
 	cfg.Wrap(func(rt http.RoundTripper) http.RoundTripper {
-		return otelhttp.NewTransport(rt, otelhttp.WithFilter(func(r *http.Request) bool {
+		return tracedTransport{otelhttp.NewTransport(rt, otelhttp.WithFilter(func(r *http.Request) bool {
 			return trace.SpanFromContext(r.Context()).SpanContext().IsValid()
-		}))
+		})), rt}
 	})
 	return cfg, nil
 }
@@ -346,3 +346,14 @@ func checkInlineKubeconfig(raw []byte) error {
 	}
 	return nil
 }
+
+// tracedTransport is otelhttp's transport that tells client-go what it wraps:
+// when a request times out client-go cancels it on the innermost transport,
+// and without WrappedRoundTripper it logged "Unable to cancel request for
+// *otelhttp.Transport" for every timed-out call (dozens per unreachable cluster).
+type tracedTransport struct {
+	*otelhttp.Transport
+	inner http.RoundTripper
+}
+
+func (t tracedTransport) WrappedRoundTripper() http.RoundTripper { return t.inner }

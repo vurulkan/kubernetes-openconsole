@@ -16,10 +16,13 @@ import (
 
 	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/auth"
+	logpkg "k8s-dashboard/backend/internal/logging"
 	"k8s-dashboard/backend/internal/models"
 	"k8s-dashboard/backend/internal/problem"
 	"k8s-dashboard/backend/internal/rbac"
 	"k8s-dashboard/backend/internal/store"
+
+	"github.com/go-ldap/ldap/v3"
 )
 
 // sessionValidator is the AuthMiddleware adapter around *store.Store. Returning
@@ -234,7 +237,18 @@ func (s *Server) ldapAuthenticate(ctx context.Context, username, password string
 	if err != nil || !cfg.Enabled {
 		return false
 	}
-	return auth.LDAPAuthenticate(ldapAuthConfig(cfg), username, password) == nil
+	if err := auth.LDAPAuthenticate(ldapAuthConfig(cfg), username, password); err != nil {
+		// The audit entry only says bad_password; the directory's answer is
+		// what an operator needs (unreachable, TLS, bind DN, base DN, filter).
+		level := slog.LevelWarn
+		if ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials) {
+			level = slog.LevelInfo // a wrong password
+		}
+		slog.Log(ctx, level, "ldap sign-in failed", slog.String("user", username),
+			slog.String("error", err.Error()), slog.String("request_id", logpkg.RequestIDFrom(ctx)))
+		return false
+	}
+	return true
 }
 
 func (s *Server) issueTokenForUser(w http.ResponseWriter, r *http.Request, user *models.User) {

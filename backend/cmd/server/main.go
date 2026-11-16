@@ -32,11 +32,6 @@ func main() {
 	if cfg.Version == "" {
 		cfg.Version = version.Version
 	}
-	shutdownTracing, err := telemetry.Setup(context.Background(), cfg.Version, cfg.Env)
-	if err != nil {
-		slog.Warn("tracing disabled: exporter setup failed", slog.Any("error", err))
-	}
-
 	logger := logpkg.New(logpkg.Config{
 		Level:        cfg.LogLevel,
 		Format:       cfg.LogFormat,
@@ -48,6 +43,11 @@ func main() {
 		IncludeAudit: cfg.LogIncludeAudit,
 	})
 	logpkg.SetDefault(logger)
+	// After the logger: its "tracing enabled" line is in LOG_FORMAT too.
+	shutdownTracing, err := telemetry.Setup(context.Background(), cfg.Version, cfg.Env)
+	if err != nil {
+		slog.Warn("tracing disabled: exporter setup failed", slog.Any("error", err))
+	}
 
 	slog.Info("starting openconsole",
 		slog.String("port", cfg.Port),

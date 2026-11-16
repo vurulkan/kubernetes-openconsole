@@ -84,8 +84,9 @@ spec:
               value: ecs
 
             # LOG_LEVEL: debug | info | warn | error. Default info. "debug"
-            # includes request bodies and informer sync details — noisy; use
-            # briefly for triage, not in steady-state production.
+            # adds the successful health probe and /metrics requests and the
+            # 404s of cluster reads (an object that is gone); never request
+            # bodies.
             - name: LOG_LEVEL
               value: info
 

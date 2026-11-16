@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	utilnet "k8s.io/apimachinery/pkg/util/net"
+
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
@@ -286,5 +288,21 @@ current-context: c
 	r.Put(1, NewManagerWithClient(fake.NewSimpleClientset()))
 	if _, ok := m2.Client(); ok {
 		t.Fatal("replaced Manager still has a client")
+	}
+}
+
+// client-go cancels a timed-out request on the innermost transport it can
+// reach; the tracing wrapper must let it through, else every timeout logged
+// "Unable to cancel request for *otelhttp.Transport" (M29 #10).
+func TestTracedTransportUnwraps(t *testing.T) {
+	cfg, err := buildConfig(models.KubeCredentials{Method: "token", Server: "https://127.0.0.1:1", Token: []byte("t")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner := http.DefaultTransport
+	rt := cfg.WrapTransport(inner)
+	w, ok := rt.(utilnet.RoundTripperWrapper)
+	if !ok || w.WrappedRoundTripper() != inner {
+		t.Fatalf("%T does not unwrap to the inner transport", rt)
 	}
 }
