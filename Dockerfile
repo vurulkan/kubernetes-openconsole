@@ -31,7 +31,7 @@ RUN GOOS=$TARGETOS GOARCH=$TARGETARCH go build \
 # static binary, CA certificates and time zone data. Debug with
 # `kubectl debug`; copy backups out as the docs' Backup page describes.
 FROM gcr.io/distroless/static:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931 AS runtime
-LABEL org.opencontainers.image.title="Kubernetes OpenConsole" \
+LABEL org.opencontainers.image.title="OpenConsole for Kubernetes" \
       org.opencontainers.image.source="https://github.com/vurulkan/kubernetes-openconsole" \
       org.opencontainers.image.documentation="https://k8sopenconsole.github.io/" \
       org.opencontainers.image.licenses="Apache-2.0"

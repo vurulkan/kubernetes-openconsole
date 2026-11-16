@@ -13,7 +13,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 // A resumed stream restarts at the second of the last line seen; nothing is lost or repeated.
@@ -42,7 +44,7 @@ func TestLogErrorReason(t *testing.T) {
 		previous bool
 		want     string
 	}{
-		{apierrors.NewForbidden(gr, "p", errors.New("no")), false, "forbidden"},
+		{apierrors.NewForbidden(gr, "p", errors.New("no")), false, "cluster_forbidden"},
 		{apierrors.NewBadRequest(`container x is not valid for pod p`), false, "container_not_found"},
 		{apierrors.NewBadRequest(`previous terminated container "app" in pod "p" not found`), true, "previous_unavailable"},
 		{apierrors.NewBadRequest(`container "app" in pod "p" is waiting to start: ContainerCreating`), false, "not_ready"},
@@ -196,5 +198,25 @@ func TestCutLog(t *testing.T) {
 		if string(got) != c.want || cut != c.cut {
 			t.Errorf("cutLog(%q) = %q, %v; want %q, %v", c.in, got, cut, c.want, c.cut)
 		}
+	}
+}
+
+// Kubernetes refusing OpenConsole's own account is cluster_forbidden with 403 on the REST
+// log, not "forbidden" (your roles) with 502 as before 2.23.1.
+func TestRESTLogClusterForbidden(t *testing.T) {
+	e := newTestEnv(t)
+	_, root := e.user("root", true)
+	e.client.PrependReactor("get", "pods", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "api-1", errors.New("no rule"))
+	})
+	out := e.expect("GET", "/api/namespaces/team-a/pods/api-1/logs", root, nil, http.StatusForbidden)
+	if !strings.Contains(out, `"error":"cluster_forbidden"`) {
+		t.Fatalf("body = %s", out)
+	}
+	e.waitAudit("pod.logs.failed", "cluster_forbidden")
+	// The log stream itself refused the same way.
+	reason := logErrorReason(apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "api-1", errors.New("no")), false)
+	if restLogStatus[reason] != http.StatusForbidden {
+		t.Fatalf("stream refusal %q answers %d", reason, restLogStatus[reason])
 	}
 }

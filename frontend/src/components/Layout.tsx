@@ -59,7 +59,7 @@ const LogoMark: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
     {!compact && (
       <div className="flex flex-col leading-tight">
         <span className="text-[13px] font-semibold tracking-tight text-slate-900 dark:text-slate-100">
-          Kubernetes OpenConsole
+          OpenConsole for Kubernetes
         </span>
         <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
           {t('nav.tagline')}

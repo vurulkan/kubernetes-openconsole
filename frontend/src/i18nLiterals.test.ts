@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 // Technical strings (names of things, examples) are listed in ALLOWED.
 
 const ALLOWED = new Set([
-  'Kubernetes OpenConsole', // product name
+  'OpenConsole for Kubernetes', // product name
   'Kubernetes',
   'Prometheus',
   'Kubelet',

@@ -30,7 +30,7 @@ import (
 //
 //	{"t":"line","ts":"…","p":"pod","c":"container","text":"…"}
 //	{"t":"end","reason":"previous_complete|container_terminated|pod_deleted|interrupted","retry":bool}
-//	{"t":"error","reason":"forbidden|rate_limited|not_ready|container_not_found|previous_unavailable|no_pods|unavailable","retry":bool}
+//	{"t":"error","reason":"forbidden|cluster_forbidden|rate_limited|not_ready|container_not_found|previous_unavailable|no_pods|unavailable","retry":bool}
 //	{"t":"note","reason":"pods_limited","shown":20,"total":60}   (a workload view follows at most maxLogPods pods)
 //
 // retry tells the viewer to reconnect with ?sinceTime=<last ts>&skip=<lines at that ts>&resume=true.
@@ -100,8 +100,8 @@ func logTail(r *http.Request) int64 {
 func logErrorReason(err error, previous bool) string {
 	msg := err.Error()
 	switch {
-	case apierrors.IsForbidden(err):
-		return "forbidden"
+	case apierrors.IsForbidden(err): // Kubernetes refused OpenConsole's own account (its ClusterRole)
+		return problem.ClusterForbidden
 	case strings.Contains(msg, "is not valid for pod"):
 		return problem.ContainerNotFound
 	case previous && (apierrors.IsBadRequest(err) || apierrors.IsNotFound(err)):
@@ -562,10 +562,11 @@ const (
 
 // restLogStatus is the HTTP status for a logErrorReason.
 var restLogStatus = map[string]int{
-	"container_not_found":  http.StatusBadRequest,
-	"previous_unavailable": http.StatusBadRequest,
-	"not_ready":            http.StatusBadRequest,
-	"pod_deleted":          http.StatusNotFound,
+	"container_not_found":    http.StatusBadRequest,
+	"previous_unavailable":   http.StatusBadRequest,
+	"not_ready":              http.StatusBadRequest,
+	"pod_deleted":            http.StatusNotFound,
+	problem.ClusterForbidden: http.StatusForbidden,
 }
 
 // handlePodLogs returns the end of a pod's log as text/plain (M16), so agents and scripts
@@ -626,6 +627,9 @@ func (s *Server) handlePodLogs(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case apierrors.IsNotFound(err):
 		refuse(http.StatusNotFound, audit.Failed, problem.PodNotFound)
+		return
+	case apierrors.IsForbidden(err):
+		refuse(http.StatusForbidden, audit.Failed, problem.ClusterForbidden)
 		return
 	case err != nil:
 		refuse(http.StatusBadGateway, audit.Failed, problem.Unavailable)
