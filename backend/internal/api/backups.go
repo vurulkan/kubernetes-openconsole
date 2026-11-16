@@ -10,13 +10,14 @@ import (
 	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/backup"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/problem"
 )
 
 // Admin → Backups: copies of the database (backup.Manager). A copy holds
 // every stored credential, so downloading is off unless the operator sets
 // BACKUP_ALLOW_DOWNLOAD=true on the Deployment, and an API key never may.
 
-const reasonBackupDownloadOff = "backup_download_disabled"
+const reasonBackupDownloadOff = problem.BackupDownloadDisabled
 
 // SetBackups gives the server its backup manager, the interval of scheduled
 // copies and BACKUP_ALLOW_DOWNLOAD (nil manager = the screen says backups are
@@ -32,12 +33,12 @@ func (s *Server) SetKeyExternal(v bool) { s.keyExternal = v }
 
 func (s *Server) handleListBackups(w http.ResponseWriter, r *http.Request) {
 	if s.backups == nil {
-		writeError(w, http.StatusServiceUnavailable, "backups are not set up")
+		writeErrorDetail(w, http.StatusServiceUnavailable, problem.NotConfigured, "backups are not set up")
 		return
 	}
 	list, err := s.backups.List()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list backups")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to list backups")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -52,7 +53,7 @@ func (s *Server) handleListBackups(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 	if s.backups == nil {
-		writeError(w, http.StatusServiceUnavailable, "backups are not set up")
+		writeErrorDetail(w, http.StatusServiceUnavailable, problem.NotConfigured, "backups are not set up")
 		return
 	}
 	extendWriteDeadline(w, 10*time.Minute) // a large database on slow storage
@@ -60,7 +61,7 @@ func (s *Server) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.auditEvent(r, models.AuditLog{Verb: audit.VerbCreate, Outcome: audit.Failed, Reason: failReason(err),
 			ResourceType: audit.KindBackup, ResourceName: "*", Details: failDetails(err, nil)})
-		writeError(w, http.StatusInternalServerError, "backup failed: "+err.Error())
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "backup failed: "+err.Error())
 		return
 	}
 	s.auditEvent(r, models.AuditLog{Verb: audit.VerbCreate, ResourceType: audit.KindBackup, ResourceName: info.Name,
@@ -78,7 +79,7 @@ func (s *Server) handleDownloadBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.backups == nil {
-		writeError(w, http.StatusServiceUnavailable, "backups are not set up")
+		writeErrorDetail(w, http.StatusServiceUnavailable, problem.NotConfigured, "backups are not set up")
 		return
 	}
 	if !s.backupDownload {
@@ -91,13 +92,13 @@ func (s *Server) handleDownloadBackup(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, backup.ErrNotFound) {
 		e.Outcome, e.Reason = audit.Failed, "not_found"
 		s.auditEvent(r, e)
-		writeError(w, http.StatusNotFound, "backup not found")
+		writeErrorDetail(w, http.StatusNotFound, problem.NotFound, "backup not found")
 		return
 	}
 	if err != nil {
 		e.Outcome, e.Reason, e.Details = audit.Failed, failReason(err), failDetails(err, nil)
 		s.auditEvent(r, e)
-		writeError(w, http.StatusInternalServerError, "failed to open backup")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to open backup")
 		return
 	}
 	defer f.Close()

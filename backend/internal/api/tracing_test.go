@@ -34,7 +34,7 @@ func TestRequestSpans(t *testing.T) {
 		found = true
 		attrs := map[string]string{}
 		for _, a := range s.Attributes() {
-			attrs[string(a.Key)] = a.Value.Emit()
+			attrs[string(a.Key)] = a.Value.String()
 		}
 		if attrs["enduser.id"] != "root" || attrs["openconsole.cluster"] != "alpha" || attrs["openconsole.request_id"] == "" {
 			t.Errorf("span attributes = %v", attrs)

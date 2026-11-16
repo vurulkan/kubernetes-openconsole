@@ -38,16 +38,14 @@ var FeatureDocs = map[string]string{
 	FeatureAPIKeys:         "API keys: the page, the `/api/me/api-keys` endpoints and signing in with a key (a key then gets 401)",
 }
 
-// disabledFeatures is set once at startup (SetDisabledFeatures).
-var disabledFeatures = map[string]bool{}
-
-// SetDisabledFeatures applies the operator's flags and logs what is off.
-func SetDisabledFeatures(off []string) {
+// SetDisabledFeatures applies the operator's flags and logs what is off. Call
+// it before serving.
+func (s *Server) SetDisabledFeatures(off []string) {
 	m := map[string]bool{}
 	for _, f := range off {
 		m[f] = true
 	}
-	disabledFeatures = m
+	s.disabledFeatures = m
 	if len(off) > 0 {
 		sorted := append([]string(nil), off...)
 		sort.Strings(sorted)
@@ -55,43 +53,43 @@ func SetDisabledFeatures(off []string) {
 	}
 }
 
-func featureEnabled(name string) bool { return !disabledFeatures[name] }
+func (s *Server) featureEnabled(name string) bool { return !s.disabledFeatures[name] }
 
 // featureAllows reports whether the flags permit resource:action at all.
-func featureAllows(resource, action string) bool {
+func (s *Server) featureAllows(resource, action string) bool {
 	resource, action = strings.ToLower(resource), strings.ToLower(action)
 	if resource == "secrets" {
-		if !featureEnabled(FeatureSecrets) {
+		if !s.featureEnabled(FeatureSecrets) {
 			return false
 		}
 		switch action {
 		case "reveal":
-			return featureEnabled(FeatureSecretReveal)
+			return s.featureEnabled(FeatureSecretReveal)
 		case "edit":
-			return featureEnabled(FeatureSecretEdit)
+			return s.featureEnabled(FeatureSecretEdit)
 		}
 		return true
 	}
 	switch {
 	case resource == "pods" && action == "exec":
-		return featureEnabled(FeaturePodExec)
+		return s.featureEnabled(FeaturePodExec)
 	case action == "edit":
-		return featureEnabled(FeatureYAMLEdit)
+		return s.featureEnabled(FeatureYAMLEdit)
 	case (resource == "deployments" && (action == "restart" || action == "scale")) ||
 		(resource == "statefulsets" && action == "scale"):
-		return featureEnabled(FeatureWorkloadActions)
+		return s.featureEnabled(FeatureWorkloadActions)
 	}
 	return true
 }
 
 // filterByFeatures drops disabled actions (and resources left empty) from a
 // resource → actions map before it reaches the UI.
-func filterByFeatures(in map[string][]string) map[string][]string {
+func (s *Server) filterByFeatures(in map[string][]string) map[string][]string {
 	out := make(map[string][]string, len(in))
 	for resource, actions := range in {
 		kept := make([]string, 0, len(actions))
 		for _, a := range actions {
-			if featureAllows(resource, a) {
+			if s.featureAllows(resource, a) {
 				kept = append(kept, a)
 			}
 		}
@@ -106,7 +104,7 @@ func filterByFeatures(in map[string][]string) map[string][]string {
 func (s *Server) handleFeatures(w http.ResponseWriter, r *http.Request) {
 	out := make(map[string]bool, len(AllFeatures))
 	for _, f := range AllFeatures {
-		out[f] = featureEnabled(f)
+		out[f] = s.featureEnabled(f)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"features": out})
 }

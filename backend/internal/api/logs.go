@@ -23,6 +23,7 @@ import (
 	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/auth"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/problem"
 )
 
 // Log sockets speak JSON frames, so status never mixes with log text:
@@ -102,22 +103,29 @@ func logErrorReason(err error, previous bool) string {
 	case apierrors.IsForbidden(err):
 		return "forbidden"
 	case strings.Contains(msg, "is not valid for pod"):
-		return "container_not_found"
+		return problem.ContainerNotFound
 	case previous && (apierrors.IsBadRequest(err) || apierrors.IsNotFound(err)):
-		return "previous_unavailable"
+		return problem.PreviousUnavailable
 	case apierrors.IsNotFound(err):
 		return "pod_deleted"
 	case apierrors.IsBadRequest(err): // "is waiting to start", "ContainerCreating"
-		return "not_ready"
+		return problem.NotReady
 	}
-	return "unavailable"
+	return problem.Unavailable
 }
 
 // wsFail answers a refused log socket. A browser cannot read the HTTP status of a failed
 // upgrade, so a WebSocket client gets the reason as an error frame; plain HTTP gets the status.
 func wsFail(w http.ResponseWriter, r *http.Request, status int, reason string) {
 	if !websocket.IsWebSocketUpgrade(r) {
-		w.WriteHeader(status)
+		switch {
+		case problem.Known(reason):
+			writeError(w, status, reason)
+		case status == http.StatusNotFound: // no_pods
+			writeErrorDetail(w, status, problem.NotFound, reason)
+		default: // unavailable
+			writeErrorDetail(w, status, problem.NotConnected, reason)
+		}
 		return
 	}
 	conn, err := logUpgrader.Upgrade(w, r, nil)
@@ -216,7 +224,7 @@ func (s *Server) handlePodLogsWS(w http.ResponseWriter, r *http.Request) {
 	defer s.ws.Done()
 	claims, ok := auth.FromContext(r.Context())
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return
 	}
 	namespace := chi.URLParam(r, "namespace")
@@ -419,7 +427,7 @@ func (s *Server) workloadLogsWS(w http.ResponseWriter, r *http.Request, kind, re
 	defer s.ws.Done()
 	claims, ok := auth.FromContext(r.Context())
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return
 	}
 	namespace := chi.URLParam(r, "namespace")
@@ -566,7 +574,7 @@ var restLogStatus = map[string]int{
 func (s *Server) handlePodLogs(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.FromContext(r.Context())
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return
 	}
 	namespace, podName := chi.URLParam(r, "namespace"), chi.URLParam(r, "name")
@@ -591,7 +599,7 @@ func (s *Server) handlePodLogs(w http.ResponseWriter, r *http.Request) {
 	if v := q.Get("tailLines"); v != "" {
 		n, err := strconv.ParseInt(v, 10, 64)
 		if err != nil || n < 1 || n > restLogMaxTail {
-			writeError(w, http.StatusBadRequest, "tailLines must be between 1 and "+strconv.Itoa(restLogMaxTail))
+			writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "tailLines must be between 1 and "+strconv.Itoa(restLogMaxTail))
 			return
 		}
 		tail = n
@@ -600,7 +608,7 @@ func (s *Server) handlePodLogs(w http.ResponseWriter, r *http.Request) {
 	if v := q.Get("sinceSeconds"); v != "" {
 		n, err := strconv.ParseInt(v, 10, 64)
 		if err != nil || n < 1 {
-			writeError(w, http.StatusBadRequest, "sinceSeconds must be a positive number")
+			writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "sinceSeconds must be a positive number")
 			return
 		}
 		opts.SinceSeconds = &n
@@ -611,16 +619,16 @@ func (s *Server) handlePodLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	client, ok := kubeFor(r).Client()
 	if !ok {
-		refuse(http.StatusServiceUnavailable, audit.Failed, "not_connected")
+		refuse(http.StatusServiceUnavailable, audit.Failed, problem.NotConnected)
 		return
 	}
 	pod, err := client.CoreV1().Pods(namespace).Get(r.Context(), podName, metav1.GetOptions{})
 	switch {
 	case apierrors.IsNotFound(err):
-		refuse(http.StatusNotFound, audit.Failed, "pod_not_found")
+		refuse(http.StatusNotFound, audit.Failed, problem.PodNotFound)
 		return
 	case err != nil:
-		refuse(http.StatusBadGateway, audit.Failed, "unavailable")
+		refuse(http.StatusBadGateway, audit.Failed, problem.Unavailable)
 		return
 	}
 	if opts.Container == "" {
@@ -643,7 +651,7 @@ func (s *Server) handlePodLogs(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusBadGateway
 		}
 		if reason == "pod_deleted" {
-			reason = "pod_not_found"
+			reason = problem.PodNotFound
 		}
 		refuse(status, audit.Failed, reason)
 		return

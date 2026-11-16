@@ -49,7 +49,7 @@ func TestExecBridgeConcurrentWrites(t *testing.T) {
 
 	_, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	b := newExecBridge(conn, cancel, nil)
+	b := newExecBridge(conn, cancel, nil, defaultExecIdleTimeout)
 	defer b.Close()
 
 	const perWriter = 500

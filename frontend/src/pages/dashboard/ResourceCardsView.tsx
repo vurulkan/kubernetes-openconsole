@@ -22,6 +22,7 @@ import { ownerUsage, podResources, scaleResources } from '../../utils/resources'
 import { KIND } from './WorkloadDrawer';
 import type { ResourceViewProps } from './ResourceListView';
 import type { WorkloadKind } from '../../services/api';
+import type { PodObject, WorkloadObject } from '../../utils/kubeTypes';
 
 /**
  * The Dashboard's card view. Rendered only in card mode; the browser skips
@@ -287,9 +288,9 @@ export const ResourceCardsView: React.FC<ResourceViewProps & { actionBusy: strin
                 const used = activeTab === 'pods' ? usageOf(name) : ownerUsage(metrics.items, owner);
                 const budget =
                   activeTab === 'pods'
-                    ? podResources((item.spec as any)?.containers)
+                    ? podResources((item as PodObject).spec?.containers)
                     : scaleResources(
-                        podResources((item.spec as any)?.template?.spec?.containers),
+                        podResources((item as WorkloadObject).spec?.template?.spec?.containers),
                         ownerUsage(metrics.items, owner).pods,
                       );
                 if (!used || (isWorkloadTab && !(used as { pods: number }).pods)) return null;

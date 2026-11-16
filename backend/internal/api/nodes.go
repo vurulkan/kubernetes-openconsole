@@ -18,6 +18,7 @@ import (
 	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/kube"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/problem"
 	"k8s-dashboard/backend/internal/prom"
 )
 
@@ -84,7 +85,7 @@ type nodeDetail struct {
 func (s *Server) nodeAdmin(w http.ResponseWriter, r *http.Request, verb, name string) bool {
 	_, ok := s.userForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return false
 	}
 	if _, ok := s.isAdminRequest(r); !ok {
@@ -103,7 +104,7 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.auditEvent(r, models.AuditLog{Verb: audit.VerbList, ResourceType: audit.Kind("nodes"), ResourceName: "*",
 			Outcome: audit.Failed, Reason: failReason(err), Details: failDetails(err, nil)})
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeErrorDetail(w, http.StatusServiceUnavailable, problem.NotConnected, err.Error())
 		return
 	}
 	s.auditRead(r, audit.VerbList, "nodes", "", "*")
@@ -192,7 +193,11 @@ func (s *Server) handleNode(w http.ResponseWriter, r *http.Request) {
 	fail := func(status int, err error) {
 		s.auditEvent(r, models.AuditLog{Verb: audit.VerbGet, ResourceType: audit.Kind("nodes"), ResourceName: name,
 			Outcome: audit.Failed, Reason: failReason(err), Details: failDetails(err, nil)})
-		writeError(w, status, err.Error())
+		code := problem.NotConnected
+		if status == http.StatusNotFound {
+			code = problem.NotFound
+		}
+		writeErrorDetail(w, status, code, err.Error())
 	}
 	list, err := s.nodeList(r)
 	if err != nil {

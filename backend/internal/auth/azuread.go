@@ -17,19 +17,28 @@ type AzureADConfig struct {
 	ClientID     string
 	ClientSecret string
 	RedirectURL  string
+	// Authority is the Entra ID sign-in host; empty = DefaultAzureAuthority.
+	Authority string
 }
 
-// AzureAuthority is the Entra ID sign-in host. Override it (AZURE_AD_AUTHORITY)
+// DefaultAzureAuthority is the Entra ID sign-in host. AZURE_AD_AUTHORITY overrides it
 // for sovereign clouds, e.g. https://login.microsoftonline.us (Azure
 // Government) or https://login.partner.microsoftonline.cn (Azure China).
-var AzureAuthority = "https://login.microsoftonline.com"
+const DefaultAzureAuthority = "https://login.microsoftonline.com"
 
-func azureIssuer(tenantID string) string {
-	return fmt.Sprintf("%s/%s/v2.0", AzureAuthority, tenantID)
+func (c AzureADConfig) authority() string {
+	if c.Authority == "" {
+		return DefaultAzureAuthority
+	}
+	return strings.TrimRight(c.Authority, "/")
 }
 
-func azureEndpoint(tenantID string) oauth2.Endpoint {
-	base := fmt.Sprintf("%s/%s/oauth2/v2.0", AzureAuthority, tenantID)
+func azureIssuer(cfg AzureADConfig) string {
+	return fmt.Sprintf("%s/%s/v2.0", cfg.authority(), cfg.TenantID)
+}
+
+func azureEndpoint(cfg AzureADConfig) oauth2.Endpoint {
+	base := fmt.Sprintf("%s/%s/oauth2/v2.0", cfg.authority(), cfg.TenantID)
 	return oauth2.Endpoint{
 		AuthURL:  base + "/authorize",
 		TokenURL: base + "/token",
@@ -41,7 +50,7 @@ func AzureAuthorizeURL(ctx context.Context, cfg AzureADConfig, state string) (st
 	oauthCfg := oauth2.Config{
 		ClientID:     cfg.ClientID,
 		ClientSecret: cfg.ClientSecret,
-		Endpoint:     azureEndpoint(cfg.TenantID),
+		Endpoint:     azureEndpoint(cfg),
 		RedirectURL:  cfg.RedirectURL,
 		Scopes:       []string{"openid", "profile", "email"},
 	}
@@ -62,7 +71,7 @@ func AzureExchangeCode(ctx context.Context, cfg AzureADConfig, code string) (Azu
 	oauthCfg := oauth2.Config{
 		ClientID:     cfg.ClientID,
 		ClientSecret: cfg.ClientSecret,
-		Endpoint:     azureEndpoint(cfg.TenantID),
+		Endpoint:     azureEndpoint(cfg),
 		RedirectURL:  cfg.RedirectURL,
 		Scopes:       []string{"openid", "profile", "email"},
 	}
@@ -81,7 +90,7 @@ func AzureExchangeCode(ctx context.Context, cfg AzureADConfig, code string) (Azu
 		return AzureIdentity{}, err
 	}
 	issuer, _ := claims["iss"].(string)
-	if issuer != azureIssuer(cfg.TenantID) {
+	if issuer != azureIssuer(cfg) {
 		return AzureIdentity{}, fmt.Errorf("invalid issuer")
 	}
 	// The token comes straight from the token endpoint over TLS (OIDC Core
@@ -139,7 +148,7 @@ func AzureExchangeCode(ctx context.Context, cfg AzureADConfig, code string) (Azu
 }
 
 func TestAzureConnection(ctx context.Context, cfg AzureADConfig) error {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/%s/v2.0/.well-known/openid-configuration", AzureAuthority, cfg.TenantID), nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/%s/v2.0/.well-known/openid-configuration", cfg.authority(), cfg.TenantID), nil)
 	if err != nil {
 		return err
 	}

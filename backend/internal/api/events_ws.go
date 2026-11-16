@@ -8,6 +8,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"k8s-dashboard/backend/internal/kube"
+	"k8s-dashboard/backend/internal/problem"
 	"k8s-dashboard/backend/internal/rbac"
 )
 
@@ -25,7 +26,7 @@ func (s *Server) handleEventsWS(w http.ResponseWriter, r *http.Request) {
 	ns := r.URL.Query().Get("namespace")
 	user, ok := s.userForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return
 	}
 	// shortcut: grants are read when the socket opens; a revoked one applies on reconnect.
@@ -41,7 +42,7 @@ func (s *Server) handleEventsWS(w http.ResponseWriter, r *http.Request) {
 
 	bus := kubeFor(r).EventBus()
 	if bus == nil {
-		writeError(w, http.StatusServiceUnavailable, "event bus unavailable")
+		writeErrorDetail(w, http.StatusServiceUnavailable, problem.NotConnected, "event bus unavailable")
 		return
 	}
 

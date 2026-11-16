@@ -61,6 +61,10 @@ type Manager struct {
 
 	diskMu sync.Mutex // serializes quota checks + eviction
 	kick   chan struct{}
+
+	// diskFree and guardInterval; tests replace them.
+	freeSpace  func(path string) (uint64, bool)
+	guardEvery time.Duration
 }
 
 // Usage is what the admin settings screen shows next to the knobs.
@@ -94,12 +98,14 @@ func New(ctx context.Context, st *store.Store, auditLogger *audit.Logger, dir st
 		return nil, fmt.Errorf("load recording settings: %w", err)
 	}
 	m := &Manager{
-		store:    st,
-		audit:    auditLogger,
-		dir:      dir,
-		settings: settings,
-		live:     make(map[*Session]struct{}),
-		kick:     make(chan struct{}, 1),
+		store:      st,
+		audit:      auditLogger,
+		dir:        dir,
+		settings:   settings,
+		live:       make(map[*Session]struct{}),
+		kick:       make(chan struct{}, 1),
+		freeSpace:  diskFree,
+		guardEvery: guardInterval,
 	}
 	m.dirErr = prepareDir(dir)
 	if m.dirErr != nil {
@@ -303,7 +309,7 @@ func (m *Manager) Usage(ctx context.Context) (Usage, error) {
 	if m.dirErr != nil {
 		u.DirError = m.dirErr.Error()
 	}
-	if free, ok := diskFree(m.dir); ok {
+	if free, ok := m.freeSpace(m.dir); ok {
 		u.FreeBytes = int64(free)
 	}
 	// Same rule Start applies: a new session needs room for a full
@@ -344,14 +350,23 @@ func (m *Manager) ensureSpace(ctx context.Context, reserve int64) error {
 			return err
 		}
 		overQuota := used+reserve > maxTotal
-		lowDisk := false
-		if free, ok := diskFree(m.dir); ok {
-			lowDisk = int64(free)-reserve < minFree
-		}
+		free, freeKnown := m.freeSpace(m.dir)
+		lowDisk := freeKnown && int64(free)-reserve < minFree
 		if !overQuota && !lowDisk {
 			return nil
 		}
 		if settings.DiskPolicy != models.RecordingPolicyEvictOldest {
+			return ErrNoSpace
+		}
+		// Eviction frees finished recordings only (open rows count 0 here).
+		// When deleting every one of them would still leave no room (live
+		// sessions over the quota, the volume filled by something else),
+		// keep them: deleting them all and refusing anyway helps no one.
+		_, finished, err := m.store.RecordingStats(ctx)
+		if err != nil {
+			return err
+		}
+		if (overQuota && used-finished+reserve > maxTotal) || (lowDisk && int64(free)+finished-reserve < minFree) {
 			return ErrNoSpace
 		}
 		victims, err := m.store.ListOldestFinishedRecordings(ctx, 1)
@@ -377,7 +392,7 @@ func (m *Manager) ensureSpace(ctx context.Context, reserve int64) error {
 // guardLoop re-checks the quota while sessions are live, so a burst of
 // concurrent sessions can't run the volume dry between Start calls.
 func (m *Manager) guardLoop(ctx context.Context) {
-	t := time.NewTicker(guardInterval)
+	t := time.NewTicker(m.guardEvery)
 	defer t.Stop()
 	for {
 		select {

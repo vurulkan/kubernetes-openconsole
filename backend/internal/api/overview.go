@@ -17,6 +17,7 @@ import (
 	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/kube"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/problem"
 )
 
 // Admin → Overview: one answer with everything the screen draws for the caller's cluster,
@@ -120,7 +121,7 @@ var fetchNodeUsage = kube.NodeUsage
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	_, ok := s.userForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return
 	}
 	ci := clusterFrom(r.Context())
@@ -135,7 +136,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	if !ok || !kubeFor(r).Ready() {
 		event.Outcome, event.Reason = audit.Failed, "not_connected"
 		s.auditEvent(r, event)
-		writeError(w, http.StatusServiceUnavailable, "no cluster connected")
+		writeError(w, http.StatusServiceUnavailable, problem.NotConnected)
 		return
 	}
 	if e, ok := s.overview.Load(ci.ID); ok && time.Since(e.(overviewEntry).at) < overviewTTL {
@@ -148,7 +149,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		event.Outcome, event.Reason = audit.Failed, "kubernetes_error"
 		event.Details = audit.D{"error": err.Error()}
 		s.auditEvent(r, event)
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeErrorDetail(w, http.StatusServiceUnavailable, problem.NotConnected, err.Error())
 		return
 	}
 	s.overview.Store(ci.ID, overviewEntry{at: time.Now(), resp: resp})
@@ -256,7 +257,7 @@ type historyEntry struct {
 func (s *Server) handleOverviewHistory(w http.ResponseWriter, r *http.Request) {
 	_, ok := s.userForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return
 	}
 	ci := clusterFrom(r.Context())

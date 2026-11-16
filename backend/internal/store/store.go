@@ -389,6 +389,34 @@ func (s *Store) GetUserGroups(ctx context.Context, userID int) ([]int, error) {
 	return ids, nil
 }
 
+// UserGroupIDs maps every user id to its group ids (one query; the Users
+// screen shows them all).
+func (s *Store) UserGroupIDs(ctx context.Context) (map[int][]int, error) {
+	return s.pairs(ctx, `SELECT user_id, group_id FROM user_groups ORDER BY user_id, group_id`)
+}
+
+// GroupRoleIDs maps every group id to its role ids.
+func (s *Store) GroupRoleIDs(ctx context.Context) (map[int][]int, error) {
+	return s.pairs(ctx, `SELECT group_id, role_id FROM group_roles ORDER BY group_id, role_id`)
+}
+
+func (s *Store) pairs(ctx context.Context, query string) (map[int][]int, error) {
+	rows, err := s.conn.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int][]int{}
+	for rows.Next() {
+		var k, v int
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, err
+		}
+		out[k] = append(out[k], v)
+	}
+	return out, rows.Err()
+}
+
 // SetGroupRoles replaces the group's roles in one transaction; an unknown
 // role id fails with ErrUnknownReference and changes nothing.
 func (s *Store) SetGroupRoles(ctx context.Context, groupID int, roleIDs []int) error {

@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"k8s-dashboard/backend/internal/models"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -150,12 +151,6 @@ func (m *Manager) Start(ctx context.Context) error {
 	return nil
 }
 
-func (m *Manager) StartAsync() {
-	go func() {
-		_ = m.Start(context.Background())
-	}()
-}
-
 func (m *Manager) Client() (kubernetes.Interface, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -230,10 +225,6 @@ func (m *Manager) LastError() string {
 	return m.lastError
 }
 
-func (m *Manager) ValidateCredentials(creds models.KubeCredentials) error {
-	return ValidateCredentials(creds)
-}
-
 // ValidateCredentials builds a client from creds and makes one real call
 // (list namespaces, limit 1): that proves the API server is reachable, the
 // CA matches and the identity can at least list namespaces — which every
@@ -283,9 +274,9 @@ func buildConfig(creds models.KubeCredentials) (*rest.Config, error) {
 	// (no-op when tracing is off). Background informer list/watch traffic
 	// has no parent span and is not traced.
 	cfg.Wrap(func(rt http.RoundTripper) http.RoundTripper {
-		return otelhttp.NewTransport(rt, otelhttp.WithFilter(func(r *http.Request) bool {
+		return tracedTransport{otelhttp.NewTransport(rt, otelhttp.WithFilter(func(r *http.Request) bool {
 			return trace.SpanFromContext(r.Context()).SpanContext().IsValid()
-		}))
+		})), rt}
 	})
 	return cfg, nil
 }
@@ -355,3 +346,14 @@ func checkInlineKubeconfig(raw []byte) error {
 	}
 	return nil
 }
+
+// tracedTransport is otelhttp's transport that tells client-go what it wraps:
+// when a request times out client-go cancels it on the innermost transport,
+// and without WrappedRoundTripper it logged "Unable to cancel request for
+// *otelhttp.Transport" for every timed-out call (dozens per unreachable cluster).
+type tracedTransport struct {
+	*otelhttp.Transport
+	inner http.RoundTripper
+}
+
+func (t tracedTransport) WrappedRoundTripper() http.RoundTripper { return t.inner }

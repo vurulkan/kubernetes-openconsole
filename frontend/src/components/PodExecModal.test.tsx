@@ -48,10 +48,11 @@ const { terms, FakeTerminal } = vi.hoisted(() => {
   }
   return { terms, FakeTerminal };
 });
-vi.mock('xterm', () => ({ Terminal: FakeTerminal }));
-vi.mock('xterm-addon-fit', () => ({ FitAddon: class { fit() {} } }));
-vi.mock('xterm/css/xterm.css', () => ({}));
-vi.mock('./ThemeProvider', () => ({ useTheme: () => ({ effective: 'light' }) }));
+vi.mock('@xterm/xterm', () => ({ Terminal: FakeTerminal }));
+vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }));
+vi.mock('@xterm/xterm/css/xterm.css', () => ({}));
+const theme = vi.hoisted(() => ({ effective: 'light' }));
+vi.mock('./ThemeProvider', () => ({ useTheme: () => theme }));
 vi.mock('../services/api', () => ({
   wsUrl: async (path: string, params: URLSearchParams) => `ws://test${path}?${params.toString()}`,
 }));
@@ -172,5 +173,20 @@ describe('PodExecModal', () => {
       old.onclose?.({ code: 1005 });
     });
     expect(screen.queryByText(/Session closed/)).toBeNull();
+  });
+
+  it('keeps the session when the theme changes: it connects once per open', async () => {
+    const modal = <PodExecModal open onClose={() => {}} namespace="shop" pod="web-1" containers={['app']} />;
+    const { rerender } = render(modal);
+    await flushFrames();
+    expect(sockets).toHaveLength(1);
+    theme.effective = 'dark';
+    try {
+      rerender(<PodExecModal open onClose={() => {}} namespace="shop" pod="web-1" containers={['app']} />);
+      await flushFrames();
+      expect(sockets).toHaveLength(1);
+    } finally {
+      theme.effective = 'light';
+    }
   });
 });

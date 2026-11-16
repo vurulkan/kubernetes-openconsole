@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
@@ -33,17 +32,6 @@ func main() {
 	if cfg.Version == "" {
 		cfg.Version = version.Version
 	}
-	auth.MinPasswordLength = cfg.PasswordMinLength
-	shutdownTracing, err := telemetry.Setup(context.Background(), cfg.Version, cfg.Env)
-	if err != nil {
-		slog.Warn("tracing disabled: exporter setup failed", slog.Any("error", err))
-	}
-	api.SetExecLimits(cfg.ExecIdleTimeout, cfg.MaxExecSessionsPerUser)
-	api.SetDisabledFeatures(config.DisabledFeatures(api.AllFeatures))
-	if v := os.Getenv("AZURE_AD_AUTHORITY"); v != "" {
-		auth.AzureAuthority = strings.TrimRight(v, "/")
-	}
-
 	logger := logpkg.New(logpkg.Config{
 		Level:        cfg.LogLevel,
 		Format:       cfg.LogFormat,
@@ -55,6 +43,11 @@ func main() {
 		IncludeAudit: cfg.LogIncludeAudit,
 	})
 	logpkg.SetDefault(logger)
+	// After the logger: its "tracing enabled" line is in LOG_FORMAT too.
+	shutdownTracing, err := telemetry.Setup(context.Background(), cfg.Version, cfg.Env)
+	if err != nil {
+		slog.Warn("tracing disabled: exporter setup failed", slog.Any("error", err))
+	}
 
 	slog.Info("starting openconsole",
 		slog.String("port", cfg.Port),
@@ -117,8 +110,8 @@ func main() {
 
 	auditLogger := audit.New(stor)
 	auditLogger.SetConsoleMirror(cfg.LogIncludeAudit)
-	audit.SetMetricHook(api.MetricsAuditIncr)
-	audit.SetFailureHook(api.MetricsAuditFailed)
+	auditLogger.SetMetricHook(api.MetricsAuditIncr)
+	auditLogger.SetFailureHook(api.MetricsAuditFailed)
 	if err := auditLogger.UpgradeLegacy(context.Background()); err != nil {
 		slog.Warn("audit upgrade failed; older rows keep the pre-2.17 format", slog.Any("error", err))
 	}
@@ -149,6 +142,10 @@ func main() {
 	server := api.NewServer(stor, auditLogger, clusters, recorder, staticDir, dataDir, cfg.TimeZone)
 	backups := backup.New(database, backupDir, cfg.BackupKeep)
 	server.SetBackups(backups, cfg.BackupInterval, cfg.BackupAllowDownload)
+	server.SetExecLimits(cfg.ExecIdleTimeout, cfg.MaxExecSessionsPerUser)
+	server.SetDisabledFeatures(config.DisabledFeatures(api.AllFeatures))
+	server.SetPasswordMinLength(cfg.PasswordMinLength)
+	server.SetAzureAuthority(os.Getenv("AZURE_AD_AUTHORITY"))
 	server.SetKeyExternal(currentKey != nil)
 	backups.Run(context.Background(), cfg.BackupInterval, func(info backup.Info, err error) {
 		e := models.AuditLog{User: "system", Verb: audit.VerbCreate, ResourceType: audit.KindBackup, ResourceName: info.Name,

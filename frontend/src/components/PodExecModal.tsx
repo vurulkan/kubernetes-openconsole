@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Terminal } from 'xterm';
-import { FitAddon } from 'xterm-addon-fit';
-import 'xterm/css/xterm.css';
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import '@xterm/xterm/css/xterm.css';
 import { CircleDot, RefreshCw, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button, NativeSelect, Spinner } from './ui';
@@ -253,6 +253,10 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
   // DOM is painted and the terminal container has a non-zero size before
   // xterm reads it — otherwise fit() computes 0×0 cols/rows and the terminal
   // appears as a solid dark background with no visible cursor.
+  // Connects once per open (a new connect, e.g. after a theme change, doesn't
+  // reconnect); a container or shell change reconnects below.
+  const connectRef = useRef(connect);
+  connectRef.current = connect;
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -262,15 +266,13 @@ const PodExecModal: React.FC<Props> = ({ open, onClose, namespace, pod, containe
         requestAnimationFrame(run);
         return;
       }
-      connect();
+      connectRef.current();
     };
     const raf = requestAnimationFrame(() => requestAnimationFrame(run));
     return () => {
       cancelled = true;
       cancelAnimationFrame(raf);
     };
-    // Connects once per open; a container or shell change reconnects below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   // A different container or shell while the dialog is open: reconnect.

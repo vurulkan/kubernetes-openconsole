@@ -65,9 +65,8 @@ func TestRetentionZeroKeepsAndPositivePurgesAtStart(t *testing.T) {
 func TestAuditWriteFailureIsCounted(t *testing.T) {
 	l, _, d := newLogger(t)
 	var failed, ok atomic.Int64
-	SetFailureHook(func() { failed.Add(1) })
-	SetMetricHook(func() { ok.Add(1) })
-	t.Cleanup(func() { SetFailureHook(nil); SetMetricHook(nil) })
+	l.SetFailureHook(func() { failed.Add(1) })
+	l.SetMetricHook(func() { ok.Add(1) })
 
 	l.RecordAsync(models.AuditLog{User: "x", Action: "pod.list", Verb: "list"})
 	l.Wait(context.Background())

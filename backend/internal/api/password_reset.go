@@ -11,6 +11,7 @@ import (
 	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/auth"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/problem"
 )
 
 // handleResetUserPassword lets an admin set a new password for a LOCAL user
@@ -22,12 +23,12 @@ import (
 func (s *Server) handleResetUserPassword(w http.ResponseWriter, r *http.Request) {
 	_, ok := s.userForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return
 	}
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+		writeError(w, http.StatusBadRequest, problem.InvalidID)
 		return
 	}
 	if _, ok := s.isAdminRequest(r); !ok {
@@ -37,12 +38,12 @@ func (s *Server) handleResetUserPassword(w http.ResponseWriter, r *http.Request)
 	}
 	target, err := s.store.GetUserByID(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "user not found")
+		writeErrorDetail(w, http.StatusNotFound, problem.NotFound, "user not found")
 		return
 	}
 	if target.AuthSource != models.AuthSourceLocal {
 		s.recordPasswordResetAudit(r, target.Username, audit.Failed, "not_local_account", audit.D{"account_source": target.AuthSource})
-		writeError(w, http.StatusConflict, "this user signs in through "+target.AuthSource+"; reset the password there")
+		writeErrorDetail(w, http.StatusConflict, problem.Conflict, "this user signs in through "+target.AuthSource+"; reset the password there")
 		return
 	}
 	body := struct {
@@ -50,22 +51,22 @@ func (s *Server) handleResetUserPassword(w http.ResponseWriter, r *http.Request)
 		MustChange *bool  `json:"mustChange"`
 	}{}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid body")
+		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
-	if err := auth.CheckPasswordPolicy(body.Password); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	if err := auth.CheckPasswordPolicy(body.Password, s.passwordMinLength); err != nil {
+		writeErrorDetail(w, http.StatusBadRequest, problem.WeakPassword, err.Error())
 		return
 	}
 	mustChange := body.MustChange == nil || *body.MustChange
 	hash, err := auth.HashPassword(body.Password)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to hash password")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to hash password")
 		return
 	}
 	if err := s.store.UpdateUserPassword(r.Context(), target.ID, hash, mustChange); err != nil {
 		s.recordPasswordResetAudit(r, target.Username, audit.Failed, "error", failDetails(err, nil))
-		writeError(w, http.StatusInternalServerError, "failed to save password")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to save password")
 		return
 	}
 	// The old password may be known to someone else: sign the user out

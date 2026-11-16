@@ -12,6 +12,8 @@ export type User = {
   activeClusterId?: number;
   /** Replaces the role modes for this user's API keys; "" = by roles. */
   apiAccessOverride?: ApiAccessOverride;
+  /** The user's groups (in the admin user list only). */
+  groupIds?: number[];
 };
 
 /** What a role's grants give API keys. */
@@ -66,14 +68,6 @@ export type AzureADConfig = {
   clientSecret: string;
   redirectUrl: string;
   passwordConfigured?: boolean;
-};
-
-export type KubeClusterStatus = {
-  method: string;
-  server: string;
-  active: boolean;
-  ready?: boolean;
-  lastError?: string;
 };
 
 export const hasToken = () => Boolean(getToken());
@@ -138,42 +132,72 @@ const seeResponse = (response: Response, auto = false) => {
 // Another tab picked a cluster: the key other tabs watch (storage event).
 export const CLUSTER_PICK_KEY = 'clusterPick';
 
-// Reason codes the server sends as {"error": "<code>"} (or "<code>: <detail>"),
-// shown as a sentence in the UI language; any other message is shown as sent.
-const ERROR_CODES = [
+// Reason codes of the server's error answers (problem details: {"error":
+// "<code>", "detail": "<English text>"}; backend/internal/problem), shown as a
+// sentence in the UI language. api.test.ts checks the list against the server's.
+export const ERROR_CODES = [
+  'unauthorized',
+  'api_key_expired',
+  'api_key_revoked',
+  'password_change_required',
   'forbidden',
   'admin_only',
   'feature_disabled',
-  'rate_limited',
-  'not_found',
-  'backup_download_disabled',
-  'kubeconfig_unsupported',
-  'too_many_sessions',
   'api_key_not_allowed',
   'api_access_policy',
   'api_access_off',
+  'backup_download_disabled',
+  'rate_limited',
+  'too_many_sessions',
+  'not_found',
+  'method_not_allowed',
+  'invalid_id',
+  'invalid_body',
+  'invalid_input',
+  'body_too_large',
+  'conflict',
+  'wrong_password',
+  'weak_password',
+  'password_unchanged',
+  'cannot_delete_self',
+  'kubeconfig_unsupported',
+  'cluster_invalid',
   'cluster_forbidden',
   'cluster_timeout',
   'cluster_unreachable',
+  'cluster_error',
   'not_connected',
+  'not_configured',
+  'pod_not_found',
+  'container_not_found',
+  'not_ready',
+  'previous_unavailable',
+  'unavailable',
+  'exec_failed',
+  'connection_failed',
+  'sign_in_failed',
+  'recording_unavailable',
+  'internal_error',
 ];
-export const errorText = (reason: string) => {
+/** A reason code (or "code: detail", as WebSocket frames still send) as a sentence; other text as is. */
+export const errorText = (reason: string, detail?: string) => {
   const m = /^([a-z_]+)(?:: (.+))?$/s.exec(reason);
-  if (!m || !ERROR_CODES.includes(m[1])) return reason;
+  if (!m || !ERROR_CODES.includes(m[1])) return detail || reason;
   const sentence = i18n.t(`apiErrors.${m[1]}`);
-  return m[2] ? `${sentence} (${m[2]})` : sentence;
+  const extra = detail || m[2];
+  return extra ? `${sentence} (${extra})` : sentence;
 };
 const networkError = () => new Error(i18n.t('apiErrors.network'));
 
 const responseError = async (response: Response) => {
   const text = await response.text();
-  let reason = '';
+  let body: { error?: string; detail?: string } = {};
   try {
-    reason = (JSON.parse(text) as { error?: string }).error ?? '';
+    body = JSON.parse(text) as typeof body;
   } catch {
     /* not JSON */
   }
-  return new Error(errorText(reason || text || response.statusText));
+  return new Error(errorText(body.error || text || response.statusText, body.detail));
 };
 
 const apiRequest = async <T>(path: string, options: RequestInit = {}): Promise<T> => {
@@ -225,40 +249,6 @@ const formRequest = async <T>(path: string, formData: FormData): Promise<T> => {
   }
 
   return response.json() as Promise<T>;
-};
-
-const xhrRequest = async <T>(path: string, payload: unknown): Promise<T> => {
-  return new Promise((resolve, reject) => {
-    const request = new XMLHttpRequest();
-    request.open('POST', path, true);
-    request.setRequestHeader('Content-Type', 'application/json');
-    const token = getToken();
-    if (token) {
-      request.setRequestHeader('Authorization', `Bearer ${token}`);
-    }
-    request.onreadystatechange = () => {
-      if (request.readyState !== XMLHttpRequest.DONE) {
-        return;
-      }
-      checkSession(request.status);
-      if (request.status >= 200 && request.status < 300) {
-        try {
-          resolve(JSON.parse(request.responseText) as T);
-        } catch (error) {
-          resolve({} as T);
-        }
-      } else {
-        try {
-          const parsed = JSON.parse(request.responseText) as { error?: string };
-          reject(new Error(errorText(parsed.error || request.statusText)));
-        } catch {
-          reject(new Error(request.responseText || request.statusText));
-        }
-      }
-    };
-    request.onerror = () => reject(networkError());
-    request.send(JSON.stringify(payload));
-  });
 };
 
 export const login = (username: string, password: string) =>
@@ -746,10 +736,8 @@ export const setUserGroups = (id: number, groupIds: number[]) =>
     body: JSON.stringify({ groupIds })
   });
 
-export const getUserGroups = (id: number) =>
-  apiRequest<{ groupIds: number[] }>(`/api/admin/users/${id}/groups`);
-
-export const listGroups = () => apiRequest<{ items: Array<{ id: number; name: string }> }>('/api/admin/groups');
+/** Every group with the ids of its roles. */
+export const listGroups = () => apiRequest<{ items: Array<{ id: number; name: string; roleIds?: number[] }> }>('/api/admin/groups');
 
 export const createGroup = (name: string) =>
   apiRequest<{ id: number; name: string }>('/api/admin/groups', {
@@ -771,9 +759,6 @@ export const setGroupRoles = (id: number, roleIds: number[]) =>
     method: 'PUT',
     body: JSON.stringify({ roleIds })
   });
-
-export const getGroupRoles = (id: number) =>
-  apiRequest<{ roleIds: number[] }>(`/api/admin/groups/${id}/roles`);
 
 export const listRoles = () => apiRequest<{ items: Role[] }>('/api/admin/roles');
 
@@ -858,34 +843,6 @@ export const getSession = () => apiRequest<SessionSettings>('/api/admin/session'
 export const updateSession = (payload: SessionSettings) =>
   apiRequest('/api/admin/session', {
     method: 'PUT',
-    body: JSON.stringify(payload)
-  });
-
-export const getCluster = () => apiRequest<KubeClusterStatus>('/api/admin/cluster');
-
-export const updateCluster = (payload: {
-  method: string;
-  kubeconfigBase64?: string;
-  token?: string;
-  server?: string;
-  caCertBase64?: string;
-}) =>
-  xhrRequest<{ status: string; active?: boolean; ready?: boolean; lastError?: string }>('/api/admin/cluster', payload).catch(() =>
-    apiRequest<{ status: string; active?: boolean; ready?: boolean; lastError?: string }>('/api/admin/cluster', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    })
-  );
-
-export const validateCluster = (payload: {
-  method: string;
-  kubeconfigBase64?: string;
-  token?: string;
-  server?: string;
-  caCertBase64?: string;
-}) =>
-  apiRequest('/api/admin/cluster/validate', {
-    method: 'POST',
     body: JSON.stringify(payload)
   });
 

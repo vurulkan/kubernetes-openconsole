@@ -13,7 +13,6 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"k8s-dashboard/backend/internal/auth"
 	"k8s-dashboard/backend/internal/models"
 )
 
@@ -24,7 +23,7 @@ const (
 
 // fakeEntra stands in for login.microsoftonline.com: its token endpoint
 // returns an ID token built from claimsFor(code).
-func fakeEntra(t *testing.T, claimsFor func(code string) jwt.MapClaims) {
+func fakeEntra(t *testing.T, e *testEnv, claimsFor func(code string) jwt.MapClaims) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/"+testTenant+"/oauth2/v2.0/token" {
@@ -39,14 +38,12 @@ func fakeEntra(t *testing.T, claimsFor func(code string) jwt.MapClaims) {
 		})
 	}))
 	t.Cleanup(srv.Close)
-	prev := auth.AzureAuthority
-	auth.AzureAuthority = srv.URL
-	t.Cleanup(func() { auth.AzureAuthority = prev })
+	e.server.SetAzureAuthority(srv.URL)
 }
 
-func goodClaims(username string) jwt.MapClaims {
+func goodClaims(e *testEnv, username string) jwt.MapClaims {
 	return jwt.MapClaims{
-		"iss":                auth.AzureAuthority + "/" + testTenant + "/v2.0",
+		"iss":                e.server.azureAuthority + "/" + testTenant + "/v2.0",
 		"aud":                testClientID,
 		"exp":                time.Now().Add(time.Hour).Unix(),
 		"preferred_username": username,
@@ -65,7 +62,7 @@ func (e *testEnv) azureLogin(code string, tamperState bool) (int, string) {
 	}
 	resp.Body.Close()
 	loc, _ := url.Parse(resp.Header.Get("Location"))
-	if resp.StatusCode != http.StatusFound || !strings.HasPrefix(loc.String(), auth.AzureAuthority+"/"+testTenant+"/oauth2/v2.0/authorize") {
+	if resp.StatusCode != http.StatusFound || !strings.HasPrefix(loc.String(), e.server.azureAuthority+"/"+testTenant+"/oauth2/v2.0/authorize") {
 		e.t.Fatalf("start = %d %s", resp.StatusCode, loc)
 	}
 	state := loc.Query().Get("state")
@@ -88,8 +85,8 @@ func (e *testEnv) azureLogin(code string, tamperState bool) (int, string) {
 func TestAzureADEndToEnd(t *testing.T) {
 	e := newTestEnv(t)
 	_, admin := e.user("root", true)
-	fakeEntra(t, func(code string) jwt.MapClaims {
-		c := goodClaims("jane@example.com")
+	fakeEntra(t, e, func(code string) jwt.MapClaims {
+		c := goodClaims(e, "jane@example.com")
 		switch code {
 		case "wrong-aud":
 			c["aud"] = "someone-else"
@@ -166,8 +163,8 @@ func TestAzurePreCreatedByEmail(t *testing.T) {
 	ctx := context.Background()
 	_, admin := e.user("root", true)
 	gid, _ := e.store.CreateGroup(ctx, "payments")
-	fakeEntra(t, func(code string) jwt.MapClaims {
-		c := goodClaims("jdoe@corp.onmicrosoft.com")
+	fakeEntra(t, e, func(code string) jwt.MapClaims {
+		c := goodClaims(e, "jdoe@corp.onmicrosoft.com")
 		switch code {
 		case "jane":
 			c["email"] = "Jane.Doe@corp.com" // other case than the pre-created name

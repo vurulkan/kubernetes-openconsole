@@ -14,6 +14,7 @@ import (
 	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/kube"
 	"k8s-dashboard/backend/internal/models"
+	"k8s-dashboard/backend/internal/problem"
 )
 
 // Secrets are exposed in two tiers:
@@ -123,7 +124,7 @@ func (s *Server) handleSecret(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSecretReveal(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.userForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return
 	}
 	namespace := chi.URLParam(r, "namespace")
@@ -132,7 +133,7 @@ func (s *Server) handleSecretReveal(w http.ResponseWriter, r *http.Request) {
 		Key string `json:"key"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Key == "" {
-		writeError(w, http.StatusBadRequest, "key is required")
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "key is required")
 		return
 	}
 	if !s.can(r.Context(), user.ID, namespace, "secrets", "reveal") {
@@ -150,7 +151,7 @@ func (s *Server) handleSecretReveal(w http.ResponseWriter, r *http.Request) {
 	value, found := sec.Data[body.Key]
 	if !found {
 		s.recordSecretAudit(r, namespace, name, audit.VerbReveal, audit.Failed, "key_not_found", audit.D{"key": body.Key})
-		writeError(w, http.StatusNotFound, "key not found")
+		writeErrorDetail(w, http.StatusNotFound, problem.NotFound, "key not found")
 		return
 	}
 	s.recordSecretAudit(r, namespace, name, audit.VerbReveal, audit.Success, "", audit.D{"key": body.Key})
@@ -171,7 +172,7 @@ func (s *Server) handleSecretReveal(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSecretYAML(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.userForRequest(r)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
 		return
 	}
 	namespace := chi.URLParam(r, "namespace")
@@ -190,7 +191,7 @@ func (s *Server) handleSecretYAML(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := kube.EditableSecretYAML(sec)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to render yaml")
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to render yaml")
 		return
 	}
 	s.recordSecretAudit(r, namespace, name, audit.VerbViewYAML, audit.Success, "", nil)
@@ -211,4 +212,3 @@ func (s *Server) recordSecretAudit(r *http.Request, namespace, name, verb, outco
 		Details:      details,
 	})
 }
-

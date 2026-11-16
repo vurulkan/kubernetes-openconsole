@@ -6,17 +6,14 @@ import (
 	"testing"
 )
 
-func withDisabledFeatures(t *testing.T, off ...string) {
-	t.Helper()
-	prev := disabledFeatures
-	SetDisabledFeatures(off)
-	t.Cleanup(func() { disabledFeatures = prev })
+func withDisabledFeatures(e *testEnv, off ...string) {
+	e.server.SetDisabledFeatures(off)
 }
 
 func TestFeatureFlagsBlockEvenAdmins(t *testing.T) {
 	e := newTestEnv(t)
 	_, admin := e.user("root", true)
-	withDisabledFeatures(t, FeaturePodExec, FeatureSecretReveal, FeatureWorkloadActions)
+	withDisabledFeatures(e, FeaturePodExec, FeatureSecretReveal, FeatureWorkloadActions)
 
 	// Hidden from the UI's permission map…
 	out := e.expect("GET", "/api/namespaces/team-a/permissions", admin, nil, http.StatusOK)
@@ -47,7 +44,7 @@ func TestFeatureFlagsBlockEvenAdmins(t *testing.T) {
 func TestSecretsFeatureOffHidesTheTab(t *testing.T) {
 	e := newTestEnv(t)
 	_, admin := e.user("root", true)
-	withDisabledFeatures(t, FeatureSecrets)
+	withDisabledFeatures(e, FeatureSecrets)
 	if out := e.expect("GET", "/api/namespaces/team-a/permissions", admin, nil, http.StatusOK); strings.Contains(out, "secrets") {
 		t.Fatalf("secrets should be gone: %s", out)
 	}
@@ -56,7 +53,8 @@ func TestSecretsFeatureOffHidesTheTab(t *testing.T) {
 }
 
 func TestFeatureAllowsMapping(t *testing.T) {
-	withDisabledFeatures(t, FeatureYAMLEdit)
+	e := &testEnv{server: &Server{}}
+	withDisabledFeatures(e, FeatureYAMLEdit)
 	cases := []struct {
 		res, act string
 		want     bool
@@ -68,7 +66,7 @@ func TestFeatureAllowsMapping(t *testing.T) {
 		{"pods", "exec", true},
 	}
 	for _, c := range cases {
-		if got := featureAllows(c.res, c.act); got != c.want {
+		if got := e.server.featureAllows(c.res, c.act); got != c.want {
 			t.Errorf("featureAllows(%s, %s) = %v, want %v", c.res, c.act, got, c.want)
 		}
 	}
