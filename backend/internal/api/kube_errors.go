@@ -24,7 +24,8 @@ const (
 )
 
 // kubeReadError maps an error from reading the cluster to a status and a
-// reason code (other API errors keep their status and message).
+// reason code (other API errors keep their status, as cluster_error; the
+// message goes into the answer's detail).
 func kubeReadError(err error) (int, string) {
 	var netErr net.Error
 	var status apierrors.APIStatus
@@ -42,7 +43,7 @@ func kubeReadError(err error) (int, string) {
 		// Not 401: that would read as "your session ended" and sign the user out.
 		return http.StatusBadGateway, reasonClusterUnreachable
 	case errors.As(err, &status):
-		return httpStatusFor(err), err.Error()
+		return httpStatusFor(err), problem.ClusterError
 	}
 	return http.StatusBadGateway, reasonClusterUnreachable
 }
@@ -66,7 +67,11 @@ func writeReadError(w http.ResponseWriter, r *http.Request, err error, resource 
 		slog.String("request_id", logpkg.RequestIDFrom(r.Context())),
 		slog.Any("error", err),
 	)
-	writeError(w, code, reason)
+	detail := ""
+	if reason == problem.ClusterError {
+		detail = err.Error()
+	}
+	writeErrorDetail(w, code, reason, detail)
 }
 
 // kubeWriteCode is the reason code for a write the cluster refused, by the

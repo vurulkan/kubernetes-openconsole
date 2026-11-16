@@ -60,6 +60,6 @@ func Setup(ctx context.Context, version, env string) (func(context.Context) erro
 	otel.SetTracerProvider(tp)
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
 	Enabled = true
-	slog.Info("tracing enabled", slog.String("service", serviceName))
+	slog.Info("tracing enabled") // the logger already names the service
 	return tp.Shutdown, nil
 }

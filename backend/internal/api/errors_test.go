@@ -3,10 +3,12 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,6 +16,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
 	"k8s-dashboard/backend/internal/problem"
 )
@@ -343,5 +347,16 @@ func TestServedOpenAPIVersion(t *testing.T) {
 	}
 	if doc.Info.Version != "2.23.1" || doc.Info.Title != "OpenConsole API" || len(doc.Paths) < 100 {
 		t.Fatalf("info %+v, %d paths", doc.Info, len(doc.Paths))
+	}
+}
+
+// Any other Kubernetes API error on a read is still a code, with the API
+// server's message as the detail (it used to be the message in `error`).
+func TestReadErrorOtherAPIErrorIsCode(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeReadError(rec, httptest.NewRequest("GET", "/api/namespaces/a/pods", nil), apierrors.NewInternalError(errors.New("etcd is sad")), "pods")
+	p := decodeProblem(t, rec.Body.String())
+	if rec.Code != http.StatusInternalServerError || p.Error != problem.ClusterError || !strings.Contains(p.Detail, "etcd is sad") {
+		t.Fatalf("%d %+v", rec.Code, p)
 	}
 }
