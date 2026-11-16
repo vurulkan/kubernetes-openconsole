@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { PodDrawer } from './PodDrawer';
 import { WorkloadDrawer } from './WorkloadDrawer';
+import { Events } from './DetailParts';
 import { mockFetch } from '../../test/fetchMock';
 import { expectNoA11yViolations } from '../../test/a11y';
 
@@ -188,5 +189,14 @@ describe('WorkloadDrawer (StatefulSet)', () => {
     fireEvent.click(screen.getByRole('button', { name: /Scale/ }));
     expect(onScale).toHaveBeenCalledWith('db', 2);
     await expectNoA11yViolations(document.body);
+  });
+});
+
+describe('Events in a drawer', () => {
+  // An answer of {"items": null} (no events, up to 2.23.2) kept the spinner turning forever.
+  it('says there are none when the list is null', async () => {
+    const load = () => Promise.resolve({ items: null as unknown as Array<Record<string, unknown>> });
+    render(<Events load={load} version="1" />);
+    expect(await screen.findByText('No events in the last hour.')).toBeInTheDocument();
   });
 });

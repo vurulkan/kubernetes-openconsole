@@ -84,7 +84,7 @@ export const Events: React.FC<{ load: () => Promise<{ items: Array<Record<string
   useEffect(() => {
     let live = true;
     loadRef.current()
-      .then((r) => live && (setEvents(r.items as KubeEvent[]), setFailed(false)))
+      .then((r) => live && (setEvents((r.items ?? []) as KubeEvent[]), setFailed(false)))
       .catch(() => live && setFailed(true));
     return () => {
       live = false;

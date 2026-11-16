@@ -360,3 +360,18 @@ func TestReadErrorOtherAPIErrorIsCode(t *testing.T) {
 		t.Fatalf("%d %+v", rec.Code, p)
 	}
 }
+
+// A list with nothing in it is [] , never null: the detail drawers read null as
+// "still loading" and spun forever on an object without events (up to 2.23.2).
+func TestEmptyListIsArray(t *testing.T) {
+	e := newTestEnv(t)
+	_, admin := e.user("root", true)
+	for _, path := range []string{
+		"/api/namespaces/team-a/pods/api-1/events",
+		"/api/namespaces/team-a/deployments/api/events",
+	} {
+		if out := e.expect("GET", path, admin, nil, http.StatusOK); !strings.Contains(out, `"items":[]`) {
+			t.Fatalf("%s = %s", path, out)
+		}
+	}
+}
