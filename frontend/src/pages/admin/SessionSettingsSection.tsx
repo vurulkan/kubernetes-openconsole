@@ -13,8 +13,8 @@ export const SessionSettingsSection: React.FC<{ apiKeysOn: boolean }> = ({ apiKe
   const [sessionMinutes, setSessionMinutes] = useState(60);
   const [apiKeyMaxDays, setApiKeyMaxDays] = useState(0);
   const [apiKeyAllowNoExpiry, setApiKeyAllowNoExpiry] = useState(true);
-  // The error shows in the card whose Save was pressed.
-  const [saveError, setSaveError] = useState<{ card: 'session' | 'expiry'; message: string } | null>(null);
+  // The outcome of a save shows in the card whose Save was pressed.
+  const [result, setResult] = useState<{ card: 'session' | 'expiry'; ok: boolean; message: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -32,15 +32,23 @@ export const SessionSettingsSection: React.FC<{ apiKeysOn: boolean }> = ({ apiKe
   }, [load]);
 
   const save = async (card: 'session' | 'expiry') => {
-    setSaveError(null);
+    setResult(null);
     try {
       await updateSession({ sessionMinutes, apiKeyMaxDays, apiKeyAllowNoExpiry });
     } catch (err) {
-      setSaveError({ card, message: (err as Error).message });
+      setResult({ card, ok: false, message: (err as Error).message });
       return;
     }
     await load();
+    setResult({ card, ok: true, message: tr('admin.session.saved') });
   };
+
+  const outcome = (card: 'session' | 'expiry') =>
+    result?.card === card && (
+      <Alert severity={result.ok ? 'success' : 'error'} className="mt-3">
+        {result.message}
+      </Alert>
+    );
 
   return (
     <>
@@ -55,11 +63,7 @@ export const SessionSettingsSection: React.FC<{ apiKeysOn: boolean }> = ({ apiKe
         <Button variant="primary" size="sm" className="mt-4" onClick={() => void save('session')}>
           {tr('admin.session.save')}
         </Button>
-        {saveError?.card === 'session' && (
-          <Alert severity="error" className="mt-3">
-            {saveError.message}
-          </Alert>
-        )}
+        {outcome('session')}
       </SectionCard>
       {apiKeysOn && (
         <SectionCard title={tr('admin.sections.apiKeyExpiry')} description={tr('admin.cards.apiKeyExpiryDesc')}>
@@ -80,11 +84,7 @@ export const SessionSettingsSection: React.FC<{ apiKeysOn: boolean }> = ({ apiKe
           <Button variant="primary" size="sm" className="mt-4" onClick={() => void save('expiry')}>
             {tr('actions.save')}
           </Button>
-          {saveError?.card === 'expiry' && (
-            <Alert severity="error" className="mt-3">
-              {saveError.message}
-            </Alert>
-          )}
+          {outcome('expiry')}
         </SectionCard>
       )}
     </>

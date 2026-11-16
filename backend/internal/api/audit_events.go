@@ -11,6 +11,7 @@ import (
 
 	"k8s-dashboard/backend/internal/audit"
 	"k8s-dashboard/backend/internal/auth"
+	"k8s-dashboard/backend/internal/kube"
 	logpkg "k8s-dashboard/backend/internal/logging"
 	"k8s-dashboard/backend/internal/models"
 	"k8s-dashboard/backend/internal/problem"
@@ -99,6 +100,9 @@ const (
 	reasonAPIAccessPolicy = problem.APIAccessPolicy
 	// reasonAPIAccessOff: the policy leaves the owner's keys nothing.
 	reasonAPIAccessOff = problem.APIAccessOff
+	// reasonInvalid: the request itself was wrong (body, value out of range,
+	// YAML that doesn't parse or names another object).
+	reasonInvalid = "invalid"
 )
 
 const errAPIAccess = "apiAccess must be off, safe_read or full"
@@ -116,6 +120,8 @@ func failReason(err error) string {
 		return "not_connected"
 	case errors.Is(err, store.ErrUnknownReference):
 		return "not_found"
+	case errors.Is(err, kube.ErrInvalidObject):
+		return reasonInvalid
 	case apierrors.IsForbidden(err):
 		return "k8s_forbidden"
 	case apierrors.IsNotFound(err):
@@ -123,7 +129,7 @@ func failReason(err error) string {
 	case apierrors.IsConflict(err):
 		return "conflict"
 	case apierrors.IsInvalid(err), apierrors.IsBadRequest(err):
-		return "invalid"
+		return reasonInvalid
 	case errors.As(err, &status):
 		return "k8s_error"
 	}

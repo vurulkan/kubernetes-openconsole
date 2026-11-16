@@ -156,7 +156,7 @@ func (s *Server) handleUpdateRecordingSettings(w http.ResponseWriter, r *http.Re
 	if err != nil {
 		var verr recording.ValidationError
 		if errors.As(err, &verr) {
-			s.recordSettingsAudit(r, audit.Failed, "invalid", failDetails(verr, nil))
+			s.recordSettingsAudit(r, audit.Failed, reasonInvalid, failDetails(verr, nil))
 			writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, verr.Error())
 			return
 		}

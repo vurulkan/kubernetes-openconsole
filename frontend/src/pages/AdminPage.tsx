@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import Layout from '../components/Layout';
 import { Alert } from '../components/ui';
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router-dom';
+import { Navigate } from 'react-router-dom';
 import { useScopedShortcuts } from '../hooks/useScopedShortcuts';
 import { User, getFeatures } from '../services/api';
 import { SectionCard } from './admin/SectionCard';
@@ -80,7 +80,6 @@ const ApiKeysTab: React.FC<{ onError: (msg: string | null) => void }> = ({ onErr
 // Each tab's section loads what it shows when it opens.
 
 const AdminPage: React.FC<{ user: User }> = ({ user }) => {
-  const navigate = useNavigate();
   const { t: tr } = useTranslation();
   const [tab, setTab] = useState(() => localStorage.getItem('adminActiveTab') || 'users');
   const [error, setError] = useState<string | null>(null);
@@ -118,8 +117,9 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
   );
 
   useEffect(() => {
+    if (!user.isAdmin) return;
     void getFeatures().then((f) => setApiKeysOn(f.api_keys !== false));
-  }, []);
+  }, [user.isAdmin]);
 
   useEffect(() => {
     if (newUsernames.length === 0) return;
@@ -128,12 +128,11 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
   }, [newUsernames]);
 
   useEffect(() => {
-    if (!user.isAdmin) navigate('/');
-  }, [user, navigate]);
-
-  useEffect(() => {
     localStorage.setItem('adminActiveTab', tab);
   }, [tab]);
+
+  // Not an admin: straight back, before a section asks the server for anything.
+  if (!user.isAdmin) return <Navigate to="/" replace />;
 
   return (
     <Layout

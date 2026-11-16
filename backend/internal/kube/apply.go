@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -10,6 +11,15 @@ import (
 	"k8s.io/client-go/dynamic"
 	"sigs.k8s.io/yaml"
 )
+
+// ErrInvalidObject matches an Apply error found before the API server was
+// asked: YAML that doesn't parse, names another object or lacks resourceVersion.
+var ErrInvalidObject = errors.New("invalid object")
+
+type invalidObject struct{ error }
+
+func (e invalidObject) Unwrap() error        { return e.error }
+func (e invalidObject) Is(target error) bool { return target == ErrInvalidObject }
 
 // ApplyResult carries whatever the API server returned after a (possibly
 // dry-run) update. AppliedYAML is the server-canonicalized object re-rendered
@@ -42,25 +52,16 @@ func (c *ResourceClient) Apply(
 	raw []byte,
 	dryRun bool,
 ) (*ApplyResult, error) {
-	cfg, ok := c.mgr(ctx).RESTConfig()
-	if !ok {
-		return nil, ErrNotReady
-	}
-	dyn, err := dynamic.NewForConfig(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("dynamic client: %w", err)
-	}
-
 	// YAML → JSON → Unstructured. sigs.k8s.io/yaml handles the YAML→JSON
 	// conversion the Kubernetes ecosystem expects (preserving numbers,
 	// handling multiline strings, etc.).
 	jsonBytes, err := yaml.YAMLToJSON(raw)
 	if err != nil {
-		return nil, fmt.Errorf("yaml parse: %w", err)
+		return nil, invalidObject{fmt.Errorf("yaml parse: %w", err)}
 	}
 	obj := &unstructured.Unstructured{}
 	if err := obj.UnmarshalJSON(jsonBytes); err != nil {
-		return nil, fmt.Errorf("decode object: %w", err)
+		return nil, invalidObject{fmt.Errorf("decode object: %w", err)}
 	}
 
 	// If the YAML the user submitted is missing apiVersion/kind — common on
@@ -81,10 +82,10 @@ func (c *ResourceClient) Apply(
 	// a kubectl apply with mismatched metadata is a common foot-gun; the
 	// console refuses it rather than mutating the "wrong" object.
 	if obj.GetName() != "" && obj.GetName() != name {
-		return nil, fmt.Errorf("metadata.name %q does not match URL %q", obj.GetName(), name)
+		return nil, invalidObject{fmt.Errorf("metadata.name %q does not match URL %q", obj.GetName(), name)}
 	}
 	if obj.GetNamespace() != "" && obj.GetNamespace() != namespace {
-		return nil, fmt.Errorf("metadata.namespace %q does not match URL %q", obj.GetNamespace(), namespace)
+		return nil, invalidObject{fmt.Errorf("metadata.namespace %q does not match URL %q", obj.GetNamespace(), namespace)}
 	}
 	obj.SetName(name)
 	if namespace != "" {
@@ -99,12 +100,21 @@ func (c *ResourceClient) Apply(
 	// contains the one we fetched. If the user wiped it they'll get a clear
 	// error here rather than a confusing 409 later.
 	if obj.GetResourceVersion() == "" {
-		return nil, fmt.Errorf("metadata.resourceVersion is required (open the YAML again to pick it up)")
+		return nil, invalidObject{fmt.Errorf("metadata.resourceVersion is required (open the YAML again to pick it up)")}
 	}
 
 	opts := metav1.UpdateOptions{}
 	if dryRun {
 		opts.DryRun = []string{metav1.DryRunAll}
+	}
+
+	cfg, ok := c.mgr(ctx).RESTConfig()
+	if !ok {
+		return nil, ErrNotReady
+	}
+	dyn, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("dynamic client: %w", err)
 	}
 
 	// Namespace-scoped vs cluster-scoped: dynamic client picks the right

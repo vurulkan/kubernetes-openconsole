@@ -1,7 +1,7 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
 vi.mock('../components/Layout', () => ({ default: ({ children }: { children: React.ReactNode }) => <main>{children}</main> }));
 import AdminPage from './AdminPage';
@@ -63,6 +63,24 @@ describe('AdminPage clusters', () => {
     });
     expect(await within(dialog).findByRole('alert')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Description')).toHaveValue('typed meanwhile');
+  });
+});
+
+describe('AdminPage for a non-admin', () => {
+  it('goes back to the dashboard without asking the server for admin data', async () => {
+    localStorage.setItem('adminActiveTab', 'users');
+    const calls = mockFetch([]);
+    render(
+      <MemoryRouter initialEntries={['/admin']}>
+        <Routes>
+          <Route path="/admin" element={<AdminPage user={{ ...admin, isAdmin: false }} />} />
+          <Route path="/" element={<p>dashboard</p>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText('dashboard')).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(calls.map((c) => c.url).filter((u) => u.includes('/api/admin') || u.includes('/api/features'))).toEqual([]);
   });
 });
 
@@ -363,6 +381,9 @@ describe('AdminPage session settings', () => {
     fireEvent.click(screen.getAllByRole('button', { name: 'Save' })[0]);
     await waitFor(() => expect(sent(calls, 'PUT', '/api/admin/session')).toHaveLength(1));
     expect(sent(calls, 'PUT', '/api/admin/session')[0].body).toEqual({ sessionMinutes: 30, apiKeyMaxDays: 90, apiKeyAllowNoExpiry: false });
+    // A save that worked says so, once, in the card that was saved (2.23.1; before, nothing).
+    expect(await screen.findByRole('status')).toHaveTextContent('Saved.');
+    expect(screen.getAllByRole('status')).toHaveLength(1);
   });
 
   it('says why a save failed, in the card whose Save was pressed', async () => {

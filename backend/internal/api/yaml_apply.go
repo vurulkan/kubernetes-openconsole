@@ -80,10 +80,12 @@ func (s *Server) handleYAMLApply(w http.ResponseWriter, r *http.Request) {
 
 	var body applyRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		s.recordApplyAudit(r, namespace, name, resource, audit.Failed, reasonInvalid, nil)
 		writeError(w, http.StatusBadRequest, problem.InvalidBody)
 		return
 	}
 	if body.YAML == "" {
+		s.recordApplyAudit(r, namespace, name, resource, audit.Failed, reasonInvalid, audit.D{"dry_run": body.DryRun})
 		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "yaml is required")
 		return
 	}
