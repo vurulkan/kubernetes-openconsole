@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { Alert, Button, Modal, Spinner } from '../../components/ui';
 import type { YamlEditTarget } from '../../components/YamlEditModal';
 import { ContainerPicker } from '../../components/ContainerPicker';
+import { Events } from './DetailParts';
 import type { PodObject } from '../../utils/kubeTypes';
 import {
   getConfigMapData,
@@ -55,32 +56,37 @@ export function yamlTarget(resource: string, namespace: string, name: string, ca
 type InfoKind = 'configmapData' | 'podEvents' | 'deploymentEvents';
 type InfoModalProps = {
   open: boolean;
-  subject: { kind: InfoKind; name: string } | null;
+  subject: { kind: InfoKind; name: string; namespace: string } | null;
   content: string;
   loading: boolean;
+  /** Bumped by Refresh: the events list reads again. */
+  refreshKey: number;
   onClose: () => void;
   onRefresh: () => void;
 };
 
-/** A read-only text dialog with a pod's or deployment's events, or a ConfigMap's data. Refresh reads again in `namespace`. */
+/**
+ * A read-only dialog with a pod's or deployment's events (a live list, as in the drawers) or a
+ * ConfigMap's data (text). Refresh reads again in `namespace`.
+ */
 export function useInfoModal(namespace: string | null) {
   const [open, setOpen] = useState(false);
   const [subject, setSubject] = useState<InfoModalProps['subject']>(null);
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const show = async (kind: InfoKind, ns: string, name: string) => {
     setOpen(true);
-    setSubject({ kind, name });
-    setLoading(true);
+    setSubject({ kind, name, namespace: ns });
     setContent('');
+    if (kind !== 'configmapData') {
+      setRefreshKey((n) => n + 1); // the events list loads itself
+      return;
+    }
+    setLoading(true);
     try {
-      if (kind === 'configmapData') {
-        setContent(JSON.stringify((await getConfigMapData(ns, name)).data, null, 2));
-      } else {
-        const result = kind === 'podEvents' ? await getPodEvents(ns, name) : await getDeploymentEvents(ns, name);
-        setContent(JSON.stringify(result.items, null, 2));
-      }
+      setContent(JSON.stringify((await getConfigMapData(ns, name)).data, null, 2));
     } catch (err) {
       setContent((err as Error).message);
     } finally {
@@ -93,6 +99,7 @@ export function useInfoModal(namespace: string | null) {
     subject,
     content,
     loading,
+    refreshKey,
     onClose: () => {
       setOpen(false);
       setTimeout(() => {
@@ -113,7 +120,7 @@ export function useInfoModal(namespace: string | null) {
   };
 }
 
-export const InfoModal: React.FC<InfoModalProps> = ({ open, subject, content, loading, onClose, onRefresh }) => {
+export const InfoModal: React.FC<InfoModalProps> = ({ open, subject, content, loading, refreshKey, onClose, onRefresh }) => {
   const { t } = useTranslation();
   const preRef = useRef<HTMLPreElement | null>(null);
   // Ctrl/Cmd+A selects the text, not the whole page.
@@ -146,7 +153,19 @@ export const InfoModal: React.FC<InfoModalProps> = ({ open, subject, content, lo
         </>
       }
     >
-      {loading ? (
+      {subject && subject.kind !== 'configmapData' ? (
+        <div className="h-full overflow-auto">
+          <Events
+            load={() =>
+              subject.kind === 'podEvents'
+                ? getPodEvents(subject.namespace, subject.name)
+                : getDeploymentEvents(subject.namespace, subject.name)
+            }
+            version={`${subject.kind}:${subject.namespace}/${subject.name}:${refreshKey}`}
+            live={{ namespace: subject.namespace, kind: subject.kind === 'podEvents' ? 'Pod' : 'Deployment', name: subject.name }}
+          />
+        </div>
+      ) : loading ? (
         <div className="flex h-full items-center justify-center">
           <Spinner size="md" />
         </div>

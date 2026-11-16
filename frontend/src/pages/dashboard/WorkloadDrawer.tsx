@@ -325,7 +325,11 @@ export const WorkloadDrawer: React.FC<Props> = ({
         </Section>
 
         <Section title={t('dashboard.detail.events')}>
-          <Events load={() => getWorkloadEvents(kind, namespace, name)} version={`${owner}:${version}`} />
+          <Events
+            load={() => getWorkloadEvents(kind, namespace, name)}
+            version={`${owner}:${version}`}
+            live={{ namespace, kind: KIND[kind], name }}
+          />
         </Section>
       </div>
     </Drawer>

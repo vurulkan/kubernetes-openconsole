@@ -242,7 +242,11 @@ export const PodDrawer: React.FC<Props> = ({ pod, namespace, canExec, onClose, o
         </Section>
 
         <Section title={t('dashboard.detail.events')}>
-          <Events load={() => getPodEvents(namespace, name)} version={`${name}:${pod.metadata?.resourceVersion}`} />
+          <Events
+            load={() => getPodEvents(namespace, name)}
+            version={`${name}:${pod.metadata?.resourceVersion}`}
+            live={{ namespace, kind: 'Pod', name }}
+          />
         </Section>
       </div>
     </Drawer>
