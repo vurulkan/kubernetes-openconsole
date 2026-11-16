@@ -278,13 +278,6 @@ func (s *Server) handleActivateCluster(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "name": name})
 }
 
-func userName(u *models.User) string {
-	if u == nil {
-		return ""
-	}
-	return u.Username
-}
-
 // recordClusterAudit records an admin action on a cluster; the cluster is
 // the target, so it is recorded as the event's cluster too.
 func (s *Server) recordClusterAudit(r *http.Request, verb, name string, id int) {

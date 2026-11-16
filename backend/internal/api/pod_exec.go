@@ -28,9 +28,6 @@ import (
 	"k8s-dashboard/backend/internal/recording"
 )
 
-// Default shells tried in order when the client did not pick one.
-var defaultShells = []string{"/bin/bash", "/bin/sh", "/bin/ash"}
-
 // Exec limits, set from EXEC_IDLE_TIMEOUT / MAX_EXEC_SESSIONS_PER_USER at
 // startup (SetExecLimits).
 var (
@@ -358,10 +355,6 @@ func splitCommand(cmd string) []string {
 func writeExecSessionInfo(conn *websocket.Conn) {
 	_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"session","idleTimeoutSeconds":`+
 		strconv.Itoa(int(execIdleTimeout/time.Second))+`}`))
-}
-
-func writeExecError(conn *websocket.Conn, msg string) {
-	_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"error","message":`+jsonString(msg)+`}`))
 }
 
 func jsonString(s string) string {

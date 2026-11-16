@@ -56,7 +56,7 @@ Toolchain (go, node, npm, docker, kubectl, k3d) is in `/opt/homebrew/bin`, which
 
 ```bash
 # same as CI; run before every commit
-cd backend  && go vet ./... && go build ./... && go test -race ./...
+cd backend  && go vet ./... && go build ./... && go test -race ./... && go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
 cd frontend && npm ci && npx tsc --noEmit -p . && npm run lint && npm test && npm run build
 
 # local dev: backend on :8080 (DB in backend/data/), Vite on :5173 proxies /api and /ws

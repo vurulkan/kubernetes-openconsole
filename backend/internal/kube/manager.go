@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"k8s-dashboard/backend/internal/models"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -150,12 +151,6 @@ func (m *Manager) Start(ctx context.Context) error {
 	return nil
 }
 
-func (m *Manager) StartAsync() {
-	go func() {
-		_ = m.Start(context.Background())
-	}()
-}
-
 func (m *Manager) Client() (kubernetes.Interface, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -228,10 +223,6 @@ func (m *Manager) LastError() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.lastError
-}
-
-func (m *Manager) ValidateCredentials(creds models.KubeCredentials) error {
-	return ValidateCredentials(creds)
 }
 
 // ValidateCredentials builds a client from creds and makes one real call

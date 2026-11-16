@@ -102,12 +102,6 @@ func requestIDMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// logf is a thin shim preserving legacy printf-style call sites while routing
-// output through slog. Prefer slog.LogAttrs with structured fields in new code.
-func logf(format string, args ...any) {
-	slog.Info(fmt.Sprintf(format, args...))
-}
-
 func logWarnf(format string, args ...any) {
 	slog.Warn(fmt.Sprintf(format, args...))
 }

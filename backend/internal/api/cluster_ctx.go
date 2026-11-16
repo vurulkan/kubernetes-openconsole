@@ -235,12 +235,6 @@ func (s *Server) DefaultClusterID() int {
 	return int(s.defaultClusterID.Load())
 }
 
-// requestIDOf returns the request's correlation id (set by
-// requestIDMiddleware).
-func requestIDOf(r *http.Request) string {
-	return logpkg.RequestIDFrom(r.Context())
-}
-
 // clusterStatus maps every configured cluster's name to whether a live
 // connection exists (for /metrics).
 func (s *Server) clusterStatus() map[string]bool {

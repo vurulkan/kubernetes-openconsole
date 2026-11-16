@@ -282,16 +282,6 @@ type keyCeiling struct {
 	AllowNoExpiry bool `json:"allowNoExpiry"`
 }
 
-// grants returns the ceiling's grants on (cluster, namespace).
-func (c keyCeiling) grants(clusterID int, namespace string) []string {
-	for _, n := range c.Namespaces {
-		if n.ClusterID == clusterID && n.Namespace == namespace {
-			return n.Grants
-		}
-	}
-	return nil
-}
-
 // pairs expands a scope into the (cluster, namespace) pairs it reaches today.
 func (c keyCeiling) pairs(sc models.APIKeyScope) []ceilingNamespace {
 	var out []ceilingNamespace
