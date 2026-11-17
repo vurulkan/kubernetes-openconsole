@@ -158,13 +158,13 @@ the code stay English.
 
 Feature branch `X.Y.Z-name` **from `dev`**: every push publishes `:dev-<run>` + `:dev-latest` → squash merge
 into `dev` → the user tests `dev`'s pinned `:dev-<run>` on a real cluster → when the release's milestones are all
-in `dev`, squash merge `dev` to `main` → `git tag -a vX.Y.Z` + push the tag → CI builds once
+in `dev`, squash merge `dev` to `main` → `git tag -a vX.Y.Z`, push the commit and the tag together (`--atomic`) → CI builds once
 and publishes `ghcr.io/vurulkan/kubernetes-openconsole:X.Y.Z` and `:latest` (same digest, amd64 + arm64,
 GitHub attestations) → check digests, `gh attestation verify`, smoke test → `gh release create` →
 **freeze the docs version** (minor releases: in the docs repo `npm run docs:freeze -- X.Y` with `reference.json`
 pinned to the new tag; patch releases update the frozen `X.Y` pages instead; see its CLAUDE.md) + the release's docs
 PR, then `gh workflow run docs.yml -R k8sopenconsole/k8sopenconsole.github.io` (the site's release notes).
-Pushes to `main` build and test but publish nothing. **Never `docker push` by hand**, never add `:<sha>` or
+A release runs CI once: push the release commit to `main` together with its tag (`git push --atomic origin <branch>:main vX.Y.Z`); that `main` run builds, tests and publishes `:X.Y.Z` + `:latest` (version from the `v*` tag on the commit). Tag pushes start no run; a `main` push without a tag publishes nothing (re-run it after pushing the tag). **Never `docker push` by hand**, never add `:<sha>` or
 signature tags. The version comes from the tag (`dev-<run>` on branches; Dockerfile `ARG VERSION` →
 `internal/version`, `dev` locally).
 
