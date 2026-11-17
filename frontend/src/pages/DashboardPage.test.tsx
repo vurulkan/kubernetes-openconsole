@@ -107,6 +107,20 @@ describe('DashboardPage permissions', () => {
     expect(await screen.findByRole('button', { name: 'Logs' })).toBeInTheDocument();
   });
 
+  it('draws Logs and Shell with different icons', async () => {
+    // Both were a terminal (>_) up to 2.23.2.
+    mockFetch([
+      ['GET /api/namespaces/shop/permissions', () => ({ resources: { pods: ['list', 'logs', 'exec'] } })],
+      ['GET /api/namespaces/shop/pods', () => ({ items: [pod('web-1')] })],
+      ...base,
+    ]);
+    renderPage();
+    const icon = (name: string) => screen.getByRole('button', { name }).querySelector('svg')?.getAttribute('class') ?? '';
+    await screen.findByRole('button', { name: 'Logs' });
+    expect(icon('Logs')).toMatch(/lucide-scroll-text/);
+    expect(icon('Shell')).toMatch(/lucide-terminal/);
+  });
+
   it('shows Logs after switching to a namespace that grants pods:logs', async () => {
     mockFetch([
       ['GET /api/namespaces/blog/permissions', () => ({ resources: { pods: ['list', 'logs'] } })],

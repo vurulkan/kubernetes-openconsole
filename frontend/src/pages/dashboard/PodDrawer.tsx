@@ -1,5 +1,5 @@
 import React from 'react';
-import { FileCode2, History, Terminal } from 'lucide-react';
+import { FileCode2, History, ScrollText, Terminal } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Drawer } from '../../components/Drawer';
 import { Button } from '../../components/ui';
@@ -110,7 +110,7 @@ export const PodDrawer: React.FC<Props> = ({ pod, namespace, canExec, onClose, o
           )}
           {onLogs && (
             <Button variant="primary" size="sm" onClick={() => onLogs(name)}>
-              <Terminal size={13} />
+              <ScrollText size={13} />
               {t('dashboard.actions.logs')}
             </Button>
           )}
