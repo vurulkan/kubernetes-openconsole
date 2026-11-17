@@ -540,7 +540,11 @@ paths:
     get:
       tags: [Events]
       summary: Live Kubernetes events and object changes (WebSocket)
-      description: Query `namespace` to filter; only namespaces you can see.
+      description: |
+        Query `namespace` to filter; only namespaces you can see. Frames (JSON): an object change
+        `{"verb":"added|updated|deleted","kind","namespace","name","at"}`, or a Kubernetes event
+        `{"verb":"event","kind":"Event","namespace","name","at","type","reason","message","involvedKind","involvedName","count"}`;
+        a repeating event is one object whose `count` goes up, sent again on each repeat.
       responses: {"101": {$ref: '#/components/responses/websocket'}}
 
   # ─── Workloads ──────────────────────────────────────────────────────────────

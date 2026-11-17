@@ -319,7 +319,8 @@ describe('DashboardPage events and data modal', () => {
     renderPage();
     fireEvent.click(await screen.findByRole('button', { name: 'Events' }));
     const dialog = await screen.findByRole('dialog', { name: 'Pod Events · web-1' });
-    expect(await within(dialog).findByText(/"reason": "Pulled"/)).toBeInTheDocument();
+    // A list like the drawers' (raw JSON up to 2.23.3).
+    expect(await within(dialog).findByText('Pulled')).toBeInTheDocument();
     const reads = () => calls.filter((c) => c.url === '/api/namespaces/shop/pods/web-1/events').length;
     expect(reads()).toBe(1);
     fireEvent.click(within(dialog).getByRole('button', { name: 'Refresh' }));

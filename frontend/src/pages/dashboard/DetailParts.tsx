@@ -4,6 +4,7 @@ import { CheckCircle2, CircleDashed, XCircle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Spinner } from '../../components/ui';
 import { ageShort } from '../../utils/age';
+import { type KubeEvent, type LiveTarget, upsertEvent, useObjectEventStream } from './useObjectEvents';
 
 
 export const Section: React.FC<{ title: string; aside?: React.ReactNode; children: React.ReactNode }> = ({
@@ -68,45 +69,88 @@ export const Conditions: React.FC<{ items?: Condition[]; okWhenFalse?: (type?: s
   );
 };
 
-type KubeEvent = { type?: string; reason?: string; message?: string; count?: number; lastTimestamp?: string; eventTime?: string };
-
-/** Events for one object, Warnings first then newest first; refetched when `version` changes. */
-export const Events: React.FC<{ load: () => Promise<{ items: Array<Record<string, unknown>> }>; version: unknown }> = ({
-  load,
-  version,
-}) => {
+/**
+ * Events for one object, Warnings first then newest first; read again when `version` changes.
+ * With `live` the list also follows the object's events as they happen (the namespace's
+ * /ws/events stream), shows "Live", and reads the list again after a dropped socket reconnects.
+ */
+export const Events: React.FC<{
+  load: () => Promise<{ items: Array<Record<string, unknown>> }>;
+  version: unknown;
+  live?: LiveTarget;
+}> = ({ load, version, live }) => {
   const { t } = useTranslation();
   const [events, setEvents] = useState<KubeEvent[] | null>(null);
   const [failed, setFailed] = useState(false);
-  // load is a new closure on every render; version says when to refetch.
+  const [resync, setResync] = useState(0);
+  // Names of events that just came in, highlighted for a moment, and the last one announced.
+  const [fresh, setFresh] = useState<string[]>([]);
+  const [announce, setAnnounce] = useState('');
+  // load is a new closure on every render; version (and a resync) says when to read again.
   const loadRef = useRef(load);
   loadRef.current = load;
   useEffect(() => {
-    let live = true;
+    let current = true;
     loadRef.current()
-      .then((r) => live && (setEvents((r.items ?? []) as KubeEvent[]), setFailed(false)))
-      .catch(() => live && setFailed(true));
+      .then((r) => current && (setEvents((r.items ?? []) as KubeEvent[]), setFailed(false)))
+      .catch(() => current && setFailed(true));
     return () => {
-      live = false;
+      current = false;
     };
-  }, [version]);
-  if (failed) return <Empty>{t('dashboard.detail.eventsFailed')}</Empty>;
-  if (!events) return <Spinner size="sm" />;
-  if (!events.length) return <Empty>{t('dashboard.detail.noEvents')}</Empty>;
+  }, [version, resync]);
+  const stream = useObjectEventStream(
+    live ?? null,
+    (e) => {
+      setEvents((prev) => upsertEvent(prev ?? [], e));
+      setAnnounce(t('dashboard.detail.eventsNew', { reason: e.reason ?? '' }));
+      const name = e.metadata?.name;
+      if (!name) return;
+      setFresh((f) => [...f.filter((x) => x !== name), name]);
+      setTimeout(() => setFresh((f) => f.filter((x) => x !== name)), 3000);
+    },
+    () => setResync((n) => n + 1),
+  );
+
+  const indicator =
+    stream === 'off' ? null : (
+      <div className="flex items-center gap-1.5 text-[10px] font-medium text-slate-500 dark:text-slate-400">
+        <span
+          aria-hidden="true"
+          className={`h-1.5 w-1.5 rounded-full ${stream === 'live' ? 'bg-emerald-500' : 'bg-slate-400 dark:bg-slate-500'}`}
+        />
+        {stream === 'live' ? t('dashboard.detail.eventsLive') : t('dashboard.detail.eventsReconnecting')}
+      </div>
+    );
+  const announcer = live ? (
+    <p className="sr-only" aria-live="polite">
+      {announce}
+    </p>
+  ) : null;
+  const wrap = (body: React.ReactNode) => (
+    <div className="flex flex-col gap-1.5">
+      {indicator}
+      {body}
+      {announcer}
+    </div>
+  );
+
+  if (failed) return wrap(<Empty>{t('dashboard.detail.eventsFailed')}</Empty>);
+  if (!events) return wrap(<Spinner size="sm" />);
+  if (!events.length) return wrap(<Empty>{t('dashboard.detail.noEvents')}</Empty>);
   const when = (e: KubeEvent) => e.lastTimestamp ?? e.eventTime ?? '';
   const sorted = [...events].sort(
     (a, b) => Number(b.type === 'Warning') - Number(a.type === 'Warning') || when(b).localeCompare(when(a)),
   );
-  return (
+  return wrap(
     <ul className="flex flex-col gap-1.5">
       {sorted.slice(0, 15).map((e, i) => (
         <li
-          key={i}
-          className={`rounded-md px-2.5 py-1.5 text-xs ${
+          key={e.metadata?.name ?? i}
+          className={`rounded-md px-2.5 py-1.5 text-xs transition-shadow ${
             e.type === 'Warning'
               ? 'bg-amber-50 text-amber-900 dark:bg-amber-500/10 dark:text-amber-200'
               : 'bg-slate-50 text-slate-700 dark:bg-slate-800/60 dark:text-slate-300'
-          }`}
+          } ${e.metadata?.name && fresh.includes(e.metadata.name) ? 'ring-2 ring-brand-400/70' : ''}`}
         >
           <div className="flex items-center justify-between gap-2">
             <span className="font-semibold">{e.reason}</span>
@@ -118,6 +162,6 @@ export const Events: React.FC<{ load: () => Promise<{ items: Array<Record<string
           {e.message && <p className="mt-0.5 break-words leading-relaxed">{e.message}</p>}
         </li>
       ))}
-    </ul>
+    </ul>,
   );
 };

@@ -40,6 +40,9 @@ type ResourceEvent struct {
 	Type         string    `json:"type,omitempty"`
 	InvolvedKind string    `json:"involvedKind,omitempty"`
 	InvolvedName string    `json:"involvedName,omitempty"`
+	// Count is how many times a Kubernetes event has happened (it repeats as one
+	// object; each bump is published), so a view can update its row.
+	Count int32 `json:"count,omitempty"`
 }
 
 type eventSubscriber struct {
@@ -266,6 +269,7 @@ func newInformerCache(client kubernetes.Interface, bus *EventBus, onTermination 
 			Type:         e.Type,
 			InvolvedKind: e.InvolvedObject.Kind,
 			InvolvedName: e.InvolvedObject.Name,
+			Count:        eventCount(e),
 		})
 	}
 	ic.track(evInf.Informer(), "Event")
@@ -589,3 +593,16 @@ func slimObject(obj any) (any, error) {
 }
 
 const lastApplied = "kubectl.kubernetes.io/last-applied-configuration"
+
+// eventCount is how many times an event happened: count, or the series count of
+// events written through events.k8s.io; at least 1.
+func eventCount(e *corev1.Event) int32 {
+	n := e.Count
+	if e.Series != nil && e.Series.Count > n {
+		n = e.Series.Count
+	}
+	if n < 1 {
+		n = 1
+	}
+	return n
+}

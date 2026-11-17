@@ -2,7 +2,9 @@ package kube
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -137,4 +139,25 @@ func TestStopClosesEventSubscriptions(t *testing.T) {
 		t.Fatal("subscription still open after Stop")
 	}
 	m.EventBus().Unsubscribe(sub) // the socket's deferred Unsubscribe must not panic
+}
+
+// The event frames carry how often an event happened, so the drawers update a
+// row ("×5") instead of adding one per repeat (2.23.4).
+func TestEventCount(t *testing.T) {
+	for _, tc := range []struct {
+		e    corev1.Event
+		want int32
+	}{
+		{corev1.Event{}, 1},
+		{corev1.Event{Count: 5}, 5},
+		{corev1.Event{Count: 1, Series: &corev1.EventSeries{Count: 7}}, 7},
+	} {
+		if got := eventCount(&tc.e); got != tc.want {
+			t.Errorf("%+v: %d, want %d", tc.e, got, tc.want)
+		}
+	}
+	b, _ := json.Marshal(ResourceEvent{Verb: "event", Count: 3})
+	if !strings.Contains(string(b), `"count":3`) {
+		t.Fatalf("frame %s", b)
+	}
 }
