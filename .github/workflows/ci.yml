@@ -2,12 +2,11 @@ name: CI
 
 on:
   push:
-    # Every branch but main is built and tested and publishes :dev-latest + :dev-<run>.
-    # main only receives release commits whose tree is dev's (already built and tested
-    # there); their tag (v2.14.2 …) runs once and publishes :2.14.2 and :latest. A push to
-    # main alone runs nothing: push the commit and its tag together.
-    branches: ["**", "!main"]
-    tags: ["v*"]
+    # Every branch is built and tested. Branches other than main publish :dev-latest +
+    # :dev-<run>. main is pushed together with its release tag (git push --atomic origin
+    # <branch>:main vX.Y.Z): that one run publishes :X.Y.Z and :latest. Tag pushes run
+    # nothing of their own (one run per release).
+    branches: ["**"]
   pull_request:
     branches: [main]
 
@@ -123,12 +122,12 @@ jobs:
     name: Publish image to GHCR
     runs-on: ubuntu-latest
     needs: [docker]
-    # Release tags publish :X.Y.Z + :latest from one build, so :latest is
-    # always the newest release (same digest as :X.Y.Z). Other branches publish
-    # :dev-<run> + :dev-latest for testing before merge; :latest never moves to
-    # a dev build. Pushes to main don't run this workflow (see `on`).
-    # CI is the only publisher of image tags. Fork PRs never publish (no push).
-    if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || github.ref != 'refs/heads/main')
+    # A push to main whose commit carries a release tag (vX.Y.Z) publishes :X.Y.Z +
+    # :latest from one build, so :latest is always the newest release (same digest
+    # as :X.Y.Z); a push to main without one publishes nothing. Other branches
+    # publish :dev-<run> + :dev-latest for testing before merge; :latest never moves
+    # to a dev build. CI is the only publisher of image tags. Fork PRs never publish.
+    if: github.event_name == 'push'
     permissions:
       contents: read
       packages: write
@@ -141,6 +140,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-tags: true # the release tag on main's commit names the version
       # No emulation needed: the Go and npm stages cross-compile on the
       # runner and the distroless runtime stage only copies files.
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -149,20 +149,28 @@ jobs:
         run: |
           IMG="ghcr.io/${{ github.repository_owner }}/kubernetes-openconsole"
           echo "image=$IMG" >> "$GITHUB_OUTPUT"
-          if [ "$GITHUB_REF_TYPE" = tag ]; then
-            VERSION="${GITHUB_REF_NAME#v}"; MOVING=latest
+          if [ "$GITHUB_REF" = refs/heads/main ]; then
+            TAG=$(git tag --points-at HEAD --list 'v*' | sort -V | tail -1)
+            if [ -z "$TAG" ]; then
+              echo "::notice::main without a release tag on this commit: nothing published (push the commit and its vX.Y.Z tag together, or re-run after pushing the tag)"
+              echo "publish=false" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+            VERSION="${TAG#v}"; MOVING=latest
           else
             VERSION="dev-${GITHUB_RUN_NUMBER}"; MOVING=dev-latest
           fi
+          echo "publish=true" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           printf 'tags<<EOF\n%s:%s\n%s:%s\nEOF\n' "$IMG" "$VERSION" "$IMG" "$MOVING" >> "$GITHUB_OUTPUT"
       - name: Login to GHCR
+        if: steps.tags.outputs.publish == 'true'
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push
+        if: steps.tags.outputs.publish == 'true'
         id: push
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -176,6 +184,7 @@ jobs:
           provenance: false
           cache-from: type=gha
       - name: Generate SBOM (SPDX)
+        if: steps.tags.outputs.publish == 'true'
         uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           image: ${{ steps.tags.outputs.image }}@${{ steps.push.outputs.digest }}
@@ -186,12 +195,14 @@ jobs:
       # actions/attest: without sbom-path it attests SLSA build provenance,
       # with it the SBOM (replaces attest-build-provenance / attest-sbom).
       - name: Attest build provenance
+        if: steps.tags.outputs.publish == 'true'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: ${{ steps.tags.outputs.image }}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: false
       - name: Attest SBOM
+        if: steps.tags.outputs.publish == 'true'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: ${{ steps.tags.outputs.image }}
