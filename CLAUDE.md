@@ -164,7 +164,7 @@ GitHub attestations) → check digests, `gh attestation verify`, smoke test → 
 **freeze the docs version** (minor releases: in the docs repo `npm run docs:freeze -- X.Y` with `reference.json`
 pinned to the new tag; patch releases update the frozen `X.Y` pages instead; see its CLAUDE.md) + the release's docs
 PR, then `gh workflow run docs.yml -R k8sopenconsole/k8sopenconsole.github.io` (the site's release notes).
-Pushes to `main` build and test but publish nothing. **Never `docker push` by hand**, never add `:<sha>` or
+A push to `main` runs no CI (its tree is `dev`'s, already built there): push the release commit and its tag together (`git push origin <branch>:main vX.Y.Z`), so the tag's one run builds, tests and publishes. **Never `docker push` by hand**, never add `:<sha>` or
 signature tags. The version comes from the tag (`dev-<run>` on branches; Dockerfile `ARG VERSION` →
 `internal/version`, `dev` locally).
 

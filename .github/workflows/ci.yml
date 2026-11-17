@@ -2,9 +2,11 @@ name: CI
 
 on:
   push:
-    # Every branch is built and tested; branches other than main also publish
-    # :dev-latest + :dev-<run>. Release tags (v2.14.2 …) publish :2.14.2 and :latest.
-    branches: ["**"]
+    # Every branch but main is built and tested and publishes :dev-latest + :dev-<run>.
+    # main only receives release commits whose tree is dev's (already built and tested
+    # there); their tag (v2.14.2 …) runs once and publishes :2.14.2 and :latest. A push to
+    # main alone runs nothing: push the commit and its tag together.
+    branches: ["**", "!main"]
     tags: ["v*"]
   pull_request:
     branches: [main]
@@ -124,7 +126,7 @@ jobs:
     # Release tags publish :X.Y.Z + :latest from one build, so :latest is
     # always the newest release (same digest as :X.Y.Z). Other branches publish
     # :dev-<run> + :dev-latest for testing before merge; :latest never moves to
-    # a dev build. Pushes to main are built and tested but never published.
+    # a dev build. Pushes to main don't run this workflow (see `on`).
     # CI is the only publisher of image tags. Fork PRs never publish (no push).
     if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || github.ref != 'refs/heads/main')
     permissions:
