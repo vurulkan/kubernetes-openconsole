@@ -50,9 +50,14 @@ export const TwoFactorSetupFlow: React.FC<{ onDone: () => void }> = ({ onDone })
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
+    // Only the last request's secret is the stored one (StrictMode runs this twice in development).
+    let live = true;
     setupTwoFactor()
-      .then(setSetup)
-      .catch((err: Error) => setError(err.message));
+      .then((s) => live && setSetup(s))
+      .catch((err: Error) => live && setError(err.message));
+    return () => {
+      live = false;
+    };
   }, []);
 
   const submit = async (e: React.FormEvent) => {

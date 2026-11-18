@@ -28,7 +28,7 @@ describe('LoginPage code step', () => {
     const calls = mockFetch([
       ['GET /api/auth/providers', () => ({ azureAdEnabled: false })],
       ['POST /api/auth/login', () => ({ twoFactor: 'verify', challenge: 'ch-1' })],
-      ['POST /api/auth/2fa/verify', () => (++codes === 1 ? problem(401, 'two_factor_invalid') : { token: 'jwt', user: { id: 1, username: 'tina', isAdmin: false } })],
+      ['POST /api/auth/2fa/verify', () => (++codes === 1 ? problem(401, 'two_factor_invalid') : { token: 'jwt', user: { id: 1, username: 'tina', isAdmin: false }, recoveryCodesLeft: 9 })],
       ['GET /api/auth/me', () => ({ user: { id: 1, username: 'tina' } })],
     ]);
     const { container } = render(

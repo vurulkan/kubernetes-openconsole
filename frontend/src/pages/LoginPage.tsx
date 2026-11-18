@@ -49,6 +49,9 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
     await onLogin();
     if (result.user?.mustChangePassword) {
       navigate('/change-password');
+    } else if (result.recoveryCodesLeft !== undefined) {
+      // Signed in with a recovery code: the account page shows how many are left.
+      navigate('/account/two-factor');
     } else {
       navigate(result.user?.isAdmin ? '/overview' : '/');
     }
