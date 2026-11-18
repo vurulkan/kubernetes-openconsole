@@ -607,6 +607,8 @@ interface ModalProps {
   /** 'full' = 95vw × 95vh for data-dense content; 'lg' = 64rem for wide forms;
    *  'md' / 'sm' for confirmations. */
   size?: 'full' | 'lg' | 'md' | 'sm';
+  /** false: no close button (a dialog that must be completed; onClose is then a no-op). */
+  closable?: boolean;
 }
 
 export const Modal: React.FC<ModalProps> = ({
@@ -617,6 +619,7 @@ export const Modal: React.FC<ModalProps> = ({
   footer,
   onKeyDown,
   size = 'full',
+  closable = true,
 }) => {
   const { t } = useTranslation();
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -692,7 +695,7 @@ export const Modal: React.FC<ModalProps> = ({
           <h2 className="text-sm font-semibold tracking-tight text-slate-900 dark:text-slate-100">
             {title}
           </h2>
-          <button
+          {closable && <button
             type="button"
             onClick={onClose}
             data-dialog-close
@@ -700,7 +703,7 @@ export const Modal: React.FC<ModalProps> = ({
             aria-label={t('actions.close')}
           >
             <X size={18} />
-          </button>
+          </button>}
         </div>
         {/* The scrolling body is focusable so keyboard users can scroll it
             (content such as the shortcuts list has no focusable items). */}

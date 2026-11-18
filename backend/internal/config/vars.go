@@ -53,6 +53,7 @@ var Vars = []Var{
 	{"EXEC_IDLE_TIMEOUT", "Security and limits", "5m", "A pod shell with no input for this long is closed. Go duration (`90s`, `10m`, `1h`); minimum `30s`."},
 	{"MAX_EXEC_SESSIONS_PER_USER", "Security and limits", "3", "Open pod shells per user; one more is refused with 429 and audited as `pod.exec` / `rate_limited`. `0` = unlimited."},
 
+	{"TWO_FACTOR_RESET_USER", "Sign-in", "", "Last resort for an account locked out of two-factor sign-in (lost phone and recovery codes, and no other admin): on start, the named account's two-factor sign-in and recovery codes are removed and its sessions end (logged as a warning, audited as `two_factor.reset` by `system`). It does this on every start while set: remove it afterwards."},
 	{"AZURE_AD_AUTHORITY", "Sign-in", "https://login.microsoftonline.com", "Microsoft Entra ID sign-in host for national clouds, e.g. `https://login.microsoftonline.us` or `https://login.chinacloudapi.cn`."},
 
 	{"SESSION_RECORDING_DIR", "Session recording", "<dir of DATA_PATH>/recordings", "Where `.cast` files are written. Read on every start."},

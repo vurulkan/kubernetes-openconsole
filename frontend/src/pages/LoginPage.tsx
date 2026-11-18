@@ -3,7 +3,8 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ShieldCheck } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Alert, Button, Input } from '../components/ui';
-import { docsUrl, getAuthProviders, login, PROJECT_URL, startAzureLogin } from '../services/api';
+import { docsUrl, errorText, getAuthProviders, login, LoginResult, PROJECT_URL, startAzureLogin, verifyTwoFactor } from '../services/api';
+import { CodeInput } from './account/CodeInput';
 import LocaleSwitcher from '../components/LocaleSwitcher';
 
 type Props = {
@@ -18,6 +19,12 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
   const [error, setError] = useState<string | null>(null);
   const [searchParams] = useSearchParams();
   const sessionEnded = searchParams.get('expired') === '1';
+  // A refused Azure AD sign-in comes back here with its reason code.
+  const azureError = searchParams.get('error');
+  // The code step: the password was right, the account signs in with a code too.
+  const [challenge, setChallenge] = useState<string | null>(null);
+  const [code, setCode] = useState('');
+  const [recovery, setRecovery] = useState(false);
   const [loading, setLoading] = useState(false);
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [azureEnabled, setAzureEnabled] = useState(false);
@@ -35,24 +42,62 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
     void loadProviders();
   }, []);
 
+  // A session: store it, load the user, go to the first screen (the
+  // password change first; a required set-up is the app's blocking dialog).
+  const finish = async (result: LoginResult) => {
+    localStorage.setItem('authToken', result.token ?? '');
+    await onLogin();
+    if (result.user?.mustChangePassword) {
+      navigate('/change-password');
+    } else {
+      navigate(result.user?.isAdmin ? '/overview' : '/');
+    }
+  };
+
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     setLoading(true);
     setError(null);
     try {
       const result = await login(username, password);
-      localStorage.setItem('authToken', result.token);
-      await onLogin();
-      if (result.user.mustChangePassword) {
-        navigate('/change-password');
-      } else {
-        navigate(result.user.isAdmin ? '/overview' : '/');
+      if (result.twoFactor === 'verify' && result.challenge) {
+        setChallenge(result.challenge);
+        setCode('');
+        setRecovery(false);
+        return;
       }
+      await finish(result);
     } catch (err) {
       setError(azureEnabled ? `${t('login.failed')} ${t('login.failedAzureHint')}` : t('login.failed'));
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleVerify = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!challenge) return;
+    setLoading(true);
+    setError(null);
+    try {
+      await finish(await verifyTwoFactor(challenge, code.trim()));
+    } catch (err) {
+      const message = (err as Error).message;
+      // Expired: back to the password.
+      if (message === errorText('two_factor_challenge_expired')) {
+        setChallenge(null);
+        setPassword('');
+      }
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const backToPassword = () => {
+    setChallenge(null);
+    setPassword('');
+    setError(null);
   };
 
   return (
@@ -148,12 +193,50 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
               {error}
             </Alert>
           )}
-          {!error && sessionEnded && (
+          {!error && azureError && (
+            <Alert severity="error" className="mt-5">
+              {errorText(azureError)}
+            </Alert>
+          )}
+          {!error && !azureError && sessionEnded && (
             <Alert severity="info" className="mt-5">
               {t('login.sessionEnded')}
             </Alert>
           )}
 
+          {challenge ? (
+            <form onSubmit={handleVerify} className="mt-6 flex flex-col gap-4">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">{t('twoFactor.verifyTitle')}</h2>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                  {recovery ? t('twoFactor.recoveryHelp') : t('twoFactor.verifyHelp')}
+                </p>
+              </div>
+              <CodeInput key={String(recovery)} value={code} onChange={setCode} recovery={recovery} autoFocus />
+              <Button type="submit" variant="primary" disabled={loading || !code.trim()} className="w-full">
+                {loading ? t('twoFactor.verifying') : t('twoFactor.verify')}
+              </Button>
+              <div className="flex flex-wrap justify-between gap-2 text-sm">
+                <button
+                  type="button"
+                  className="text-brand-600 hover:underline focus:outline-none focus-visible:underline dark:text-brand-300"
+                  onClick={() => {
+                    setRecovery(!recovery);
+                    setCode('');
+                  }}
+                >
+                  {recovery ? t('twoFactor.useApp') : t('twoFactor.useRecovery')}
+                </button>
+                <button
+                  type="button"
+                  className="text-slate-500 hover:underline focus:outline-none focus-visible:underline dark:text-slate-400"
+                  onClick={backToPassword}
+                >
+                  {t('twoFactor.back')}
+                </button>
+              </div>
+            </form>
+          ) : (
           <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-4">
             <Input
               label={t('login.username')}
@@ -194,6 +277,7 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
               </>
             )}
           </form>
+          )}
 
           <div className="mt-6 flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
             <ShieldCheck size={14} className="text-emerald-500" />

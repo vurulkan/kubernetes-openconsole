@@ -211,8 +211,9 @@ func (s *Server) routes() *chi.Mux {
 		r.Get("/azure/start", s.handleAzureStart)
 		r.Get("/azure/callback", s.handleAzureCallback)
 		r.Get("/providers", s.handleAuthProviders)
-		r.With(auth.AuthMiddleware(s.jwtKey, s.authValidator(), s.keyAuth())).Get("/me", s.handleMe)
-		r.With(auth.AuthMiddleware(s.jwtKey, s.authValidator(), s.keyAuth())).Post("/change-password", s.handleChangePassword)
+		r.With(s.authn()).Get("/me", s.handleMe)
+		r.With(s.authn()).Post("/change-password", s.handleChangePassword)
+		r.Post("/2fa/verify", s.handleTwoFactorVerify)
 	})
 
 	r.Get("/api/customization/logo", s.handleGetLogo)
@@ -220,7 +221,7 @@ func (s *Server) routes() *chi.Mux {
 	r.Get("/api/openapi.json", handleOpenAPI)
 
 	r.Group(func(r chi.Router) {
-		r.Use(auth.AuthMiddleware(s.jwtKey, s.authValidator(), s.keyAuth()))
+		r.Use(s.authn())
 		r.Use(s.clusterMiddleware)
 		r.Get("/api/cluster/active", s.handleGetActiveCluster)
 		r.Post("/api/cluster/select", s.handleSelectCluster)
@@ -235,6 +236,11 @@ func (s *Server) routes() *chi.Mux {
 		// Signed-in users only: the version isn't shown before login.
 		// API keys: web session only (checked in the handlers so a refusal is audited).
 		r.Get("/api/me/api-keys", s.handleListAPIKeys)
+		// Two-factor sign-in: web session only (denyAPIKey in the handlers).
+		r.Post("/api/me/2fa/setup", s.handleTwoFactorSetup)
+		r.Post("/api/me/2fa/confirm", s.handleTwoFactorConfirm)
+		r.Post("/api/me/2fa/recovery-codes", s.handleTwoFactorRecoveryCodes)
+		r.Delete("/api/me/2fa", s.handleTwoFactorDisable)
 		r.Get("/api/me/api-keys/ceiling", s.handleAPIKeyCeiling)
 		r.Post("/api/me/api-keys", s.handleCreateAPIKey)
 		r.Put("/api/me/api-keys/{id}", s.handleUpdateAPIKey)
@@ -318,12 +324,13 @@ func (s *Server) routes() *chi.Mux {
 	// Admin writes: adminWrite checks admin itself so that a refusal is
 	// audited too (every answer is).
 	r.Group(func(r chi.Router) {
-		r.Use(auth.AuthMiddleware(s.jwtKey, s.authValidator(), s.keyAuth()))
+		r.Use(s.authn())
 		r.Use(s.clusterMiddleware)
 		r.Post("/api/admin/users", s.adminWrite(audit.VerbCreate, audit.KindUser, s.handleCreateUser))
 		r.Put("/api/admin/users/{id}", s.adminWrite(audit.VerbUpdate, audit.KindUser, s.handleUpdateUser))
 		r.Delete("/api/admin/users/{id}", s.adminWrite(audit.VerbDelete, audit.KindUser, s.handleDeleteUser))
 		r.Put("/api/admin/users/{id}/groups", s.adminWrite(audit.VerbUpdate, audit.KindUser, s.handleSetUserGroups))
+		r.Post("/api/admin/users/{id}/reset-2fa", s.adminWrite(audit.VerbReset, audit.KindTwoFactor, s.handleResetUserTwoFactor))
 		r.Post("/api/admin/groups", s.adminWrite(audit.VerbCreate, audit.KindGroup, s.handleCreateGroup))
 		r.Put("/api/admin/groups/{id}", s.adminWrite(audit.VerbUpdate, audit.KindGroup, s.handleUpdateGroup))
 		r.Delete("/api/admin/groups/{id}", s.adminWrite(audit.VerbDelete, audit.KindGroup, s.handleDeleteGroup))
@@ -341,7 +348,7 @@ func (s *Server) routes() *chi.Mux {
 	})
 
 	r.Group(func(r chi.Router) {
-		r.Use(auth.AuthMiddleware(s.jwtKey, s.authValidator(), s.keyAuth()))
+		r.Use(s.authn())
 		r.Use(s.clusterMiddleware)
 		r.Use(s.requireAdmin)
 		r.Get("/api/admin/users", s.handleListUsers)

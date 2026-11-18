@@ -309,6 +309,12 @@
             "auto_provisioned": {
               "type": "boolean"
             },
+            "two_factor_method": {
+              "type": "keyword"
+            },
+            "recovery_codes_left": {
+              "type": "long"
+            },
             "is_admin": {
               "type": "boolean"
             },

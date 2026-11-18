@@ -1,11 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, Cloud, Download, FolderTree, KeyRound, Pencil, Plus, Search as SearchIcon, Trash2, UserRound } from 'lucide-react';
+import { ChevronDown, Cloud, Download, FolderTree, KeyRound, Pencil, Plus, Search as SearchIcon, ShieldOff, Trash2, UserRound } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { confirm } from '../../components/ConfirmDialog';
 import { Alert, Badge, Button, Checkbox, Input, Modal, NativeSelect } from '../../components/ui';
 import { Column, DataTable, IconButton } from '../../components/DataTable';
-import { exportUsersCsv, resetUserPassword, User } from '../../services/api';
+import { exportUsersCsv, resetUserPassword, resetUserTwoFactor, User } from '../../services/api';
 import { ApiAccessBadge } from './ApiAccessParts';
 
 const MIN_PASSWORD_LENGTH = 8;
@@ -25,6 +25,8 @@ type Props = {
   newUsernames?: string[];
   onEdit: (u: User) => void;
   onDelete: (u: User) => void;
+  /** After an action that changes the list (2FA reset). */
+  onReload?: () => void;
 };
 
 export const UsersSection: React.FC<Props> = ({
@@ -38,8 +40,26 @@ export const UsersSection: React.FC<Props> = ({
   newUsernames = [],
   onEdit,
   onDelete,
+  onReload,
 }) => {
   const { t } = useTranslation();
+  const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  const resetTwoFactor = async (u: User) => {
+    const ok = await confirm({
+      title: t('twoFactor.admin.resetTitle', { name: u.username }),
+      message: t('twoFactor.admin.resetBody'),
+      confirmText: t('twoFactor.admin.reset'),
+      variant: 'danger',
+    });
+    if (!ok) return;
+    try {
+      await resetUserTwoFactor(u.id);
+      setNotice({ ok: true, text: t('twoFactor.admin.resetDone', { name: u.username }) });
+      onReload?.();
+    } catch (err) {
+      setNotice({ ok: false, text: (err as Error).message });
+    }
+  };
   const [resetTarget, setResetTarget] = useState<User | null>(null);
   // API access override filter: "*" = any, "" = by roles, else the mode.
   const [apiAccess, setApiAccess] = useState('*');
@@ -103,6 +123,19 @@ export const UsersSection: React.FC<Props> = ({
         ),
     },
     {
+      key: 'twoFactor',
+      header: t('twoFactor.admin.column'),
+      align: 'center',
+      cell: (u) =>
+        u.twoFactorEnabled ? (
+          <Badge variant="success">{t('twoFactor.statusOn')}</Badge>
+        ) : u.authSource === 'azure' ? (
+          <span className="text-xs text-slate-500 dark:text-slate-400">—</span>
+        ) : (
+          <span className="text-xs text-slate-500 dark:text-slate-400">{t('twoFactor.statusOff')}</span>
+        ),
+    },
+    {
       key: 'groups',
       header: t('admin.users.col.groups'),
       cell: (u) => {
@@ -132,7 +165,7 @@ export const UsersSection: React.FC<Props> = ({
       key: 'actions',
       header: '',
       align: 'right',
-      width: '130px',
+      width: '160px',
       cell: (u) => (
         <div className="flex justify-end gap-1">
           <IconButton label={t('admin.users.editUser')} onClick={() => onEdit(u)}>
@@ -142,6 +175,11 @@ export const UsersSection: React.FC<Props> = ({
           {(u.authSource ?? 'local') === 'local' && (
             <IconButton label={t('admin.users.resetPassword')} onClick={() => setResetTarget(u)}>
               <KeyRound size={14} />
+            </IconButton>
+          )}
+          {u.twoFactorEnabled && (
+            <IconButton label={t('twoFactor.admin.reset')} onClick={() => void resetTwoFactor(u)}>
+              <ShieldOff size={14} />
             </IconButton>
           )}
           <IconButton label={t('admin.users.deleteUser')} variant="danger" onClick={() => onDelete(u)}>
@@ -186,6 +224,7 @@ export const UsersSection: React.FC<Props> = ({
           />
         </div>
       </div>
+      {notice && <Alert severity={notice.ok ? 'success' : 'error'}>{notice.text}</Alert>}
       <DataTable
         keyboardNav
         rowClassName={(u) => (isNew(u) ? 'bg-emerald-50/70 dark:bg-emerald-500/10' : '')}

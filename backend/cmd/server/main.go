@@ -115,6 +115,9 @@ func main() {
 	if err := auditLogger.UpgradeLegacy(context.Background()); err != nil {
 		slog.Warn("audit upgrade failed; older rows keep the pre-2.17 format", slog.Any("error", err))
 	}
+	if cfg.TwoFactorResetUser != "" {
+		resetTwoFactor(stor, auditLogger, cfg.TwoFactorResetUser)
+	}
 	auditLogger.StartRetention(context.Background(), cfg.LogRetentionDays, cfg.APIKeyReadRetentionDays, cfg.AuditPurgeInterval)
 
 	recDir := cfg.Recording.Dir
@@ -244,4 +247,23 @@ func startRestartHistory(stor *store.Store, clusters *kube.Registry, days int) {
 func fatal(msg string, err error) {
 	slog.Error(msg, slog.Any("error", err))
 	os.Exit(1)
+}
+
+// resetTwoFactor is TWO_FACTOR_RESET_USER: the account's two-factor sign-in
+// goes, on every start while the variable is set.
+func resetTwoFactor(stor *store.Store, auditLogger *audit.Logger, username string) {
+	ctx := context.Background()
+	user, err := stor.GetUserByUsername(ctx, username)
+	if err != nil {
+		slog.Error("TWO_FACTOR_RESET_USER: no such account", slog.String("user", username))
+		return
+	}
+	if err := stor.ResetTwoFactor(ctx, user.ID); err != nil {
+		slog.Error("TWO_FACTOR_RESET_USER: reset failed", slog.String("user", username), slog.Any("error", err))
+		return
+	}
+	_ = stor.RevokeAllForUser(ctx, user.ID)
+	slog.Warn("TWO_FACTOR_RESET_USER: two-factor sign-in removed; remove the variable, it does this on every start", slog.String("user", username))
+	auditLogger.RecordAsync(models.AuditLog{User: "system", Verb: audit.VerbReset, ResourceType: audit.KindTwoFactor,
+		ResourceName: username, Details: audit.D{"summary": "TWO_FACTOR_RESET_USER"}})
 }
