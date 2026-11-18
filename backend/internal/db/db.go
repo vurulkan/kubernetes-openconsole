@@ -585,4 +585,7 @@ var steps = []func(context.Context, *sql.Tx) error{
 		}
 		return nil
 	},
+	// 2.24.0: nothing to change by hand (two-factor columns are added above), but a
+	// new user_version makes the upgrade copy the database first (backupBeforeUpgrade).
+	func(context.Context, *sql.Tx) error { return nil },
 }
