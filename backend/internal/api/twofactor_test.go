@@ -342,3 +342,66 @@ func TestTwoFactorLDAP(t *testing.T) {
 	// A wrong directory password still never reaches the code step.
 	e.expect("POST", "/api/auth/login", "", map[string]string{"username": "jo", "password": ldapfake.JohnPwd}, http.StatusUnauthorized)
 }
+
+// Wrong codes in a row lock the code step, longer each time, beyond what the
+// sign-in lock allows; the right code (after the lock) clears it, and so does
+// an admin's reset.
+func TestTwoFactorCodeLockDoubles(t *testing.T) {
+	e := newTestEnv(t)
+	_, admin := e.user("root", true)
+	id := e.localUser("lou", "Lou-passw0rd", false)
+	e.setPolicy(admin, "optional")
+	secret, _, _ := e.enable(e.login("lou", "Lou-passw0rd").Token)
+	wrong := func(n int) {
+		for i := 0; i < n; i++ {
+			resetLoginGateOnly() // other addresses: the sign-in lock alone would not stop them
+			a := e.login("lou", "Lou-passw0rd")
+			e.expect("POST", "/api/auth/2fa/verify", "", map[string]string{"challenge": a.Challenge, "code": "000000"}, http.StatusUnauthorized)
+		}
+	}
+	lockedFor := func() time.Duration {
+		codeLocks.Lock()
+		defer codeLocks.Unlock()
+		return time.Until(codeLocks.m[id].until)
+	}
+	expire := func() {
+		codeLocks.Lock()
+		codeLocks.m[id].until = time.Now().Add(-time.Second)
+		codeLocks.Unlock()
+	}
+	wrong(codeFailsBeforeLock)
+	if d := lockedFor(); d < 14*time.Minute || d > codeLockFirst {
+		t.Fatalf("first lock %v, want 15 minutes", d)
+	}
+	resetLoginGateOnly()
+	a := e.login("lou", "Lou-passw0rd")
+	e.expect("POST", "/api/auth/2fa/verify", "", map[string]string{"challenge": a.Challenge, "code": auth.TOTPCode(secret, time.Now().Add(30*time.Second))}, http.StatusTooManyRequests)
+	e.waitAudit("two_factor.verify.locked", "too_many_wrong_codes")
+	expire()
+	wrong(codeFailsBeforeLock)
+	if d := lockedFor(); d < 29*time.Minute || d > 2*codeLockFirst {
+		t.Fatalf("second lock %v, want 30 minutes", d)
+	}
+	// The admin's reset clears it.
+	e.expect("POST", "/api/admin/users/"+itoa(int64(id))+"/reset-2fa", admin, nil, http.StatusOK)
+	if codeLockedFor(id) != 0 {
+		t.Fatal("reset left the code lock")
+	}
+	// The right code clears the count.
+	secret, _, _ = e.enable(e.login("lou", "Lou-passw0rd").Token)
+	wrong(codeFailsBeforeLock - 1)
+	resetLoginGateOnly()
+	a = e.login("lou", "Lou-passw0rd")
+	e.expect("POST", "/api/auth/2fa/verify", "", map[string]string{"challenge": a.Challenge, "code": auth.TOTPCode(secret, time.Now().Add(30*time.Second))}, http.StatusOK)
+	wrong(1)
+	if codeLockedFor(id) != 0 {
+		t.Fatal("a right code didn't clear the count")
+	}
+}
+
+func resetLoginGateOnly() {
+	g := LoginGate()
+	g.mu.Lock()
+	g.attempts = map[string]*loginAttempt{}
+	g.mu.Unlock()
+}

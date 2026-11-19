@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -21,6 +22,59 @@ import (
 // and the recovery codes never go into audit or logs.
 
 const recoveryCodeCount = 10
+
+// Wrong codes in a row lock the account's code step, on top of the sign-in
+// lock (which ends after 5 minutes and lets guessing go on): after every
+// codeFailsBeforeLock wrong codes, codeLockFirst, doubling each time up to
+// codeLockMax. The right code or an admin's reset clears it. In memory (one
+// replica); a restart forgets it.
+const (
+	codeFailsBeforeLock = 10
+	codeLockFirst       = 15 * time.Minute
+	codeLockMax         = 24 * time.Hour
+)
+
+type codeLock struct {
+	fails, locks int
+	until        time.Time
+}
+
+var codeLocks = struct {
+	sync.Mutex
+	m map[int]*codeLock
+}{m: map[int]*codeLock{}}
+
+// codeLockedFor is how long the user's code step is still locked (0 = open).
+func codeLockedFor(userID int) time.Duration {
+	codeLocks.Lock()
+	defer codeLocks.Unlock()
+	if l := codeLocks.m[userID]; l != nil {
+		return max(time.Until(l.until), 0)
+	}
+	return 0
+}
+
+// codeFailed counts a wrong code; every codeFailsBeforeLock-th locks, twice as long as the last time.
+func codeFailed(userID int) {
+	codeLocks.Lock()
+	defer codeLocks.Unlock()
+	l := codeLocks.m[userID]
+	if l == nil {
+		l = &codeLock{}
+		codeLocks.m[userID] = l
+	}
+	if l.fails++; l.fails < codeFailsBeforeLock {
+		return
+	}
+	l.fails, l.locks = 0, l.locks+1
+	l.until = time.Now().Add(min(codeLockFirst<<min(l.locks-1, 10), codeLockMax))
+}
+
+func clearCodeLock(userID int) {
+	codeLocks.Lock()
+	delete(codeLocks.m, userID)
+	codeLocks.Unlock()
+}
 
 // authn is the sign-in check of every authenticated route: the session or API
 // key (auth.AuthMiddleware), then the two-factor enrollment gate.
@@ -156,6 +210,13 @@ func (s *Server) handleTwoFactorVerify(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, problem.RateLimited)
 		return
 	}
+	if wait := codeLockedFor(user.ID); wait > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
+		entry.Outcome, entry.Reason = audit.Locked, "too_many_wrong_codes"
+		s.auditEvent(r, entry)
+		writeError(w, http.StatusTooManyRequests, problem.RateLimited)
+		return
+	}
 	method, err := s.checkCode(r, user, code, true)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, problem.InternalError)
@@ -164,12 +225,14 @@ func (s *Server) handleTwoFactorVerify(w http.ResponseWriter, r *http.Request) {
 	if method == "" {
 		// The same counters as a wrong password: 5 per address, 20 per account.
 		LoginGate().recordFailure(gateKeys)
+		codeFailed(user.ID)
 		entry.Outcome, entry.Reason = audit.Failed, "invalid_code"
 		s.auditEvent(r, entry)
 		writeError(w, http.StatusUnauthorized, problem.TwoFactorInvalid)
 		return
 	}
 	auth.EndChallenge(challenge)
+	clearCodeLock(user.ID)
 	entry.Details = audit.D{"two_factor_method": method}
 	var extra map[string]any
 	if method == "recovery_code" {
@@ -363,6 +426,7 @@ func (s *Server) handleResetUserTwoFactor(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
+	clearCodeLock(id)
 	if err := s.store.RevokeAllForUser(r.Context(), id); err != nil {
 		slog.Warn("could not end sessions after two-factor reset", "user", user.Username, "error", err.Error())
 	}
