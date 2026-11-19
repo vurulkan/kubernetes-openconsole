@@ -682,6 +682,9 @@ func resetGlobalLimiters() {
 	g.mu.Lock()
 	g.attempts = map[string]*loginAttempt{}
 	g.mu.Unlock()
+	codeLocks.Lock()
+	codeLocks.m = map[int]*codeLock{}
+	codeLocks.Unlock()
 }
 
 // Two-factor calls: sign-in needed for the account ones; the code step needs

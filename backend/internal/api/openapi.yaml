@@ -194,7 +194,9 @@ paths:
         `{challenge, code}`: the challenge from `POST /api/auth/login` (5 minutes) and a code from
         the authenticator app or an unused recovery code. Answers like the login, plus
         `recoveryCodesLeft` when a recovery code was used. A wrong code counts as a failed sign-in
-        (`two_factor_invalid`, 401); an expired challenge is `two_factor_challenge_expired`.
+        (`two_factor_invalid`, 401); an expired challenge is `two_factor_challenge_expired`. After 10 wrong codes in a
+        row the account's code step is locked (429 with Retry-After): 15 minutes, twice as long each time, at most
+        24 hours; the right code or an admin's reset clears it.
       security: []
       x-openconsole-api-key: false
       responses:
