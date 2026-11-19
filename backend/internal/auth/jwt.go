@@ -17,6 +17,9 @@ type Claims struct {
 	// Idle is the inactivity timeout in seconds, so the browser can sign out
 	// an idle screen by its own clock; the server enforces it in session_tokens.
 	Idle int64 `json:"idle,omitempty"`
+	// Enroll: the two-factor policy requires the user to set it up first; until
+	// then this session reaches only the set-up and sign-out calls.
+	Enroll bool `json:"enroll,omitempty"`
 	// Cluster is the X-OpenConsole-Cluster value a WebSocket ticket carries
 	// from the request that asked for it (never part of a JWT).
 	Cluster string `json:"-"`
@@ -27,17 +30,18 @@ type Claims struct {
 // the session up in session_tokens and enforce revocation. jti may be empty
 // for backward compat (tokens signed before session tracking landed).
 func GenerateToken(secret []byte, userID int, username, jti string, ttl time.Duration) (string, error) {
-	return GenerateSessionToken(secret, userID, username, jti, ttl, 0)
+	return GenerateSessionToken(secret, userID, username, jti, ttl, 0, false)
 }
 
 // GenerateSessionToken is GenerateToken with the inactivity timeout in the
-// idle claim; ttl is the absolute limit.
-func GenerateSessionToken(secret []byte, userID int, username, jti string, ttl, idle time.Duration) (string, error) {
+// idle claim (and the enroll claim); ttl is the absolute limit.
+func GenerateSessionToken(secret []byte, userID int, username, jti string, ttl, idle time.Duration, enroll bool) (string, error) {
 	now := time.Now().UTC()
 	claims := Claims{
 		UserID:   userID,
 		Username: username,
 		Idle:     int64(idle / time.Second),
+		Enroll:   enroll,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ID:        jti,
 			IssuedAt:  jwt.NewNumericDate(now),

@@ -14,7 +14,7 @@ export const SessionSettingsSection: React.FC<{ apiKeysOn: boolean }> = ({ apiKe
   const [apiKeyMaxDays, setApiKeyMaxDays] = useState(0);
   const [apiKeyAllowNoExpiry, setApiKeyAllowNoExpiry] = useState(true);
   // The outcome of a save shows in the card whose Save was pressed.
-  const [result, setResult] = useState<{ card: 'session' | 'expiry'; ok: boolean; message: string } | null>(null);
+  const [result, setResult] = useState<{ card: Card; ok: boolean; message: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -31,9 +31,10 @@ export const SessionSettingsSection: React.FC<{ apiKeysOn: boolean }> = ({ apiKe
     void load();
   }, [load]);
 
-  const save = async (card: 'session' | 'expiry') => {
+  const save = async (card: Card) => {
     setResult(null);
     try {
+      // The two-factor policy (its own tab) is left out, so it keeps its value.
       await updateSession({ sessionMinutes, apiKeyMaxDays, apiKeyAllowNoExpiry });
     } catch (err) {
       setResult({ card, ok: false, message: (err as Error).message });
@@ -43,7 +44,7 @@ export const SessionSettingsSection: React.FC<{ apiKeysOn: boolean }> = ({ apiKe
     setResult({ card, ok: true, message: tr('admin.session.saved') });
   };
 
-  const outcome = (card: 'session' | 'expiry') =>
+  const outcome = (card: Card) =>
     result?.card === card && (
       <Alert severity={result.ok ? 'success' : 'error'} className="mt-3">
         {result.message}
@@ -51,7 +52,7 @@ export const SessionSettingsSection: React.FC<{ apiKeysOn: boolean }> = ({ apiKe
     );
 
   return (
-    <>
+    <div className="flex flex-col gap-5">
       <SectionCard title={tr('admin.sections.sessionSettings')} description={tr('admin.cards.sessionDesc')}>
         <Input
           label={tr('common.sessionLifetime')}
@@ -87,8 +88,10 @@ export const SessionSettingsSection: React.FC<{ apiKeysOn: boolean }> = ({ apiKe
           {outcome('expiry')}
         </SectionCard>
       )}
-    </>
+    </div>
   );
 };
+
+type Card = 'session' | 'expiry';
 
 export default SessionSettingsSection;

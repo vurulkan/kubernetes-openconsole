@@ -682,4 +682,22 @@ func resetGlobalLimiters() {
 	g.mu.Lock()
 	g.attempts = map[string]*loginAttempt{}
 	g.mu.Unlock()
+	codeLocks.Lock()
+	codeLocks.m = map[int]*codeLock{}
+	codeLocks.Unlock()
+}
+
+// Two-factor calls: sign-in needed for the account ones; the code step needs
+// a live challenge, never a session.
+func TestTwoFactorEndpointsAuth(t *testing.T) {
+	e := newTestEnv(t)
+	for _, c := range []struct{ method, path string }{
+		{"POST", "/api/me/2fa/setup"}, {"POST", "/api/me/2fa/confirm"},
+		{"POST", "/api/me/2fa/recovery-codes"}, {"DELETE", "/api/me/2fa"},
+		{"POST", "/api/admin/users/1/reset-2fa"},
+	} {
+		e.expect(c.method, c.path, "", map[string]any{}, http.StatusUnauthorized)
+	}
+	_, tok := e.user("ann", false)
+	e.expect("POST", "/api/auth/2fa/verify", tok, map[string]string{"challenge": tok, "code": "123456"}, http.StatusUnauthorized)
 }

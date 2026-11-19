@@ -65,6 +65,9 @@ type AzureIdentity struct {
 	Email    string
 	UPN      string
 	OID      string // Entra object id: the same person across renames
+	// AMR: how the person signed in ("pwd", "mfa", …); in a v2.0 token only
+	// with the optional claim amr.
+	AMR []string
 }
 
 func AzureExchangeCode(ctx context.Context, cfg AzureADConfig, code string) (AzureIdentity, error) {
@@ -144,7 +147,15 @@ func AzureExchangeCode(ctx context.Context, cfg AzureADConfig, code string) (Azu
 		return AzureIdentity{}, fmt.Errorf("no suitable username claim found")
 	}
 	oid, _ := claims["oid"].(string)
-	return AzureIdentity{Username: username, Email: strings.TrimSpace(email), UPN: strings.TrimSpace(upn), OID: strings.TrimSpace(oid)}, nil
+	var amr []string
+	if list, ok := claims["amr"].([]any); ok {
+		for _, v := range list {
+			if m, ok := v.(string); ok {
+				amr = append(amr, m)
+			}
+		}
+	}
+	return AzureIdentity{Username: username, Email: strings.TrimSpace(email), UPN: strings.TrimSpace(upn), OID: strings.TrimSpace(oid), AMR: amr}, nil
 }
 
 func TestAzureConnection(ctx context.Context, cfg AzureADConfig) error {

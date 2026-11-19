@@ -19,6 +19,31 @@ type User struct {
 	// APIAccessOverride replaces the role modes for this user's API keys
 	// (rbac.Access*); "" = by roles.
 	APIAccessOverride string `json:"apiAccessOverride"`
+	// TwoFactorEnabled: the user signs in with a TOTP code too (set up and
+	// confirmed; asked only while the policy isn't off).
+	TwoFactorEnabled bool `json:"twoFactorEnabled"`
+}
+
+// Two-factor policies (Admin → Session); TwoFactorOff is the default.
+const (
+	TwoFactorOff      = "off"
+	TwoFactorOptional = "optional"
+	TwoFactorAdmins   = "admins"
+	TwoFactorAll      = "all"
+)
+
+// TwoFactorOn: users may set up two-factor sign-in, and those who did are asked for a code.
+func TwoFactorOn(policy string) bool {
+	return policy == TwoFactorOptional || policy == TwoFactorAdmins || policy == TwoFactorAll
+}
+
+// TwoFactorRequired: the policy makes u set up two-factor sign-in. Azure AD
+// accounts never: Microsoft does their second factor.
+func TwoFactorRequired(policy string, u *User) bool {
+	if u.AuthSource == AuthSourceAzure {
+		return false
+	}
+	return policy == TwoFactorAll || (policy == TwoFactorAdmins && u.IsAdmin)
 }
 
 // Where a user authenticates.
@@ -87,6 +112,9 @@ type AzureADConfig struct {
 	ClientSecret       string `json:"clientSecret"`
 	RedirectURL        string `json:"redirectUrl"`
 	PasswordConfigured bool   `json:"passwordConfigured"`
+	// RequireMFA refuses a sign-in whose id_token doesn't say MFA was done
+	// (amr without "mfa").
+	RequireMFA bool `json:"requireMfa"`
 }
 
 type SessionSettings struct {
@@ -95,6 +123,8 @@ type SessionSettings struct {
 	// lifetime in days (0 = no limit) and whether "never expires" is allowed.
 	APIKeyMaxDays       int  `json:"apiKeyMaxDays"`
 	APIKeyAllowNoExpiry bool `json:"apiKeyAllowNoExpiry"`
+	// TwoFactorPolicy: off | optional | admins | all (models.TwoFactor*).
+	TwoFactorPolicy string `json:"twoFactorPolicy"`
 }
 
 type KubeCredentials struct {

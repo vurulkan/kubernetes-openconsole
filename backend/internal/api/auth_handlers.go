@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -128,10 +129,41 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	settings, err := s.store.GetSessionSettings(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
+		return
+	}
+	// Two-factor sign-in: the password alone starts no session, only the
+	// code step (and the login gate is cleared only once the code is right).
+	if models.TwoFactorOn(settings.TwoFactorPolicy) && user.TwoFactorEnabled {
+		writeJSON(w, http.StatusOK, map[string]string{"twoFactor": "verify", "challenge": auth.IssueChallenge(user.ID)})
+		return
+	}
+	s.finishLogin(w, r, user, gateKeys, audit.D{"login_method": method},
+		models.TwoFactorRequired(settings.TwoFactorPolicy, user) && !user.TwoFactorEnabled, nil)
+}
+
+// finishLogin starts the session of a completed sign-in (password, and the
+// code when asked). enroll: the policy requires two-factor sign-in the user
+// hasn't set up, so the session can only set it up. extra goes into the answer.
+func (s *Server) finishLogin(w http.ResponseWriter, r *http.Request, user *models.User, gateKeys []gateKey, login audit.D, enroll bool, extra map[string]any) {
 	_ = s.store.MarkLogin(r.Context(), user.ID)
-	s.recordLoginAudit(r, user.Username, audit.Success, "", audit.D{"login_method": method})
+	s.recordLoginAudit(r, user.Username, audit.Success, "", login)
 	LoginGate().recordSuccess(gateKeys)
-	s.issueTokenForUser(w, r, user)
+	token, err := s.newSession(r, user, enroll)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
+		return
+	}
+	out := map[string]any{"token": token, "user": user}
+	for k, v := range extra {
+		out[k] = v
+	}
+	if enroll {
+		out["twoFactor"] = "enroll"
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // ldapAutoProvision handles a sign-in by someone who has no account yet.
@@ -257,24 +289,6 @@ func logLDAPFailure(ctx context.Context, username string, err error) {
 		slog.String("error", err.Error()), slog.String("request_id", logpkg.RequestIDFrom(ctx)))
 }
 
-func (s *Server) issueTokenForUser(w http.ResponseWriter, r *http.Request, user *models.User) {
-	if user == nil || !user.IsActive {
-		writeError(w, http.StatusUnauthorized, problem.Unauthorized)
-		return
-	}
-
-	token, err := s.newSession(r, user)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, problem.InternalError)
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"token": token,
-		"user":  user,
-	})
-}
-
 // sessionMaxAge is how long a session lasts however active it is (or the
 // inactivity timeout, when an admin set that longer); then sign in again.
 const sessionMaxAge = 12 * time.Hour
@@ -283,7 +297,7 @@ const sessionMaxAge = 12 * time.Hour
 // after the inactivity timeout (Admin → session setting, minutes) without
 // activity, which TouchSession moves on, and at the latest after
 // sessionMaxAge (the JWT's own expiry).
-func (s *Server) newSession(r *http.Request, user *models.User) (string, error) {
+func (s *Server) newSession(r *http.Request, user *models.User, enroll bool) (string, error) {
 	settings, err := s.store.GetSessionSettings(r.Context())
 	if err != nil {
 		return "", err
@@ -293,7 +307,7 @@ func (s *Server) newSession(r *http.Request, user *models.User) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	token, err := auth.GenerateSessionToken(s.jwtKey, user.ID, user.Username, jti, max(sessionMaxAge, idle), idle)
+	token, err := auth.GenerateSessionToken(s.jwtKey, user.ID, user.Username, jti, max(sessionMaxAge, idle), idle, enroll)
 	if err != nil {
 		return "", err
 	}
@@ -424,6 +438,18 @@ func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 		writeErrorDetail(w, http.StatusForbidden, problem.SignInFailed, "this account can't sign in with this Microsoft account")
 		return
 	}
+	// Microsoft did the second factor, or the sign-in is refused (before any
+	// account is created). v2.0 tokens carry amr only when the app
+	// registration asks for the optional claim.
+	if cfg.RequireMFA && !slices.Contains(identity.AMR, "mfa") {
+		if len(identity.AMR) == 0 {
+			slog.Warn("azure ad sign-in refused: the id_token has no amr claim; add the optional claim amr (ID token) to the app registration",
+				slog.String("user", username), slog.String("request_id", logpkg.RequestIDFrom(r.Context())))
+		}
+		s.recordLoginAudit(r, username, audit.Denied, problem.AzureMFARequired, audit.D{"login_method": models.AuthSourceAzure})
+		http.Redirect(w, r, "/login?error="+problem.AzureMFARequired, http.StatusFound)
+		return
+	}
 	linkedBy := ""
 	user, err := s.store.GetUserByUsername(r.Context(), username)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -481,7 +507,7 @@ func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.store.MarkLogin(r.Context(), user.ID)
 
-	token, err := s.newSession(r, user)
+	token, err := s.newSession(r, user, false)
 	if err != nil {
 		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to start the session")
 		return
@@ -539,6 +565,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		out["apiKey"] = k
 	}
 	out["namespaces"] = rbac.New(perms).AllowedNamespaces(clusterIDFrom(r.Context()))
+	out["twoFactor"] = s.twoFactorStatus(r, user)
 	out["permissions"] = perms
 	writeJSON(w, http.StatusOK, out)
 }

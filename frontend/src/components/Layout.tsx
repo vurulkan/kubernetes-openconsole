@@ -88,6 +88,10 @@ const Layout: React.FC<Props> = ({ user, panel, panelTitle, liveEvents, children
     ...((user.authSource ?? 'local') === 'local'
       ? [{ key: 'password', label: t('nav.changePassword'), icon: LockKeyhole, path: '/change-password' }]
       : []),
+    // Two-factor authentication: local and LDAP accounts, while the policy isn't off.
+    ...(user.twoFactor && user.twoFactor.policy !== 'off' && user.authSource !== 'azure'
+      ? [{ key: 'twoFactor', label: t('twoFactor.menu'), icon: ShieldCheck, path: '/account/two-factor' }]
+      : []),
   ];
   const RAIL_LABELS: Record<RailItem['key'], string> = {
     overview: t('nav.overview'),

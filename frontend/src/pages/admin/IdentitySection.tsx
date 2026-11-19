@@ -248,6 +248,7 @@ export const AzureAdSection: React.FC = () => {
     clientSecret: '',
     redirectUrl: '',
     passwordConfigured: false,
+    requireMfa: false,
   });
   const [updateSecret, setUpdateSecret] = useState(false);
   const [testStatus, setTestStatus] = useState<TestStatus>(null);
@@ -262,6 +263,7 @@ export const AzureAdSection: React.FC = () => {
         clientSecret: '',
         redirectUrl: c.redirectUrl ?? '',
         passwordConfigured: c.passwordConfigured ?? false,
+        requireMfa: c.requireMfa ?? false,
       });
       setUpdateSecret(false);
     } catch {
@@ -328,6 +330,10 @@ export const AzureAdSection: React.FC = () => {
           value={secretKept ? tr('common.configured') : config.clientSecret}
           onChange={(e) => setConfig({ ...config, clientSecret: e.target.value })}
         />
+        <div className="sm:col-span-2">
+          <Checkbox checked={config.requireMfa} onChange={(v) => setConfig({ ...config, requireMfa: v })} label={tr('twoFactor.admin.azureMfa')} />
+          <p className="ml-6 mt-1 text-xs text-slate-500 dark:text-slate-400">{tr('twoFactor.admin.azureMfaHelp')}</p>
+        </div>
       </div>
       <div className="mt-4 flex gap-2">
         <Button variant="primary" size="sm" onClick={save}>

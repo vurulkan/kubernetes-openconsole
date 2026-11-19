@@ -356,6 +356,7 @@ describe('AdminPage Azure AD', () => {
       clientSecret: '',
       redirectUrl: 'https://oc/cb',
       passwordConfigured: true,
+      requireMfa: false,
     });
 
     await waitFor(() => expect(sent(calls, 'GET', '/api/admin/azure-ad').length).toBeGreaterThan(1));
@@ -384,6 +385,26 @@ describe('AdminPage session settings', () => {
     // A save that worked says so, once, in the card that was saved (2.23.1; before, nothing).
     expect(await screen.findByRole('status')).toHaveTextContent('Saved.');
     expect(screen.getAllByRole('status')).toHaveLength(1);
+  });
+
+  it('asks before requiring two-factor authentication, saying how many must set it up', async () => {
+    const calls = mockFetch([
+      ['PUT /api/admin/session', () => ({ status: 'ok' })],
+      ['GET /api/admin/session', () => ({ sessionMinutes: 60, apiKeyMaxDays: 0, apiKeyAllowNoExpiry: true, twoFactorPolicy: 'off', twoFactorUnenrolled: { admins: 2, all: 7 } })],
+      ['GET /api/features', () => ({ features: {} })],
+    ]);
+    renderAdmin('two-factor');
+    // Without the app's ConfirmProvider, confirm() falls back to window.confirm with the message.
+    const asked: string[] = [];
+    vi.stubGlobal('confirm', (m: string) => (asked.push(m), true));
+    const all = await screen.findByRole('radio', { name: /Required for everyone/ });
+    await waitFor(() => expect(screen.getByRole('radio', { name: /^Off/ })).toBeChecked());
+    fireEvent.click(all);
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(asked).toEqual(['7 accounts don\'t have it yet: they will have to set it up on their next sign-in.']));
+    await waitFor(() => expect(sent(calls, 'PUT', '/api/admin/session')).toHaveLength(1));
+    // Only the policy: the session settings keep their values.
+    expect(sent(calls, 'PUT', '/api/admin/session')[0].body).toEqual({ twoFactorPolicy: 'all' });
   });
 
   it('says why a save failed, in the card whose Save was pressed', async () => {

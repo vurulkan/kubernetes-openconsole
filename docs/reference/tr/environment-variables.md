@@ -74,6 +74,7 @@ Okunamayan ya da alt sınırın altında kalan bir değerin yerine varsayılan k
 
 | Değişken | Varsayılan | Açıklama |
 |---|---|---|
+| `TWO_FACTOR_RESET_USER` | yok | Last resort for an account locked out of two-factor sign-in (lost phone and recovery codes, and no other admin): on start, the named account's two-factor sign-in and recovery codes are removed and its sessions end (logged as a warning, audited as `two_factor.reset` by `system`). It does this on every start while set: remove it afterwards. |
 | `AZURE_AD_AUTHORITY` | `https://login.microsoftonline.com` | Microsoft Entra ID sign-in host for national clouds, e.g. `https://login.microsoftonline.us` or `https://login.chinacloudapi.cn`. |
 
 ## Oturum kaydı {#session-recording}

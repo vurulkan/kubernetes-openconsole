@@ -213,6 +213,7 @@ var auditEventTypes = map[string]string{
 	"delete": "deletion", "evict": "deletion", "purge": "deletion", "revoke": "deletion",
 	"login":      "start",
 	"regenerate": "change", "use": "access",
+	"enable": "change", "disable": "change", "reset": "change", "verify": "info",
 }
 
 // AuditEventType returns the ECS event.type for an audit verb; a shell

@@ -175,6 +175,10 @@ func TestAPIKeyForbiddenEndpoints(t *testing.T) {
 		{"POST", "/api/views"},
 		{"PUT", "/api/views/1"},
 		{"DELETE", "/api/views/1"},
+		{"POST", "/api/me/2fa/setup"},
+		{"POST", "/api/me/2fa/confirm"},
+		{"POST", "/api/me/2fa/recovery-codes"},
+		{"DELETE", "/api/me/2fa"},
 	} {
 		// The body names the reason, as the API description says.
 		if out := e.expect(c.method, c.path, key, map[string]any{}, http.StatusForbidden); !strings.Contains(out, `"api_key_not_allowed"`) {
@@ -185,7 +189,23 @@ func TestAPIKeyForbiddenEndpoints(t *testing.T) {
 	e.waitAudit("user.change_password.denied", "api_key_not_allowed")
 	e.waitAudit("cluster.select.denied", "api_key_not_allowed")
 	e.waitAudit("saved_view.create.denied", "api_key_not_allowed")
+	e.waitAudit("two_factor.enable.denied", "api_key_not_allowed")
 	e.expect("GET", "/api/namespaces/team-a/pods", key, nil, http.StatusOK) // still alive
+}
+
+// Two-factor sign-in is for people: a policy that requires it leaves the keys
+// of an account that hasn't set it up working.
+func TestAPIKeyUnaffectedByTwoFactor(t *testing.T) {
+	e := newTestEnv(t)
+	_, root := e.user("root", true)
+	bobID, bob := e.user("bob", false)
+	e.grant(bobID, [4]any{0, "team-a", "pods", "list"})
+	key, _ := e.createKey(bob, keyBody("k", []string{"team-a"}, "pods:list"))
+	e.setPolicy(root, "all")
+	e.expect("GET", "/api/namespaces/team-a/pods", key, nil, http.StatusOK)
+	if out := e.expect("GET", "/api/auth/me", key, nil, http.StatusOK); !strings.Contains(out, `"enroll":false`) {
+		t.Fatal(out)
+	}
 }
 
 // Every /api/admin endpoint refuses a key without the admin scope, even an

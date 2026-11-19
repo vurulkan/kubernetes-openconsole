@@ -200,7 +200,18 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
-	writeJSON(w, http.StatusOK, settings)
+	// How many accounts each required policy would send to the set-up dialog.
+	unenrolled := map[string]int{}
+	for _, p := range []string{models.TwoFactorAdmins, models.TwoFactorAll} {
+		if unenrolled[p], err = s.store.CountWithoutTwoFactor(r.Context(), p); err != nil {
+			writeError(w, http.StatusInternalServerError, problem.InternalError)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, struct {
+		models.SessionSettings
+		TwoFactorUnenrolled map[string]int `json:"twoFactorUnenrolled"`
+	}{settings, unenrolled})
 }
 
 func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
@@ -223,11 +234,15 @@ func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "the longest API key lifetime is 0 (no limit) to 3650 days")
 		return
 	}
+	if !validTwoFactorPolicy(request.TwoFactorPolicy) {
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "twoFactorPolicy must be off, optional, admins or all")
+		return
+	}
 	if err := s.store.UpdateSessionSettings(r.Context(), request); err != nil {
 		writeError(w, http.StatusInternalServerError, problem.InternalError)
 		return
 	}
-	noteFor(r).Details = audit.D{"summary": fmt.Sprintf("session_minutes=%d api_key_max_days=%d api_key_allow_no_expiry=%t",
-		request.SessionMinutes, request.APIKeyMaxDays, request.APIKeyAllowNoExpiry)}
+	noteFor(r).Details = audit.D{"summary": fmt.Sprintf("session_minutes=%d api_key_max_days=%d api_key_allow_no_expiry=%t two_factor_policy=%s",
+		request.SessionMinutes, request.APIKeyMaxDays, request.APIKeyAllowNoExpiry, request.TwoFactorPolicy)}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }

@@ -33,6 +33,7 @@ var encryptedColumns = []struct{ table, column string }{
 	{"kube_credentials", "kubeconfig_enc"}, {"kube_credentials", "token_enc"}, {"kube_credentials", "ca_cert_enc"},
 	{"ldap_config", "bind_password_enc"},
 	{"azure_ad_config", "client_secret_enc"},
+	{"users", "totp_secret_enc"},
 }
 
 // An external key's values are "v1:<key id>:<base64>"; values without the

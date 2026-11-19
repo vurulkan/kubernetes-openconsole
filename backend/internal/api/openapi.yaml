@@ -132,7 +132,13 @@ components:
             - `sign_in_failed`: The external sign-in (Azure AD) failed or doesn't match this account.
             - `recording_unavailable`: The shell can't be recorded right now, and this session must be; try again later.
             - `internal_error`: The server failed; the request id in the server log has the cause.
-          enum: [unauthorized, api_key_expired, api_key_revoked, password_change_required, forbidden, admin_only, feature_disabled, api_key_not_allowed, api_access_policy, api_access_off, backup_download_disabled, rate_limited, too_many_sessions, not_found, method_not_allowed, invalid_id, invalid_body, invalid_input, body_too_large, conflict, wrong_password, weak_password, password_unchanged, cannot_delete_self, kubeconfig_unsupported, cluster_invalid, cluster_forbidden, cluster_timeout, cluster_unreachable, cluster_error, not_connected, pod_not_found, container_not_found, not_ready, previous_unavailable, unavailable, exec_failed, connection_failed, not_configured, sign_in_failed, recording_unavailable, internal_error]
+            - `two_factor_invalid`: The two-factor code (or recovery code) is wrong, or was used already.
+            - `two_factor_challenge_expired`: The sign-in's code step expired (5 minutes) or is unknown; enter the password again.
+            - `two_factor_enrollment_required`: The account must set up two-factor sign-in before it can do anything else.
+            - `two_factor_required`: The two-factor policy requires two-factor sign-in for this account, so it can't be turned off.
+            - `two_factor_off`: Two-factor sign-in is switched off on this server (Admin → Session), or not set up for this account.
+            - `azure_mfa_required`: The Microsoft sign-in didn't include multi-factor authentication (no `mfa` in the token's `amr` claim), and the administrator requires it.
+          enum: [unauthorized, api_key_expired, api_key_revoked, password_change_required, forbidden, admin_only, feature_disabled, api_key_not_allowed, api_access_policy, api_access_off, backup_download_disabled, rate_limited, too_many_sessions, not_found, method_not_allowed, invalid_id, invalid_body, invalid_input, body_too_large, conflict, wrong_password, weak_password, password_unchanged, cannot_delete_self, kubeconfig_unsupported, cluster_invalid, cluster_forbidden, cluster_timeout, cluster_unreachable, cluster_error, not_connected, pod_not_found, container_not_found, not_ready, previous_unavailable, unavailable, exec_failed, connection_failed, not_configured, sign_in_failed, recording_unavailable, internal_error, two_factor_invalid, two_factor_challenge_expired, two_factor_enrollment_required, two_factor_required, two_factor_off, azure_mfa_required]
   responses:
     list:
       description: A Kubernetes list.
@@ -172,9 +178,31 @@ paths:
     post:
       tags: [Account]
       summary: Sign in with a user name and password (web)
+      description: >-
+        Answers `{token, user}`. With two-factor sign-in on for the account, it answers
+        `{twoFactor: verify, challenge}` instead: send the code to `POST /api/auth/2fa/verify`.
+        `twoFactor: enroll` next to the token: the policy requires two-factor sign-in the account
+        hasn't set up, and the session can only set it up (`/api/me/2fa/setup`, `/confirm`).
       security: []
       x-openconsole-api-key: false
       responses: {"200": {$ref: '#/components/responses/ok'}}
+  /api/auth/2fa/verify:
+    post:
+      tags: [Account]
+      summary: The code step of a sign-in (web)
+      description: >-
+        `{challenge, code}`: the challenge from `POST /api/auth/login` (5 minutes) and a code from
+        the authenticator app or an unused recovery code. Answers like the login, plus
+        `recoveryCodesLeft` when a recovery code was used. A wrong code counts as a failed sign-in
+        (`two_factor_invalid`, 401); an expired challenge is `two_factor_challenge_expired`. After 10 wrong codes in a
+        row the account's code step is locked (429 with Retry-After): 15 minutes, twice as long each time, at most
+        24 hours; the right code or an admin's reset clears it.
+      security: []
+      x-openconsole-api-key: false
+      responses:
+        "200": {$ref: '#/components/responses/ok'}
+        "401": {$ref: '#/components/responses/error'}
+        "429": {$ref: '#/components/responses/error'}
   /api/auth/providers:
     get:
       tags: [Account]
@@ -211,6 +239,7 @@ paths:
                 apiKey: {id: 3, name: claude-dev, prefix: oc_ab12cd, clusters: [0], allNamespaces: false, namespaces: [ci-dev], grants: ["pods:list", "pods:get", "pods:logs"], expiresAt: "2026-12-12T00:00:00Z"}
                 namespaces: [ci-dev]
                 permissions: [{clusterId: 0, namespace: ci-dev, resource: pods, action: list}]
+                twoFactor: {policy: optional, enabled: false, required: false, enroll: false}
   /api/auth/change-password:
     post:
       tags: [Account]
@@ -313,6 +342,34 @@ paths:
       summary: Delete a saved view (web)
       x-openconsole-api-key: false
       responses: {"200": {$ref: '#/components/responses/ok'}}
+  /api/me/2fa/setup:
+    post:
+      tags: [Account]
+      summary: Start setting up two-factor sign-in (web)
+      description: A new secret, not on until confirmed — `{secret, uri, qr}` (otpauth URI, QR code as a PNG data URL).
+      x-openconsole-api-key: false
+      responses: {"200": {$ref: '#/components/responses/ok'}, "409": {$ref: '#/components/responses/error'}}
+  /api/me/2fa/confirm:
+    post:
+      tags: [Account]
+      summary: Turn two-factor sign-in on with a code from the app (web)
+      description: '`{code}`. Answers `{recoveryCodes, token, user}`: ten recovery codes, shown only now, and a new session (every other session of the account ends).'
+      x-openconsole-api-key: false
+      responses: {"200": {$ref: '#/components/responses/ok'}, "400": {$ref: '#/components/responses/error'}}
+  /api/me/2fa/recovery-codes:
+    post:
+      tags: [Account]
+      summary: Replace your recovery codes (web)
+      description: '`{code}` from the app. Answers `{recoveryCodes}`; the old ones stop working.'
+      x-openconsole-api-key: false
+      responses: {"200": {$ref: '#/components/responses/ok'}, "400": {$ref: '#/components/responses/error'}}
+  /api/me/2fa:
+    delete:
+      tags: [Account]
+      summary: Turn two-factor sign-in off (web)
+      description: '`{code}` from the app or a recovery code. Refused with `two_factor_required` when the policy requires it for the account.'
+      x-openconsole-api-key: false
+      responses: {"200": {$ref: '#/components/responses/ok'}, "403": {$ref: '#/components/responses/error'}}
   /api/me/api-keys:
     get:
       tags: [Account]
@@ -909,6 +966,9 @@ paths:
   /api/admin/users/{id}/reset-password:
     parameters: [{$ref: '#/components/parameters/id'}]
     post: {tags: [Admin], x-openconsole-admin: true, summary: Reset a local user's password, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/users/{id}/reset-2fa:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    post: {tags: [Admin], x-openconsole-admin: true, summary: "Remove a user's two-factor sign-in and recovery codes, and sign them out", responses: {"200": {$ref: '#/components/responses/ok'}}}
   /api/admin/users/{id}/revoke-sessions:
     parameters: [{$ref: '#/components/parameters/id'}]
     post: {tags: [Admin], x-openconsole-admin: true, summary: Sign a user out everywhere, responses: {"200": {$ref: '#/components/responses/ok'}}}
@@ -967,8 +1027,8 @@ paths:
   /api/admin/azure-ad/test:
     post: {tags: [Admin], x-openconsole-admin: true, summary: Test the Azure AD settings, responses: {"200": {$ref: '#/components/responses/ok'}}}
   /api/admin/session:
-    get: {tags: [Admin], x-openconsole-admin: true, summary: Session and API key expiry settings, responses: {"200": {$ref: '#/components/responses/ok'}}}
-    put: {tags: [Admin], x-openconsole-admin: true, summary: Save session and API key expiry settings, responses: {"200": {$ref: '#/components/responses/ok'}}}
+    get: {tags: [Admin], x-openconsole-admin: true, summary: 'Session, API key expiry and two-factor settings', description: "`twoFactorPolicy`: off, optional, admins or all; `twoFactorUnenrolled`: per required policy, how many accounts would have to set it up.", responses: {"200": {$ref: '#/components/responses/ok'}}}
+    put: {tags: [Admin], x-openconsole-admin: true, summary: 'Save session, API key expiry and two-factor settings', responses: {"200": {$ref: '#/components/responses/ok'}}}
   /api/admin/sessions:
     get: {tags: [Admin], x-openconsole-admin: true, summary: Web sessions, responses: {"200": {$ref: '#/components/responses/list'}}}
   /api/admin/sessions/{id}:

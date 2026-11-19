@@ -60,6 +60,13 @@ const (
 	SignInFailed           = "sign_in_failed"
 	RecordingUnavailable   = "recording_unavailable"
 	InternalError          = "internal_error"
+
+	TwoFactorInvalid            = "two_factor_invalid"
+	TwoFactorChallengeExpired   = "two_factor_challenge_expired"
+	TwoFactorEnrollmentRequired = "two_factor_enrollment_required"
+	TwoFactorRequired           = "two_factor_required"
+	TwoFactorOff                = "two_factor_off"
+	AzureMFARequired            = "azure_mfa_required"
 )
 
 // Code is one reason code with what it means, for the API description.
@@ -112,6 +119,12 @@ var Codes = []Code{
 	{SignInFailed, "The external sign-in (Azure AD) failed or doesn't match this account."},
 	{RecordingUnavailable, "The shell can't be recorded right now, and this session must be; try again later."},
 	{InternalError, "The server failed; the request id in the server log has the cause."},
+	{TwoFactorInvalid, "The two-factor code (or recovery code) is wrong, or was used already."},
+	{TwoFactorChallengeExpired, "The sign-in's code step expired (5 minutes) or is unknown; enter the password again."},
+	{TwoFactorEnrollmentRequired, "The account must set up two-factor sign-in before it can do anything else."},
+	{TwoFactorRequired, "The two-factor policy requires two-factor sign-in for this account, so it can't be turned off."},
+	{TwoFactorOff, "Two-factor sign-in is switched off on this server (Admin → Session), or not set up for this account."},
+	{AzureMFARequired, "The Microsoft sign-in didn't include multi-factor authentication (no `mfa` in the token's `amr` claim), and the administrator requires it."},
 }
 
 // Known reports whether code is in Codes.

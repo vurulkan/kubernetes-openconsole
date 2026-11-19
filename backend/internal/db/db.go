@@ -371,6 +371,15 @@ func migrateTx(ctx context.Context, conn *sql.Tx) error {
 			action TEXT NOT NULL
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_api_key_permissions_key ON api_key_permissions (key_id)`,
+		// 2.24.0 (M30): one-time recovery codes of two-factor sign-in, SHA-256
+		// of the code (never the code).
+		`CREATE TABLE IF NOT EXISTS recovery_codes (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+			code_hash TEXT NOT NULL,
+			used_at DATETIME NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_recovery_codes_user ON recovery_codes (user_id)`,
 	}
 
 	for _, stmt := range stmts {
@@ -437,6 +446,14 @@ func migrateTx(ctx context.Context, conn *sql.Tx) error {
 		`ALTER TABLE users ADD COLUMN azure_oid TEXT NOT NULL DEFAULT ''`,
 		// 2.23.1 (M24): CA (PEM) the LDAP server's certificate is checked against.
 		`ALTER TABLE ldap_config ADD COLUMN ca_cert TEXT NOT NULL DEFAULT ''`,
+		// 2.24.0 (M30): two-factor sign-in. The TOTP secret (encrypted); on
+		// once confirmed (totp_enabled_at); the last time step accepted, so a
+		// code works once. Policy off by default: an upgrade changes nothing.
+		`ALTER TABLE users ADD COLUMN totp_secret_enc TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN totp_enabled_at DATETIME NULL`,
+		`ALTER TABLE users ADD COLUMN totp_last_step INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE session_settings ADD COLUMN two_factor_policy TEXT NOT NULL DEFAULT 'off'`,
+		`ALTER TABLE azure_ad_config ADD COLUMN require_mfa INTEGER NOT NULL DEFAULT 0`,
 	}
 	for _, stmt := range alterStatements {
 		if _, err := conn.ExecContext(ctx, stmt); err != nil && !isDuplicateColumn(err) {
@@ -568,4 +585,7 @@ var steps = []func(context.Context, *sql.Tx) error{
 		}
 		return nil
 	},
+	// 2.24.0: nothing to change by hand (two-factor columns are added above), but a
+	// new user_version makes the upgrade copy the database first (backupBeforeUpgrade).
+	func(context.Context, *sql.Tx) error { return nil },
 }
