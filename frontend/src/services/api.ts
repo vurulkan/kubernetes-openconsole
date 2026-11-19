@@ -905,7 +905,8 @@ export const importLdapUsers = (usernames: string[], groupIds: number[] = []) =>
 
 export const getSession = () => apiRequest<SessionSettings>('/api/admin/session');
 
-export const updateSession = (payload: SessionSettings) =>
+/** Fields left out keep their value. */
+export const updateSession = (payload: Partial<SessionSettings>) =>
   apiRequest('/api/admin/session', {
     method: 'PUT',
     body: JSON.stringify(payload)

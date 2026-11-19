@@ -11,6 +11,7 @@ import { GroupsTab } from './admin/GroupsTab';
 import { RolesTab } from './admin/RolesTab';
 import { LdapSection, AzureAdSection } from './admin/IdentitySection';
 import { SessionSettingsSection } from './admin/SessionSettingsSection';
+import { TwoFactorSection } from './admin/TwoFactorSection';
 import { ClustersSection } from './admin/ClustersSection';
 import { CustomizationSection } from './admin/CustomizationSection';
 import { AuditSection, emptyAuditFilters, type AuditFilters } from './admin/AuditSection';
@@ -28,6 +29,7 @@ import {
   Layers,
   Settings,
   ShieldCheck,
+  Smartphone,
   UserPlus,
   Users as UsersIcon,
   Video,
@@ -45,6 +47,7 @@ const ADMIN_TABS: Array<{
   { value: 'roles', icon: ShieldCheck },
   { value: 'ldap', icon: UserPlus },
   { value: 'azure-ad', icon: KeyRound },
+  { value: 'two-factor', icon: Smartphone },
   { value: 'session', icon: Clock },
   { value: 'clusters', icon: Boxes },
   { value: 'customization', icon: ImageIcon },
@@ -59,7 +62,7 @@ const ADMIN_TABS: Array<{
 // 1:1 so a tiny lookup keeps the dictionary tidy.
 const TAB_I18N_KEY: Record<string, string> = {
   users: 'users', groups: 'groups', roles: 'roles',
-  ldap: 'ldap', 'azure-ad': 'azure', session: 'session',
+  ldap: 'ldap', 'azure-ad': 'azure', 'two-factor': 'twoFactor', session: 'session',
   clusters: 'clusters', customization: 'customization',
   audit: 'audit', sessions: 'sessions', recordings: 'recordings', 'api-keys': 'apiKeys',
   backups: 'backups',
@@ -210,6 +213,8 @@ const AdminPage: React.FC<{ user: User }> = ({ user }) => {
           {tab === 'ldap' && <LdapSection onUsersAdded={setNewUsernames} onError={setError} />}
 
           {tab === 'azure-ad' && <AzureAdSection />}
+
+          {tab === 'two-factor' && <TwoFactorSection />}
 
           {tab === 'session' && <SessionSettingsSection apiKeysOn={apiKeysOn} />}
 

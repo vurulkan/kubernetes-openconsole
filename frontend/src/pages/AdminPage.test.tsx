@@ -381,7 +381,7 @@ describe('AdminPage session settings', () => {
     fireEvent.change(minutes, { target: { value: '30' } });
     fireEvent.click(screen.getAllByRole('button', { name: 'Save' })[0]);
     await waitFor(() => expect(sent(calls, 'PUT', '/api/admin/session')).toHaveLength(1));
-    expect(sent(calls, 'PUT', '/api/admin/session')[0].body).toEqual({ sessionMinutes: 30, apiKeyMaxDays: 90, apiKeyAllowNoExpiry: false, twoFactorPolicy: 'off' });
+    expect(sent(calls, 'PUT', '/api/admin/session')[0].body).toEqual({ sessionMinutes: 30, apiKeyMaxDays: 90, apiKeyAllowNoExpiry: false });
     // A save that worked says so, once, in the card that was saved (2.23.1; before, nothing).
     expect(await screen.findByRole('status')).toHaveTextContent('Saved.');
     expect(screen.getAllByRole('status')).toHaveLength(1);
@@ -393,18 +393,18 @@ describe('AdminPage session settings', () => {
       ['GET /api/admin/session', () => ({ sessionMinutes: 60, apiKeyMaxDays: 0, apiKeyAllowNoExpiry: true, twoFactorPolicy: 'off', twoFactorUnenrolled: { admins: 2, all: 7 } })],
       ['GET /api/features', () => ({ features: {} })],
     ]);
-    renderAdmin('session');
+    renderAdmin('two-factor');
     // Without the app's ConfirmProvider, confirm() falls back to window.confirm with the message.
     const asked: string[] = [];
     vi.stubGlobal('confirm', (m: string) => (asked.push(m), true));
     const all = await screen.findByRole('radio', { name: /Required for everyone/ });
     await waitFor(() => expect(screen.getByRole('radio', { name: /^Off/ })).toBeChecked());
     fireEvent.click(all);
-    const saves = screen.getAllByRole('button', { name: 'Save' });
-    fireEvent.click(saves[saves.length - 1]);
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(asked).toEqual(['7 accounts don\'t have it yet: they will have to set it up on their next sign-in.']));
     await waitFor(() => expect(sent(calls, 'PUT', '/api/admin/session')).toHaveLength(1));
-    expect(sent(calls, 'PUT', '/api/admin/session')[0].body).toMatchObject({ twoFactorPolicy: 'all' });
+    // Only the policy: the session settings keep their values.
+    expect(sent(calls, 'PUT', '/api/admin/session')[0].body).toEqual({ twoFactorPolicy: 'all' });
   });
 
   it('says why a save failed, in the card whose Save was pressed', async () => {

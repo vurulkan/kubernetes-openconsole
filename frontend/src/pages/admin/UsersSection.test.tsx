@@ -111,4 +111,22 @@ describe('UsersSection', () => {
     expect(rows[0]).toHaveTextContent('jane@example.com');
     expect(within(rows[0]).getByText('New')).toBeInTheDocument();
   });
+
+  it('shows who has 2FA and resets it after confirming', async () => {
+    const asked: string[] = [];
+    vi.stubGlobal('confirm', (m: string) => (asked.push(m), true));
+    const calls = mockFetch([['POST /api/admin/users/2/reset-2fa', () => ({ status: 'reset' })]]);
+    let reloaded = false;
+    const withTwoFactor = users.map((u) => (u.id === 2 ? { ...u, twoFactorEnabled: true } : u));
+    renderSection({ users: withTwoFactor, onReload: () => (reloaded = true) });
+    const row = (name: string) => screen.getByText(name).closest('tr') as HTMLElement;
+    expect(within(row('jdoe')).getByText('On')).toBeInTheDocument();
+    expect(within(row('admin')).getByText('Off')).toBeInTheDocument();
+    expect(within(row('admin')).queryByTitle('Reset 2FA')).toBeNull();
+    fireEvent.click(within(row('jdoe')).getByTitle('Reset 2FA'));
+    expect(await screen.findByText('Two-factor authentication of jdoe was reset.')).toBeInTheDocument();
+    expect(asked[0]).toContain('Removes the account');
+    expect(calls.filter((c) => c.method === 'POST').map((c) => c.url)).toEqual(['/api/admin/users/2/reset-2fa']);
+    expect(reloaded).toBe(true);
+  });
 });
