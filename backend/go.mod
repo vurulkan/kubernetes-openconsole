@@ -24,6 +24,7 @@ require (
 	k8s.io/client-go v0.37.2
 	k8s.io/klog/v2 v2.140.0
 	modernc.org/sqlite v1.62.0
+	rsc.io/qr v0.2.0
 	sigs.k8s.io/yaml v1.6.0
 )
 

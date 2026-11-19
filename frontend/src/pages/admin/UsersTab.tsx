@@ -84,6 +84,7 @@ export const UsersTab: React.FC<{
         onImportLdap={ldapEnabled ? () => setShowLdapImport(true) : undefined}
         newUsernames={newUsernames}
         azureEnabled={azureEnabled}
+        onReload={() => void refresh()}
         onEdit={(u) =>
           setEditingUser({
             id: u.id,

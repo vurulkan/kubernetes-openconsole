@@ -11,6 +11,8 @@ const OverviewPage = lazy(() => import('./pages/OverviewPage'));
 const NodesPage = lazy(() => import('./pages/NodesPage'));
 const ApiKeysPage = lazy(() => import('./pages/ApiKeysPage'));
 const ApiKeyFormPage = lazy(() => import('./pages/apikeys/ApiKeyFormPage'));
+const TwoFactorPage = lazy(() => import('./pages/TwoFactorPage'));
+const TwoFactorEnroll = lazy(() => import('./pages/account/TwoFactorEnroll'));
 import CommandPalette from './components/CommandPalette';
 import ShortcutsHelp from './components/ShortcutsHelp';
 import { ConfirmProvider } from './components/ConfirmDialog';
@@ -29,7 +31,7 @@ const App: React.FC = () => {
   const refreshUser = async () => {
     try {
       const data = await getMe();
-      setUser(data.user);
+      setUser({ ...data.user, twoFactor: data.twoFactor });
     } catch (error) {
       setUser(null);
     } finally {
@@ -82,12 +84,15 @@ const App: React.FC = () => {
     };
   }, [user]);
 
+  // A session that must set up two-factor authentication reaches nothing else.
+  const enroll = Boolean(user?.twoFactor?.enroll);
+
   useEffect(() => {
-    if (!user) return;
+    if (!user || enroll) return;
     listNamespaces(true)
       .then((r) => setNamespaces(r.namespaces ?? []))
       .catch(() => setNamespaces([]));
-  }, [user]);
+  }, [user, enroll]);
 
   const pageLoading = (
     <div className="flex min-h-screen items-center justify-center">
@@ -95,6 +100,14 @@ const App: React.FC = () => {
     </div>
   );
   if (loading) return pageLoading;
+  // The password change comes first (it signs out); then the blocking set-up.
+  if (user && enroll && !user.mustChangePassword) {
+    return (
+      <Suspense fallback={pageLoading}>
+        <TwoFactorEnroll onDone={() => void refreshUser()} />
+      </Suspense>
+    );
+  }
 
   return (
     <ConfirmProvider>
@@ -123,6 +136,7 @@ const App: React.FC = () => {
         />
         <Route path="/account/api-keys" element={user ? <ApiKeysPage user={user} /> : <Navigate to="/login" />} />
         <Route path="/account/api-keys/:id" element={user ? <ApiKeyFormPage user={user} /> : <Navigate to="/login" />} />
+        <Route path="/account/two-factor" element={user ? <TwoFactorPage user={user} onChanged={refreshUser} /> : <Navigate to="/login" />} />
       </Routes>
       </Suspense>
       {user && <CommandPalette user={user} namespaces={namespaces} />}

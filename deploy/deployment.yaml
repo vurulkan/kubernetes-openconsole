@@ -161,6 +161,13 @@ spec:
             # - name: ENCRYPTION_KEY_FILE
             #   value: /etc/openconsole/key/key
 
+            # TWO_FACTOR_RESET_USER: last resort for an admin locked out of
+            # two-factor sign-in (phone and recovery codes lost, no other
+            # admin). On start it removes that account's two-factor sign-in;
+            # it does so on every start while set, so remove it afterwards.
+            # - name: TWO_FACTOR_RESET_USER
+            #   value: admin
+
             # ── Operational guardrails ───────────────────────────────────────────
             # MAX_REPLICAS: upper bound the Scale endpoint accepts for
             # Deployment / StatefulSet scaling, per call. Guards against a slip

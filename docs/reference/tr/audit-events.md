@@ -122,13 +122,18 @@ Aksiyon `<resource type>.<verb>` biçimindedir. Handler'ların kodundan okunur; 
 | `statefulset.get` | `success`, `denied` |
 | `statefulset.list` | `success`, `denied` |
 | `statefulset.scale` | `success`, `denied`, `failed`, `rate_limited` |
+| `two_factor.disable` | `success`, `denied`, `failed` |
+| `two_factor.enable` | `success`, `denied`, `failed` |
+| `two_factor.regenerate` | `success`, `denied`, `failed` |
+| `two_factor.reset` | `success`, `denied`, `failed` |
+| `two_factor.verify` | `success`, `failed`, `locked` |
 | `user.change_password` | `success`, `denied` |
 | `user.create` | `success`, `denied`, `failed` |
 | `user.delete` | `success`, `denied`, `failed` |
 | `user.export` | `success` |
 | `user.get` | `success`, `failed` |
 | `user.import` | `success` |
-| `user.login` | `success`, `failed`, `locked` |
+| `user.login` | `success`, `denied`, `failed`, `locked` |
 | `user.reset_password` | `success`, `denied`, `failed` |
 | `user.update` | `success`, `denied`, `failed` |
 
@@ -163,8 +168,12 @@ Aksiyon `<resource type>.<verb>` biçimindedir. Handler'ların kodundan okunur; 
 | `evict` | deleted a recording to stay within the disk quota |
 | `purge` | deleted recordings past their retention |
 | `view_overview` | opened the admin overview |
-| `regenerate` | replaced an API key's secret |
+| `regenerate` | replaced an API key's secret, or one's own two-factor recovery codes |
 | `use` | presented an API key, or worked on a cluster named per request (`X-OpenConsole-Cluster`; recorded only when it was refused or rate limited) |
+| `enable` | turned two-factor sign-in on (set up and confirmed with a code) |
+| `disable` | turned one's own two-factor sign-in off |
+| `verify` | entered the second-factor code at sign-in |
+| `reset` | removed a user's two-factor sign-in (an admin, or `TWO_FACTOR_RESET_USER` on start as `system`) |
 
 ## Sonuçlar {#outcomes}
 
@@ -218,6 +227,7 @@ Türü belli, sabit bir anahtar kümesi; her biri log satırında ayrı bir alan
 | `previous` | boolean | `openconsole.previous` | `pod.logs`: logs of the previous (crashed) container |
 | `program` | keyword | `openconsole.program` | `pod.exec` command: the program only (first element), never the arguments |
 | `recording_id` | keyword | `openconsole.recording_id` | `pod.exec` command: the session recording's id |
+| `recovery_codes_left` | long | `openconsole.recovery_codes_left` | `two_factor.verify` with a recovery code: unused recovery codes left |
 | `replicas_from` | long | `openconsole.replicas_from` | `*.scale`: replicas before |
 | `replicas_to` | long | `openconsole.replicas_to` | `*.scale`: replicas requested |
 | `restarted_at` | date | `openconsole.restarted_at` | `deployment.restart`: the time written to the pod template |
@@ -228,7 +238,8 @@ Türü belli, sabit bir anahtar kümesi; her biri log satırında ayrı bir alan
 | `signed_in_as` | keyword | `openconsole.signed_in_as` | `user.login` with Azure AD: the name the user signed in with |
 | `size_bytes` | long | `openconsole.size_bytes` | `recording.*`: file size (`recording.purge`: bytes freed) |
 | `started_at` | date | `openconsole.started_at` | `recording.evict`: when the recorded session started |
-| `summary` | text | `openconsole.summary` | `settings.update`, `api_key.*`, `user.import`: a short summary of what was set |
+| `summary` | text | `openconsole.summary` | `settings.update`, `api_key.*`, `user.import`: a short summary of what was set; `two_factor.reset` by `system`: `TWO_FACTOR_RESET_USER` |
 | `truncate_reason` | keyword | `openconsole.truncate_reason` | `pod.exec` end: why the recording stopped early (size cap, disk quota) |
+| `two_factor_method` | keyword | `openconsole.two_factor_method` | `two_factor.verify`, `user.login`, `two_factor.disable`, `two_factor.regenerate`: `totp` (a code from the app) or `recovery_code` |
 | `yaml_from` | keyword | `openconsole.yaml_from` | `*.apply`: sha256 prefix of the object before (never the YAML) |
 | `yaml_to` | keyword | `openconsole.yaml_to` | `*.apply`: sha256 prefix of the YAML applied |

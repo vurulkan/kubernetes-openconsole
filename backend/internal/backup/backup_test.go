@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 
@@ -111,6 +112,20 @@ func TestBackupBeforeUpgrade(t *testing.T) {
 	d.Close()
 	if count() != 1 {
 		t.Fatalf("%d pre-upgrade copies after a plain restart, want still 1", count())
+	}
+	// A 2.23.x database (user_version 1) is copied before 2.24 adds its columns.
+	old, _ := sql.Open("sqlite", path)
+	if _, err := old.Exec(`PRAGMA user_version = 1`); err != nil {
+		t.Fatal(err)
+	}
+	old.Close()
+	time.Sleep(1100 * time.Millisecond) // copies are named by the second
+	if d, err = db.OpenWithBackup(path, dir); err != nil {
+		t.Fatal(err)
+	}
+	d.Close()
+	if count() != 2 {
+		t.Fatalf("%d pre-upgrade copies after upgrading a 2.23 database, want 2", count())
 	}
 }
 

@@ -14,6 +14,21 @@ export type User = {
   apiAccessOverride?: ApiAccessOverride;
   /** The user's groups (in the admin user list only). */
   groupIds?: number[];
+  /** Signs in with a code from an authenticator app too. */
+  twoFactorEnabled?: boolean;
+  /** The signed-in user's two-factor state (from /api/auth/me; App adds it). */
+  twoFactor?: TwoFactorStatus;
+};
+
+export type TwoFactorPolicy = 'off' | 'optional' | 'admins' | 'all';
+
+/** The account's two-factor state (GET /api/auth/me). enroll: this session may only set it up. */
+export type TwoFactorStatus = {
+  policy: TwoFactorPolicy;
+  enabled: boolean;
+  required: boolean;
+  enroll: boolean;
+  recoveryCodesLeft?: number;
 };
 
 /** What a role's grants give API keys. */
@@ -36,6 +51,9 @@ export type SessionSettings = {
   /** API key expiry policy: the longest lifetime in days (0 = no limit), whether "never" is allowed. */
   apiKeyMaxDays: number;
   apiKeyAllowNoExpiry: boolean;
+  twoFactorPolicy: TwoFactorPolicy;
+  /** Per required policy, the accounts that would have to set it up (GET only). */
+  twoFactorUnenrolled?: Partial<Record<TwoFactorPolicy, number>>;
 };
 
 export type LDAPConfig = {
@@ -68,6 +86,8 @@ export type AzureADConfig = {
   clientSecret: string;
   redirectUrl: string;
   passwordConfigured?: boolean;
+  /** Refuse a sign-in whose token doesn't say MFA was done. */
+  requireMfa?: boolean;
 };
 
 export const hasToken = () => Boolean(getToken());
@@ -178,6 +198,12 @@ export const ERROR_CODES = [
   'sign_in_failed',
   'recording_unavailable',
   'internal_error',
+  'two_factor_invalid',
+  'two_factor_challenge_expired',
+  'two_factor_enrollment_required',
+  'two_factor_required',
+  'two_factor_off',
+  'azure_mfa_required',
 ];
 /** A reason code (or "code: detail", as WebSocket frames still send) as a sentence; other text as is. */
 export const errorText = (reason: string, detail?: string) => {
@@ -251,11 +277,50 @@ const formRequest = async <T>(path: string, formData: FormData): Promise<T> => {
   return response.json() as Promise<T>;
 };
 
+/** A sign-in's answer: a session, or (two-factor on) the challenge for the code step. */
+export type LoginResult = {
+  token?: string;
+  user?: User;
+  twoFactor?: 'verify' | 'enroll';
+  challenge?: string;
+  recoveryCodesLeft?: number;
+};
+
 export const login = (username: string, password: string) =>
-  apiRequest<{ token: string; user: User }>('/api/auth/login', {
+  apiRequest<LoginResult>('/api/auth/login', {
     method: 'POST',
     body: JSON.stringify({ username, password })
   });
+
+export const verifyTwoFactor = (challenge: string, code: string) =>
+  apiRequest<LoginResult>('/api/auth/2fa/verify', {
+    method: 'POST',
+    body: JSON.stringify({ challenge, code })
+  });
+
+export type TwoFactorSetup = { secret: string; uri: string; qr: string };
+
+export const setupTwoFactor = () => apiRequest<TwoFactorSetup>('/api/me/2fa/setup', { method: 'POST' });
+
+/** Turns it on; the answer's token replaces the session (every other one ended). */
+export const confirmTwoFactor = (code: string) =>
+  apiRequest<{ recoveryCodes: string[]; token: string; user: User }>('/api/me/2fa/confirm', {
+    method: 'POST',
+    body: JSON.stringify({ code })
+  });
+
+export const newRecoveryCodes = (code: string) =>
+  apiRequest<{ recoveryCodes: string[] }>('/api/me/2fa/recovery-codes', {
+    method: 'POST',
+    body: JSON.stringify({ code })
+  });
+
+export const disableTwoFactor = (code: string) =>
+  apiRequest('/api/me/2fa', { method: 'DELETE', body: JSON.stringify({ code }) });
+
+/** Admin: removes the user's two-factor sign-in and signs them out. */
+export const resetUserTwoFactor = (userId: number) =>
+  apiRequest(`/api/admin/users/${userId}/reset-2fa`, { method: 'POST' });
 
 export const getAuthProviders = () => apiRequest<{ azureAdEnabled: boolean }>('/api/auth/providers');
 
@@ -264,7 +329,7 @@ export const startAzureLogin = () => {
 };
 
 export const getMe = () =>
-  apiRequest<{ user: User; namespaces: string[]; permissions: NamespacePermission[] }>('/api/auth/me');
+  apiRequest<{ user: User; namespaces: string[]; permissions: NamespacePermission[]; twoFactor?: TwoFactorStatus }>('/api/auth/me');
 
 export const changePassword = (currentPassword: string, newPassword: string) =>
   apiRequest('/api/auth/change-password', {

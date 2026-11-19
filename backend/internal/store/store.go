@@ -63,12 +63,12 @@ func (s *Store) EnsureDefaultAdmin(ctx context.Context, passwordHash string) err
 }
 
 func (s *Store) GetUserByUsername(ctx context.Context, username string) (*models.User, error) {
-	row := s.conn.QueryRowContext(ctx, `SELECT id, username, password_hash, must_change_password, is_active, is_admin, created_at, auth_source, COALESCE(active_cluster_id, 0), COALESCE(api_access_override, '') FROM users WHERE username = ?`, username)
+	row := s.conn.QueryRowContext(ctx, `SELECT id, username, password_hash, must_change_password, is_active, is_admin, created_at, auth_source, COALESCE(active_cluster_id, 0), COALESCE(api_access_override, ''), (totp_enabled_at IS NOT NULL AND totp_secret_enc != '') FROM users WHERE username = ?`, username)
 	var user models.User
 	var mustChange int
 	var isActive int
 	var isAdmin int
-	if err := row.Scan(&user.ID, &user.Username, &user.PasswordHash, &mustChange, &isActive, &isAdmin, &user.CreatedAt, &user.AuthSource, &user.ActiveClusterID, &user.APIAccessOverride); err != nil {
+	if err := row.Scan(&user.ID, &user.Username, &user.PasswordHash, &mustChange, &isActive, &isAdmin, &user.CreatedAt, &user.AuthSource, &user.ActiveClusterID, &user.APIAccessOverride, &user.TwoFactorEnabled); err != nil {
 		return nil, err
 	}
 	user.MustChangePassword = mustChange == 1
@@ -78,12 +78,12 @@ func (s *Store) GetUserByUsername(ctx context.Context, username string) (*models
 }
 
 func (s *Store) GetUserByID(ctx context.Context, id int) (*models.User, error) {
-	row := s.conn.QueryRowContext(ctx, `SELECT id, username, password_hash, must_change_password, is_active, is_admin, created_at, auth_source, COALESCE(active_cluster_id, 0), COALESCE(api_access_override, '') FROM users WHERE id = ?`, id)
+	row := s.conn.QueryRowContext(ctx, `SELECT id, username, password_hash, must_change_password, is_active, is_admin, created_at, auth_source, COALESCE(active_cluster_id, 0), COALESCE(api_access_override, ''), (totp_enabled_at IS NOT NULL AND totp_secret_enc != '') FROM users WHERE id = ?`, id)
 	var user models.User
 	var mustChange int
 	var isActive int
 	var isAdmin int
-	if err := row.Scan(&user.ID, &user.Username, &user.PasswordHash, &mustChange, &isActive, &isAdmin, &user.CreatedAt, &user.AuthSource, &user.ActiveClusterID, &user.APIAccessOverride); err != nil {
+	if err := row.Scan(&user.ID, &user.Username, &user.PasswordHash, &mustChange, &isActive, &isAdmin, &user.CreatedAt, &user.AuthSource, &user.ActiveClusterID, &user.APIAccessOverride, &user.TwoFactorEnabled); err != nil {
 		return nil, err
 	}
 	user.MustChangePassword = mustChange == 1
@@ -93,7 +93,7 @@ func (s *Store) GetUserByID(ctx context.Context, id int) (*models.User, error) {
 }
 
 func (s *Store) ListUsers(ctx context.Context) ([]models.User, error) {
-	rows, err := s.conn.QueryContext(ctx, `SELECT id, username, must_change_password, is_active, is_admin, created_at, auth_source, COALESCE(active_cluster_id, 0), COALESCE(api_access_override, '') FROM users ORDER BY username`)
+	rows, err := s.conn.QueryContext(ctx, `SELECT id, username, must_change_password, is_active, is_admin, created_at, auth_source, COALESCE(active_cluster_id, 0), COALESCE(api_access_override, ''), (totp_enabled_at IS NOT NULL AND totp_secret_enc != '') FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +104,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]models.User, error) {
 		var mustChange int
 		var isActive int
 		var isAdmin int
-		if err := rows.Scan(&user.ID, &user.Username, &mustChange, &isActive, &isAdmin, &user.CreatedAt, &user.AuthSource, &user.ActiveClusterID, &user.APIAccessOverride); err != nil {
+		if err := rows.Scan(&user.ID, &user.Username, &mustChange, &isActive, &isAdmin, &user.CreatedAt, &user.AuthSource, &user.ActiveClusterID, &user.APIAccessOverride, &user.TwoFactorEnabled); err != nil {
 			return nil, err
 		}
 		user.MustChangePassword = mustChange == 1
@@ -608,11 +608,11 @@ func (s *Store) UpdateLDAPConfig(ctx context.Context, cfg models.LDAPConfig) err
 }
 
 func (s *Store) GetAzureADConfig(ctx context.Context) (models.AzureADConfig, error) {
-	row := s.conn.QueryRowContext(ctx, `SELECT enabled, tenant_id, client_id, client_secret_enc, redirect_url FROM azure_ad_config WHERE id = 1`)
+	row := s.conn.QueryRowContext(ctx, `SELECT enabled, tenant_id, client_id, client_secret_enc, redirect_url, require_mfa FROM azure_ad_config WHERE id = 1`)
 	var cfg models.AzureADConfig
 	var enabled int
 	var encSecret string
-	if err := row.Scan(&enabled, &cfg.TenantID, &cfg.ClientID, &encSecret, &cfg.RedirectURL); err != nil {
+	if err := row.Scan(&enabled, &cfg.TenantID, &cfg.ClientID, &encSecret, &cfg.RedirectURL, &cfg.RequireMFA); err != nil {
 		return cfg, err
 	}
 	cfg.Enabled = enabled == 1
@@ -645,21 +645,22 @@ func (s *Store) UpdateAzureADConfig(ctx context.Context, cfg models.AzureADConfi
 	}
 	_, err := s.conn.ExecContext(
 		ctx,
-		`UPDATE azure_ad_config SET enabled = ?, tenant_id = ?, client_id = ?, client_secret_enc = ?, redirect_url = ? WHERE id = 1`,
+		`UPDATE azure_ad_config SET enabled = ?, tenant_id = ?, client_id = ?, client_secret_enc = ?, redirect_url = ?, require_mfa = ? WHERE id = 1`,
 		enabled,
 		cfg.TenantID,
 		cfg.ClientID,
 		encSecret,
 		cfg.RedirectURL,
+		boolToInt(cfg.RequireMFA),
 	)
 	return err
 }
 
 func (s *Store) GetSessionSettings(ctx context.Context) (models.SessionSettings, error) {
-	row := s.conn.QueryRowContext(ctx, `SELECT session_minutes, api_key_max_days, api_key_allow_no_expiry FROM session_settings WHERE id = 1`)
+	row := s.conn.QueryRowContext(ctx, `SELECT session_minutes, api_key_max_days, api_key_allow_no_expiry, two_factor_policy FROM session_settings WHERE id = 1`)
 	var settings models.SessionSettings
 	var allowNoExpiry int
-	if err := row.Scan(&settings.SessionMinutes, &settings.APIKeyMaxDays, &allowNoExpiry); err != nil {
+	if err := row.Scan(&settings.SessionMinutes, &settings.APIKeyMaxDays, &allowNoExpiry, &settings.TwoFactorPolicy); err != nil {
 		return settings, err
 	}
 	settings.APIKeyAllowNoExpiry = allowNoExpiry == 1
@@ -667,8 +668,8 @@ func (s *Store) GetSessionSettings(ctx context.Context) (models.SessionSettings,
 }
 
 func (s *Store) UpdateSessionSettings(ctx context.Context, settings models.SessionSettings) error {
-	_, err := s.conn.ExecContext(ctx, `UPDATE session_settings SET session_minutes = ?, api_key_max_days = ?, api_key_allow_no_expiry = ? WHERE id = 1`,
-		settings.SessionMinutes, settings.APIKeyMaxDays, boolToInt(settings.APIKeyAllowNoExpiry))
+	_, err := s.conn.ExecContext(ctx, `UPDATE session_settings SET session_minutes = ?, api_key_max_days = ?, api_key_allow_no_expiry = ?, two_factor_policy = ? WHERE id = 1`,
+		settings.SessionMinutes, settings.APIKeyMaxDays, boolToInt(settings.APIKeyAllowNoExpiry), settings.TwoFactorPolicy)
 	return err
 }
 

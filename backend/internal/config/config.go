@@ -45,6 +45,8 @@ type Config struct {
 	EncryptionKeyFile, EncryptionKey                 string
 	EncryptionKeyPreviousFile, EncryptionKeyPrevious string
 	EncryptionKeyLost                                bool
+	// TwoFactorResetUser: on every start, remove this account's two-factor sign-in (a locked-out admin).
+	TwoFactorResetUser string
 
 	// Database backups (VACUUM INTO): directory ("" = backups next to the
 	// database), interval (0 = no scheduled backup), how many to keep.
@@ -129,6 +131,7 @@ func Load() Config {
 		EncryptionKeyPreviousFile: os.Getenv("ENCRYPTION_KEY_PREVIOUS_FILE"),
 		EncryptionKeyPrevious:     os.Getenv("ENCRYPTION_KEY_PREVIOUS"),
 		EncryptionKeyLost:         envBool("ENCRYPTION_KEY_LOST", false),
+		TwoFactorResetUser:        strings.TrimSpace(os.Getenv("TWO_FACTOR_RESET_USER")),
 
 		BackupDir:              os.Getenv("BACKUP_DIR"),
 		BackupInterval:         envDurationMin("BACKUP_INTERVAL", 24*time.Hour, 0),

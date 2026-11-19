@@ -40,6 +40,10 @@ const (
 	VerbPurge          = "purge"
 	VerbViewOverview   = "view_overview"
 	VerbRegenerate     = "regenerate"
+	VerbEnable         = "enable"
+	VerbDisable        = "disable"
+	VerbVerify         = "verify"
+	VerbReset          = "reset"
 	VerbUse            = "use" // an API key presented, or a cluster asked for per request (denied / rate limited only)
 )
 
@@ -50,6 +54,7 @@ var Verbs = []string{
 	VerbDelete, VerbShare, VerbSelect, VerbActivate, VerbDeactivate, VerbRevoke,
 	VerbExport, VerbImport, VerbLogin, VerbChangePassword, VerbResetPassword,
 	VerbEvict, VerbPurge, VerbViewOverview, VerbRegenerate, VerbUse,
+	VerbEnable, VerbDisable, VerbVerify, VerbReset,
 }
 
 // Outcomes: how it ended.
@@ -77,6 +82,7 @@ const (
 	KindSavedView  = "saved_view"
 	KindAPIKey     = "api_key"
 	KindBackup     = "backup"
+	KindTwoFactor  = "two_factor"
 )
 
 // kubeKinds maps the plural resource names used by RBAC grants and URLs to
@@ -174,11 +180,14 @@ var DetailKeys = map[string]DetailType{
 	"signed_in_as":     Keyword,
 	"must_change":      Bool,
 	"auto_provisioned": Bool,
-	"is_admin":         Bool,
-	"is_active":        Bool,
-	"groups":           Long,
-	"count":            Long,
-	"all":              Bool,
+	// two-factor sign-in (never the code, the secret or a recovery code)
+	"two_factor_method":   Keyword, // totp | recovery_code
+	"recovery_codes_left": Long,
+	"is_admin":            Bool,
+	"is_active":           Bool,
+	"groups":              Long,
+	"count":               Long,
+	"all":                 Bool,
 	// admin
 	"id":      Long,
 	"role":    Keyword,
