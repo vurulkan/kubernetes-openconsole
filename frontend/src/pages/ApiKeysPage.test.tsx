@@ -226,7 +226,12 @@ describe('ApiKeyFormPage', () => {
     );
     const expiry = (await screen.findByRole('group', { name: 'Expiry' })) as HTMLElement;
     expect(within(expiry).getAllByRole('button').map((b) => b.textContent)).toEqual(['7 days', '30 days', 'Custom date']);
-    expect(within(expiry).getByText('At most 30 days (admin policy)')).toBeInTheDocument();
+    expect(within(expiry).getByText(/^Latest/)).toHaveTextContent(/^Latest \d{4}-\d{2}-\d{2} \(30 days, admin policy\)$/);
+    // A typed day past the limit says so in the field (2.25.0), and the key can't be created.
+    fireEvent.click(within(expiry).getByRole('button', { name: 'Custom date' }));
+    fireEvent.change(within(expiry).getByLabelText('Expiry date'), { target: { value: '2099-01-01' } });
+    expect(within(expiry).getByText(/or earlier\.$/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Create' })).toBeDisabled();
     expect(screen.getByRole('checkbox', { name: /admin endpoints/ })).toBeDisabled();
     expect(screen.getByText(/does not allow the Admin API/)).toBeInTheDocument();
     await expectNoA11yViolations(document.body);

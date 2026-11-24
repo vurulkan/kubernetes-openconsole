@@ -3,6 +3,7 @@ import { AlertTriangle, Download, Play, RefreshCw, Save, Trash2 } from 'lucide-r
 import { useTranslation } from 'react-i18next';
 import { Alert, Badge, Button, Input, NativeSelect, Toggle } from '../../components/ui';
 import { ApiKeyBadge } from '../../components/AuditEntryRow';
+import { DateField } from '../../components/DateField';
 import { Column, DataTable, IconButton } from '../../components/DataTable';
 import { confirm } from '../../components/ConfirmDialog';
 import CastPlayerModal, { downloadRecordingWithWarning } from '../../components/CastPlayerModal';
@@ -358,13 +359,13 @@ export const RecordingsSection: React.FC = () => {
           value={draft.apiKey}
           onChange={setField('apiKey')}
         />
-        <Input type="date" aria-label={t('recordings.from')} title={t('recordings.from')} value={draft.from} onChange={setField('from')} />
-        <Input type="date" aria-label={t('recordings.to')} title={t('recordings.to')} value={draft.to} onChange={setField('to')} />
+        <DateField aria-label={t('recordings.from')} value={draft.from ?? ''} max={draft.to || undefined} onChange={(v) => setDraft((d) => ({ ...d, from: v }))} />
+        <DateField aria-label={t('recordings.to')} value={draft.to ?? ''} min={draft.from || undefined} onChange={(v) => setDraft((d) => ({ ...d, to: v }))} />
         <div className="flex gap-2">
-          <Button type="submit" variant="primary" size="sm" className="flex-1">
+          <Button type="submit" variant="primary" className="flex-1">
             {t('recordings.applyFilter')}
           </Button>
-          <Button type="button" variant="outline" size="sm" onClick={clearFilter}>
+          <Button type="button" variant="outline" onClick={clearFilter}>
             {t('recordings.clearFilter')}
           </Button>
         </div>

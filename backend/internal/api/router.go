@@ -55,6 +55,8 @@ type Server struct {
 	passwordMinLength int
 	// azureAuthority: the Entra ID sign-in host (SetAzureAuthority).
 	azureAuthority string
+	// graphURL overrides the Microsoft Graph host (tests); empty = from azureAuthority.
+	graphURL string
 	// deployLimiters: per-user token buckets for write actions (allowDeployAction).
 	deployLimitersMu sync.Mutex
 	deployLimiters   map[int]*rate.Limiter
@@ -343,6 +345,8 @@ func (s *Server) routes() *chi.Mux {
 		r.Put("/api/admin/ldap", s.adminWrite(audit.VerbUpdate, audit.KindSettings, s.handleUpdateLDAP))
 		r.Put("/api/admin/azure-ad", s.adminWrite(audit.VerbUpdate, audit.KindSettings, s.handleUpdateAzureAD))
 		r.Put("/api/admin/session", s.adminWrite(audit.VerbUpdate, audit.KindSettings, s.handleUpdateSession))
+		r.Post("/api/admin/azure-ad/users/import", s.adminWrite(audit.VerbImport, audit.KindUser, s.handleImportAzureUsers))
+		r.Put("/api/admin/clusters/order", s.adminWrite(audit.VerbUpdate, audit.KindCluster, s.handlePutClusterOrder))
 		r.Post("/api/admin/customization/logo", s.adminWrite(audit.VerbUpdate, audit.KindSettings, s.handleUploadLogo))
 		r.Delete("/api/admin/customization/logo", s.adminWrite(audit.VerbDelete, audit.KindSettings, s.handleDeleteLogo))
 	})
@@ -374,6 +378,8 @@ func (s *Server) routes() *chi.Mux {
 		r.Post("/api/admin/ldap/users/import", s.handleImportLDAPUsers)
 		r.Get("/api/admin/azure-ad", s.handleGetAzureAD)
 		r.Post("/api/admin/azure-ad/test", s.handleTestAzureAD)
+		r.Post("/api/admin/azure-ad/graph/test", s.handleTestAzureGraph)
+		r.Post("/api/admin/azure-ad/users/search", s.handleSearchAzureUsers)
 
 		r.Get("/api/admin/backups", s.handleListBackups)
 		r.Post("/api/admin/backups", s.handleCreateBackup)

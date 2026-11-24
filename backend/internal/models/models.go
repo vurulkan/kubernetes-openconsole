@@ -115,12 +115,16 @@ type AzureADConfig struct {
 	// RequireMFA refuses a sign-in whose id_token doesn't say MFA was done
 	// (amr without "mfa").
 	RequireMFA bool `json:"requireMfa"`
+	// GraphSearch: New user → Azure AD searches Entra ID through Microsoft
+	// Graph (Application permission User.Read.All) instead of a typed name.
+	GraphSearch bool `json:"graphSearch"`
 }
 
 type SessionSettings struct {
 	SessionMinutes int `json:"sessionMinutes"`
 	// API key expiry policy for new and regenerated keys: the longest
-	// lifetime in days (0 = no limit) and whether "never expires" is allowed.
+	// lifetime in days (1–3650; 0 = no limit before 2.25.0) and whether "never
+	// expires" is allowed.
 	APIKeyMaxDays       int  `json:"apiKeyMaxDays"`
 	APIKeyAllowNoExpiry bool `json:"apiKeyAllowNoExpiry"`
 	// TwoFactorPolicy: off | optional | admins | all (models.TwoFactor*).

@@ -14,6 +14,7 @@ import (
 	"k8s-dashboard/backend/internal/kube"
 	"k8s-dashboard/backend/internal/models"
 	"k8s-dashboard/backend/internal/problem"
+	"k8s-dashboard/backend/internal/store"
 )
 
 // Multi-cluster management. Admins save N cluster definitions and mark one as
@@ -276,6 +277,38 @@ func (s *Server) handleActivateCluster(w http.ResponseWriter, r *http.Request) {
 	s.defaultClusterID.Store(int64(id))
 	s.recordClusterAudit(r, audit.VerbActivate, name, id)
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "name": name})
+}
+
+// handlePutClusterOrder saves the order clusters are listed in everywhere
+// (switcher, palette, API key form, Admin → Clusters). The body names every
+// cluster once; a list that no longer matches the saved clusters is 409.
+func (s *Server) handlePutClusterOrder(w http.ResponseWriter, r *http.Request) {
+	noteFor(r).Name = "order"
+	var body struct {
+		IDs []int `json:"ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, problem.InvalidBody)
+		return
+	}
+	seen := map[int]bool{}
+	for _, id := range body.IDs {
+		if id <= 0 || seen[id] {
+			writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "ids must name every cluster once")
+			return
+		}
+		seen[id] = true
+	}
+	if err := s.store.SetClusterOrder(r.Context(), body.IDs); err != nil {
+		if errors.Is(err, store.ErrClusterOrderStale) {
+			writeErrorDetail(w, http.StatusConflict, problem.Conflict, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, problem.InternalError)
+		return
+	}
+	noteFor(r).Details = audit.D{"count": len(body.IDs)}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // recordClusterAudit records an admin action on a cluster; the cluster is

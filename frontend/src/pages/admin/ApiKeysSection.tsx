@@ -175,15 +175,15 @@ export const ApiKeysSection: React.FC<{ users: User[] }> = ({ users }) => {
           <option value="expired">{t('apiKeys.expired')}</option>
           <option value="revoked">{t('apiKeys.revoked')}</option>
         </NativeSelect>
-        <div className="flex flex-wrap items-center gap-4 pb-2">
-          <Checkbox checked={exec} onChange={setExec} label={t('adminApiKeys.withExec')} />
-          <Checkbox checked={adminApi} onChange={setAdminApi} label={t('apiKeys.adminApi')} />
-          <Checkbox checked={outside} onChange={setOutside} label={t('adminApiKeys.outsidePolicy')} />
-        </div>
-        <Button variant="outline" size="sm" className="ml-auto" onClick={() => void exportApiKeysCsv().catch((e) => setError(String(e)))}>
+        <Button variant="outline" className="ml-auto" onClick={() => void exportApiKeysCsv().catch((e) => setError(String(e)))}>
           <Download size={14} />
           {t('admin.exportCsv')}
         </Button>
+      </div>
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+        <Checkbox checked={exec} onChange={setExec} label={t('adminApiKeys.withExec')} />
+        <Checkbox checked={adminApi} onChange={setAdminApi} label={t('apiKeys.adminApi')} />
+        <Checkbox checked={outside} onChange={setOutside} label={t('adminApiKeys.outsidePolicy')} />
       </div>
       {error && <Alert severity="error">{error}</Alert>}
       <DataTable

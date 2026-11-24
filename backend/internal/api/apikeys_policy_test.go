@@ -206,7 +206,10 @@ func TestAPIKeyExpiryPolicy(t *testing.T) {
 		t.Fatalf("session settings = %+v", ss)
 	}
 	e.waitAudit("settings.update", "api_key_max_days=30")
-	e.expect("PUT", "/api/admin/session", admin, map[string]any{"apiKeyMaxDays": -1}, http.StatusBadRequest)
+	// 2.25.0: the limit is required, 1–3650 days (0 meant "no limit" before).
+	for _, d := range []int{-1, 0, 3651} {
+		e.expect("PUT", "/api/admin/session", admin, map[string]any{"apiKeyMaxDays": d}, http.StatusBadRequest)
+	}
 
 	now := time.Now()
 	e.expect("POST", "/api/me/api-keys", bob, body("a", nil), http.StatusBadRequest)

@@ -134,7 +134,7 @@ const Combobox: React.FC<Props> = ({ label, value, onChange, options, families, 
           onFocus={() => setOpen(true)}
           onClick={() => setOpen(true)}
           onKeyDown={onKeyDown}
-          className="block w-full rounded-lg border border-slate-300 bg-white py-2 pl-3 pr-8 text-sm text-slate-900 shadow-sm transition-colors placeholder:text-slate-400 hover:border-slate-400 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/15 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-slate-600"
+          className="block h-9 w-full rounded-lg border border-slate-300 bg-white pl-3 pr-8 text-sm text-slate-900 shadow-sm transition-colors placeholder:text-slate-400 hover:border-slate-400 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/15 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-slate-600"
         />
         {value && (
           <button

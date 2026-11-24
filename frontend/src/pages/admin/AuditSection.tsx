@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Download } from 'lucide-react';
 import { Alert, Button, Input, NativeSelect } from '../../components/ui';
 import Combobox from '../../components/Combobox';
+import { DateField } from '../../components/DateField';
 import { AuditEntryRow } from '../../components/AuditEntryRow';
 import {
   exportAuditLogs,
@@ -100,13 +102,13 @@ export const AuditSection: React.FC<{
 
   return (
     <>
-      <div className="mb-4 flex flex-wrap items-end gap-3">
+      {/* Equal columns, as many as fit: the fields line up in rows instead of a ragged wrap. */}
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(10.5rem,1fr))] items-end gap-3">
         <Combobox
           label={tr('admin.audit.filterUser')}
           value={filters.user ?? ''}
           options={facets.users}
           onChange={(v) => set({ user: v })}
-          className="w-44"
         />
         <Combobox
           label={tr('admin.audit.filterAction')}
@@ -115,7 +117,7 @@ export const AuditSection: React.FC<{
           families
           placeholder={tr('admin.audit.actionPlaceholder')}
           onChange={(v, mode) => set({ action: v, actionExact: mode === 'exact' })}
-          className="w-64"
+          className="sm:col-span-2"
         />
         <NativeSelect
           label={tr('admin.audit.filterOutcome')}
@@ -183,7 +185,6 @@ export const AuditSection: React.FC<{
             value={filters.apiKey ?? ''}
             options={facets.apiKeys ?? []}
             onChange={(v) => set({ apiKey: v })}
-            className="w-44"
           />
         )}
         <Combobox
@@ -191,28 +192,29 @@ export const AuditSection: React.FC<{
           value={filters.namespace ?? ''}
           options={facets.namespaces}
           onChange={(v) => set({ namespace: v })}
-          className="w-44"
         />
-        <Input
+        <DateField
           label={tr('admin.audit.filterStart')}
-          type="date"
           value={filters.start ?? ''}
-          onChange={(e) => set({ start: e.target.value })}
+          max={filters.end || undefined}
+          onChange={(v) => set({ start: v })}
         />
-        <Input
+        <DateField
           label={tr('admin.audit.filterEnd')}
-          type="date"
           value={filters.end ?? ''}
-          onChange={(e) => set({ end: e.target.value })}
+          min={filters.start || undefined}
+          onChange={(v) => set({ end: v })}
         />
-        <div className="flex items-end gap-3">
-          <span className="text-xs text-slate-500 dark:text-slate-400">
-            {tr('admin.audit.pageOf', { from: offset + 1, to: Math.min(offset + PAGE, total), total })}
-          </span>
-          <Button variant="outline" size="sm" onClick={handleExport}>
-            {tr('admin.audit.exportCsv')}
-          </Button>
-        </div>
+      </div>
+
+      <div className="mb-3 mt-4 flex items-center justify-between gap-3 border-t border-slate-200 pt-3 dark:border-slate-800">
+        <span className="text-xs tabular-nums text-slate-500 dark:text-slate-400">
+          {tr('admin.audit.pageOf', { from: total ? offset + 1 : 0, to: Math.min(offset + PAGE, total), total })}
+        </span>
+        <Button variant="outline" size="sm" onClick={handleExport}>
+          <Download size={14} />
+          {tr('admin.audit.exportCsv')}
+        </Button>
       </div>
 
       {error && (

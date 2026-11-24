@@ -118,15 +118,15 @@ export const GroupsSection: React.FC<Props> = ({
             placeholder={t('admin.groups.search')}
             value={filter}
             onChange={(e) => onFilter(e.target.value)}
-            className="h-9 pl-8"
+            className="pl-8"
           />
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => void exportGroupsCsv().catch((err) => alertExport(err))}>
+          <Button variant="outline" onClick={() => void exportGroupsCsv().catch((err) => alertExport(err))}>
             <Download size={14} />
             {t('admin.exportCsv')}
           </Button>
-          <Button variant="primary" size="sm" onClick={onNew}>
+          <Button variant="primary" onClick={onNew}>
             <Plus size={14} />
             {t('admin.groups.new')}
           </Button>

@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { useTranslation } from 'react-i18next';
+import { Trans, useTranslation } from 'react-i18next';
 import { AlertTriangle, Check, Copy } from 'lucide-react';
-import { Alert, Badge, Button, Input } from '../../components/ui';
+import { Alert, Badge, Button } from '../../components/ui';
+import { DateField } from '../../components/DateField';
 import { RESOURCE_CATALOG } from '../../components/PermissionMatrix';
 import type { ApiKey, ApiKeyCeiling } from '../../services/api';
 import { formatDateTime } from '../../utils/format';
@@ -85,7 +86,7 @@ export const ExpiryBadge: React.FC<{ apiKey: ApiKey }> = ({ apiKey }) => {
 export type ExpiryChoice = '7' | '30' | '60' | '90' | 'custom' | 'never';
 const CHOICES: ExpiryChoice[] = ['7', '30', '60', '90', 'custom', 'never'];
 
-/** The admin's expiry policy for new and regenerated keys (maxDays 0 = no limit). */
+/** The admin's expiry policy for new and regenerated keys (maxDays 0 = no limit, before 2.25.0). */
 export type ExpiryPolicy = { maxDays: number; allowNoExpiry: boolean };
 
 /** The choices the policy allows: no preset beyond the limit, no "never" unless allowed. */
@@ -140,14 +141,15 @@ export const ExpiryPicker: React.FC<{
       <legend className={hideLegend ? 'sr-only' : 'mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400'}>
         {t('apiKeys.expiry')}
       </legend>
-      <div className="flex flex-wrap items-center gap-1.5">
+      {/* items-start: a typed day's error under the date box doesn't move the chips */}
+      <div className="flex flex-wrap items-start gap-1.5">
         {allowedChoices(policy).map((c) => (
           <button
             key={c}
             type="button"
             aria-pressed={choice === c}
             onClick={() => onChange(c, date)}
-            className={`cursor-pointer rounded-md border px-2.5 py-1 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 ${
+            className={`inline-flex h-8 cursor-pointer items-center rounded-md border px-2.5 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 ${
               choice === c
                 ? 'border-brand-400 bg-brand-50 text-brand-700 dark:border-brand-500/50 dark:bg-brand-500/15 dark:text-brand-200'
                 : 'border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800'
@@ -157,19 +159,25 @@ export const ExpiryPicker: React.FC<{
           </button>
         ))}
         {choice === 'custom' && (
-          <Input
-            type="date"
+          <DateField
             aria-label={t('apiKeys.expiryDate')}
             value={date}
             min={localDate(new Date(Date.now() + DAY_MS))}
             max={max}
-            onChange={(e) => onChange('custom', e.target.value)}
-            className="h-8 w-44"
+            onChange={(v) => onChange('custom', v)}
+            size="sm"
+            className="w-40"
           />
         )}
       </div>
-      {policy.maxDays > 0 && (
-        <p className="text-xs text-slate-500 dark:text-slate-400">{t('apiKeys.expiryLimit', { count: policy.maxDays })}</p>
+      {max && (
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          <Trans
+            i18nKey="apiKeys.expiryLatest"
+            values={{ date: max, count: policy.maxDays }}
+            components={{ b: <strong className="font-semibold text-slate-700 dark:text-slate-200" /> }}
+          />
+        </p>
       )}
       {choice === 'never' && (
         <Alert severity="warning">

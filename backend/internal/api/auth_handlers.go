@@ -196,7 +196,7 @@ func (s *Server) ldapAutoProvision(r *http.Request, typed, password string) (*mo
 		return nil, false
 	}
 	groups := s.existingGroupIDs(ctx, cfg.AutoProvisionGroupIDs)
-	id, err := s.store.CreateDirectoryUser(ctx, name, hash, models.AuthSourceLDAP, groups)
+	id, err := s.store.CreateDirectoryUser(ctx, name, hash, models.AuthSourceLDAP, "", groups)
 	if err != nil {
 		// Lost a race with a parallel first sign-in: use that account.
 		if existing, getErr := s.store.GetUserByUsername(ctx, name); getErr == nil && existing.AuthSource == models.AuthSourceLDAP {
@@ -451,8 +451,20 @@ func (s *Server) handleAzureCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	linkedBy := ""
-	user, err := s.store.GetUserByUsername(r.Context(), username)
-	if errors.Is(err, sql.ErrNoRows) {
+	// The Entra object id first: the same person keeps their account (and
+	// roles) when their UPN or e-mail changes; a disabled account stays refused.
+	user, byOID, err := s.store.AzureAccountByOID(r.Context(), identity.OID)
+	if err != nil {
+		writeErrorDetail(w, http.StatusInternalServerError, problem.InternalError, "failed to load user")
+		return
+	}
+	if byOID && !strings.EqualFold(user.Username, username) {
+		linkedBy = "oid"
+	}
+	if !byOID {
+		user, err = s.store.GetUserByUsername(r.Context(), username)
+	}
+	if !byOID && errors.Is(err, sql.ErrNoRows) {
 		// An admin may have pre-created the account under the person's
 		// e-mail or UPN (or in another letter case). Only Azure AD accounts
 		// nobody has signed in to yet can be claimed this way, so this can

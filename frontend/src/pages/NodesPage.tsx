@@ -158,7 +158,7 @@ const NodesPage: React.FC<{ user: User }> = ({ user }) => {
                 placeholder={t('nodes.search')}
                 aria-label={t('nodes.search')}
                 title={t('nodes.searchHint')}
-                className="h-9 w-full pl-8 sm:w-72"
+                className="w-full pl-8 sm:w-72"
               />
             </div>
             {data && (
@@ -167,7 +167,7 @@ const NodesPage: React.FC<{ user: User }> = ({ user }) => {
                 {t('overview.updated', { seconds: ago })}
               </span>
             )}
-            <Button variant="outline" size="sm" onClick={() => load(true)} aria-label={t('overview.refresh')}>
+            <Button variant="outline" onClick={() => load(true)} aria-label={t('overview.refresh')}>
               <RefreshCw size={14} />
             </Button>
           </div>

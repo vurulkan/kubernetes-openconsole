@@ -1,10 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import React, { useState } from 'react';
 import { ChevronDown, Cloud, Download, FolderTree, KeyRound, Pencil, Plus, Search as SearchIcon, ShieldOff, Trash2, UserRound } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { confirm } from '../../components/ConfirmDialog';
 import { Alert, Badge, Button, Checkbox, Input, Modal, NativeSelect } from '../../components/ui';
 import { Column, DataTable, IconButton } from '../../components/DataTable';
+import { MenuPopover, menuItemClass } from '../../components/MenuPopover';
 import { exportUsersCsv, resetUserPassword, resetUserTwoFactor, User } from '../../services/api';
 import { ApiAccessBadge } from './ApiAccessParts';
 
@@ -21,6 +21,8 @@ type Props = {
   /** Set when LDAP is enabled: opens the directory import dialog. */
   onImportLdap?: () => void;
   azureEnabled?: boolean;
+  /** Azure AD directory search on: the Azure AD item searches Entra ID. */
+  azureSearch?: boolean;
   /** Just created or imported: shown first and highlighted. */
   newUsernames?: string[];
   onEdit: (u: User) => void;
@@ -37,6 +39,7 @@ export const UsersSection: React.FC<Props> = ({
   onNew,
   onImportLdap,
   azureEnabled,
+  azureSearch,
   newUsernames = [],
   onEdit,
   onDelete,
@@ -202,10 +205,10 @@ export const UsersSection: React.FC<Props> = ({
             placeholder={t('admin.users.search')}
             value={filter}
             onChange={(e) => onFilter(e.target.value)}
-            className="h-9 pl-8"
+            className="pl-8"
           />
         </div>
-        <NativeSelect aria-label={t('apiAccess.label')} value={apiAccess} onChange={(e) => setApiAccess(e.target.value)} className="h-9 w-48">
+        <NativeSelect aria-label={t('apiAccess.label')} value={apiAccess} onChange={(e) => setApiAccess(e.target.value)} className="w-48">
           <option value="*">{t('apiAccess.filterAny')}</option>
           <option value="">{t('apiAccess.roles')}</option>
           <option value="off">{t('apiAccess.off')}</option>
@@ -213,7 +216,7 @@ export const UsersSection: React.FC<Props> = ({
           <option value="full">{t('apiAccess.fullUser')}</option>
         </NativeSelect>
         <div className="ml-auto flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => void exportUsersCsv().catch((err) => alertExport(err))}>
+          <Button variant="outline" onClick={() => void exportUsersCsv().catch((err) => alertExport(err))}>
             <Download size={14} />
             {t('admin.exportCsv')}
           </Button>
@@ -221,6 +224,7 @@ export const UsersSection: React.FC<Props> = ({
             onLocal={() => onNew('local')}
             onLdap={onImportLdap}
             onAzure={azureEnabled ? () => onNew('azure') : undefined}
+            azureSearch={azureSearch}
           />
         </div>
       </div>
@@ -342,66 +346,22 @@ function alertExport(err: unknown) {
 }
 
 /**
- * "New user" button. With only local accounts available it is a plain
- * button; with LDAP and / or Azure AD enabled it opens a small menu.
+ * "New user" button. With only local accounts available it opens the local
+ * form; with LDAP and / or Azure AD on, any click opens the menu of sources
+ * (so a directory installation doesn't make a local account by habit).
  */
-const NewUserMenu: React.FC<{ onLocal: () => void; onLdap?: () => void; onAzure?: () => void }> = ({
+const NewUserMenu: React.FC<{ onLocal: () => void; onLdap?: () => void; onAzure?: () => void; azureSearch?: boolean }> = ({
   onLocal,
   onLdap,
   onAzure,
+  azureSearch,
 }) => {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const firstItemRef = useRef<HTMLButtonElement>(null);
-
-  // The menu is portalled to <body> with fixed positioning, so a card with
-  // overflow: hidden can't clip it.
-  useEffect(() => {
-    if (!open) return;
-    const place = () => {
-      const r = rootRef.current?.getBoundingClientRect();
-      if (r) setPos({ top: r.bottom + 4, right: window.innerWidth - r.right });
-    };
-    place();
-    window.addEventListener('resize', place);
-    window.addEventListener('scroll', place, true);
-    return () => {
-      window.removeEventListener('resize', place);
-      window.removeEventListener('scroll', place, true);
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (!open || !pos) return;
-    firstItemRef.current?.focus();
-  }, [open, pos]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        setOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey, true);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey, true);
-    };
-  }, [open]);
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
 
   if (!onLdap && !onAzure) {
     return (
-      <Button variant="primary" size="sm" onClick={onLocal}>
+      <Button variant="primary" onClick={onLocal}>
         <Plus size={14} />
         {t('admin.users.new')}
       </Button>
@@ -414,57 +374,45 @@ const NewUserMenu: React.FC<{ onLocal: () => void; onLdap?: () => void; onAzure?
       ? [{ key: 'ldap', icon: FolderTree, label: t('admin.newUserMenu.ldap'), hint: t('admin.newUserMenu.ldapHint'), run: onLdap }]
       : []),
     ...(onAzure
-      ? [{ key: 'azure', icon: Cloud, label: t('admin.newUserMenu.azure'), hint: t('admin.newUserMenu.azureHint'), run: onAzure }]
+      ? [{
+          key: 'azure',
+          icon: Cloud,
+          label: t('admin.newUserMenu.azure'),
+          hint: azureSearch ? t('admin.newUserMenu.azureSearchHint') : t('admin.newUserMenu.azureHint'),
+          run: onAzure,
+        }]
       : []),
   ];
 
   return (
-    <div ref={rootRef} className="relative inline-flex">
-      {/* Split button: the main part opens the local-user form, the arrow
-          opens the menu with the other sources. */}
-      <Button variant="primary" size="sm" onClick={onLocal} className="rounded-r-none">
-        <Plus size={14} />
-        {t('admin.users.new')}
-      </Button>
+    <>
       <Button
         variant="primary"
-        size="sm"
         aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label={t('admin.users.moreWays')}
-        title={t('admin.users.moreWays')}
-        onClick={() => setOpen((v) => !v)}
-        className="rounded-l-none border-l border-l-white/30 px-2"
+        aria-expanded={anchor !== null}
+        onClick={(e) => setAnchor(anchor ? null : e.currentTarget)}
+        onKeyDown={(e) => {
+          if (e.key !== 'ArrowDown') return;
+          e.preventDefault();
+          setAnchor(e.currentTarget);
+        }}
       >
-        <ChevronDown size={14} />
+        <Plus size={14} />
+        {t('admin.users.new')}
+        <ChevronDown size={14} aria-hidden="true" />
       </Button>
-      {open && pos && createPortal(
-        <div
-          ref={menuRef}
-          role="menu"
-          aria-label={t('admin.users.new')}
-          style={{ position: 'fixed', top: pos.top, right: pos.right }}
-          className="z-50 w-72 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-elevated dark:border-slate-800 dark:bg-slate-900"
-          onKeyDown={(e) => {
-            if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
-            e.preventDefault();
-            const buttons = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'));
-            const i = buttons.indexOf(document.activeElement as HTMLButtonElement);
-            const next = e.key === 'ArrowDown' ? (i + 1) % buttons.length : (i - 1 + buttons.length) % buttons.length;
-            buttons[next]?.focus();
-          }}
-        >
-          {items.map((item, i) => (
+      {anchor && (
+        <MenuPopover anchor={anchor} label={t('admin.users.new')} onClose={() => setAnchor(null)} className="w-72">
+          {items.map((item) => (
             <button
               key={item.key}
-              ref={i === 0 ? firstItemRef : undefined}
               type="button"
               role="menuitem"
               onClick={() => {
-                setOpen(false);
+                setAnchor(null);
                 item.run();
               }}
-              className="flex w-full items-start gap-3 px-3 py-2 text-left hover:bg-slate-50 focus:bg-slate-50 focus:outline-none dark:hover:bg-slate-800 dark:focus:bg-slate-800"
+              className={`${menuItemClass} items-start gap-3 py-2`}
             >
               <item.icon size={16} className="mt-0.5 shrink-0 text-slate-500 dark:text-slate-400" aria-hidden="true" />
               <span className="flex flex-col">
@@ -473,9 +421,8 @@ const NewUserMenu: React.FC<{ onLocal: () => void; onLdap?: () => void; onAzure?
               </span>
             </button>
           ))}
-        </div>,
-        document.body,
+        </MenuPopover>
       )}
-    </div>
+    </>
   );
 };

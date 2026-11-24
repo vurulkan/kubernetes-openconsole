@@ -96,6 +96,7 @@ func TestAzureADEndToEnd(t *testing.T) {
 			c["iss"] = "https://evil.example/" + testTenant + "/v2.0"
 		case "preexisting":
 			c["preferred_username"] = "bob@example.com"
+			c["oid"] = "oid-bob" // another person (jane's oid would sign in to jane's account)
 		case "other-oid":
 			c["oid"] = "someone-else" // a re-created or renamed Entra user under jane's name
 		case "no-oid":
