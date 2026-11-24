@@ -205,10 +205,10 @@ export const UsersSection: React.FC<Props> = ({
             placeholder={t('admin.users.search')}
             value={filter}
             onChange={(e) => onFilter(e.target.value)}
-            className="h-9 pl-8"
+            className="pl-8"
           />
         </div>
-        <NativeSelect aria-label={t('apiAccess.label')} value={apiAccess} onChange={(e) => setApiAccess(e.target.value)} className="h-9 w-48">
+        <NativeSelect aria-label={t('apiAccess.label')} value={apiAccess} onChange={(e) => setApiAccess(e.target.value)} className="w-48">
           <option value="*">{t('apiAccess.filterAny')}</option>
           <option value="">{t('apiAccess.roles')}</option>
           <option value="off">{t('apiAccess.off')}</option>
@@ -216,7 +216,7 @@ export const UsersSection: React.FC<Props> = ({
           <option value="full">{t('apiAccess.fullUser')}</option>
         </NativeSelect>
         <div className="ml-auto flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => void exportUsersCsv().catch((err) => alertExport(err))}>
+          <Button variant="outline" onClick={() => void exportUsersCsv().catch((err) => alertExport(err))}>
             <Download size={14} />
             {t('admin.exportCsv')}
           </Button>
@@ -361,7 +361,7 @@ const NewUserMenu: React.FC<{ onLocal: () => void; onLdap?: () => void; onAzure?
 
   if (!onLdap && !onAzure) {
     return (
-      <Button variant="primary" size="sm" onClick={onLocal}>
+      <Button variant="primary" onClick={onLocal}>
         <Plus size={14} />
         {t('admin.users.new')}
       </Button>
@@ -388,7 +388,6 @@ const NewUserMenu: React.FC<{ onLocal: () => void; onLdap?: () => void; onAzure?
     <>
       <Button
         variant="primary"
-        size="sm"
         aria-haspopup="menu"
         aria-expanded={anchor !== null}
         onClick={(e) => setAnchor(anchor ? null : e.currentTarget)}

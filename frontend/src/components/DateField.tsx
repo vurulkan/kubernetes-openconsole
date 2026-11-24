@@ -39,7 +39,9 @@ const dayClass =
  * (react-day-picker, unstyled + Tailwind) where days outside min / max are faded, struck
  * through and can't be picked; on a touch screen the browser's date field with min / max.
  * Both show the same inline error for a typed day outside the range. onChange gets a whole
- * day (YYYY-MM-DD) or '' while the text isn't one, never a half-typed value.
+ * day (YYYY-MM-DD) or '' while the text isn't one, never a half-typed value. One box like
+ * every other field (the calendar button sits inside it); className sizes the whole field,
+ * size="sm" (h-8) sits in a row of small buttons.
  */
 export const DateField: React.FC<{
   value: string;
@@ -49,7 +51,8 @@ export const DateField: React.FC<{
   min?: string;
   max?: string;
   className?: string;
-}> = ({ value, onChange, label, min, max, className = '', ...rest }) => {
+  size?: 'sm';
+}> = ({ value, onChange, label, min, max, className = '', size, ...rest }) => {
   const { t, i18n } = useTranslation();
   const [coarse] = useState(coarsePointer);
   const [open, setOpen] = useState(false);
@@ -70,6 +73,7 @@ export const DateField: React.FC<{
   };
   const error = dayError(text, min, max, t);
   const name = label ?? rest['aria-label'] ?? '';
+  const box = size === 'sm' ? 'h-8' : '';
 
   if (coarse) {
     return (
@@ -82,7 +86,7 @@ export const DateField: React.FC<{
         max={max}
         error={error || undefined}
         onChange={(e) => type(e.target.value)}
-        className={className}
+        className={box}
       />
     );
   }
@@ -99,12 +103,12 @@ export const DateField: React.FC<{
   return (
     <div
       ref={wrapRef}
-      className="relative"
+      className={`relative ${className}`}
       onBlur={(e) => {
         if (open && !wrapRef.current?.contains(e.relatedTarget as Node | null)) setOpen(false);
       }}
     >
-      <div className="flex items-end gap-1">
+      <div className="relative">
         <Input
           label={label}
           aria-label={rest['aria-label']}
@@ -114,7 +118,7 @@ export const DateField: React.FC<{
           maxLength={10}
           error={error || undefined}
           onChange={(e) => type(e.target.value.trim())}
-          className={className}
+          className={`pr-9 tabular-nums ${box}`}
         />
         <button
           ref={buttonRef}
@@ -124,7 +128,8 @@ export const DateField: React.FC<{
           aria-label={t('dateField.open', { name })}
           title={t('dateField.open', { name })}
           onClick={() => setOpen((v) => !v)}
-          className={`${error ? 'mb-[22px]' : ''} flex h-[38px] w-9 shrink-0 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-500 shadow-sm hover:border-slate-400 hover:text-slate-700 focus:outline-none focus-visible:ring-4 focus-visible:ring-brand-500/15 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:text-slate-200`}
+          // Inside the box, on its right: bottom-aligned so a label above or an error below doesn't move it.
+          className={`absolute right-1 ${error ? 'bottom-[26px]' : 'bottom-1'} flex ${size === 'sm' ? 'h-6 w-6' : 'h-7 w-7'} items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/60 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200`}
         >
           <CalendarDays size={15} aria-hidden="true" />
         </button>

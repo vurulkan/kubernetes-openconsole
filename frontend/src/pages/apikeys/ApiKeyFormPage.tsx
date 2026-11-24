@@ -331,7 +331,7 @@ const ApiKeyFormPage: React.FC<{ user: User }> = ({ user }) => {
                     type="button"
                     aria-pressed={template === tpl}
                     onClick={() => applyTemplate(tpl)}
-                    className={`cursor-pointer rounded-md border px-2.5 py-1 text-[11px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 ${
+                    className={`inline-flex h-8 cursor-pointer items-center rounded-md border px-2.5 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 ${
                       template === tpl
                         ? 'border-brand-400 bg-brand-50 text-brand-700 dark:border-brand-500/50 dark:bg-brand-500/15 dark:text-brand-200'
                         : 'border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800'

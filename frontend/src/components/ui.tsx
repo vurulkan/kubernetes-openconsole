@@ -81,6 +81,11 @@ export const TextArea: React.FC<{ label: string; value?: string; onChange: (v: s
   );
 };
 
+// Every field is h-9 (36 px), like Button md and the search boxes, so a row of fields and buttons lines up.
+// Tailwind 3 settles two width (or height) classes by CSS order, not by their order here: a caller's
+// w-40 would lose to w-full, so the default steps aside when the caller sets its own.
+const own = (cls: string, prop: 'w' | 'h', fallback: string) => (new RegExp(`(^|\\s)${prop}-`).test(cls) ? '' : fallback);
+
 export const Input: React.FC<InputProps> = ({ label, error, className = '', id, ...props }) => {
   const autoId = useId();
   const inputId = id ?? autoId;
@@ -94,7 +99,7 @@ export const Input: React.FC<InputProps> = ({ label, error, className = '', id, 
       <input
         id={inputId}
         {...props}
-        className={`block w-full rounded-lg border px-3 py-2 text-sm shadow-sm transition-colors border-slate-300 bg-white text-slate-900 placeholder:text-slate-400 hover:border-slate-400 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/15 disabled:bg-slate-50 disabled:text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500 dark:hover:border-slate-600 dark:disabled:bg-slate-900/60 dark:disabled:text-slate-500 ${
+        className={`block ${own(className, 'w', 'w-full')} ${own(className, 'h', 'h-9')} rounded-lg border px-3 text-sm shadow-sm transition-colors border-slate-300 bg-white text-slate-900 placeholder:text-slate-400 hover:border-slate-400 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/15 disabled:bg-slate-50 disabled:text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500 dark:hover:border-slate-600 dark:disabled:bg-slate-900/60 dark:disabled:text-slate-500 ${
           error ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500/15' : ''
         } ${className}`}
       />
@@ -290,7 +295,7 @@ export const NativeSelect: React.FC<NativeSelectProps> = ({ label, className = '
       <select
         id={selectId}
         {...props}
-        className={`block w-full cursor-pointer rounded-lg border px-3 py-2 text-sm shadow-sm transition-colors border-slate-300 bg-white text-slate-900 hover:border-slate-400 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/15 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-slate-600 ${className}`}
+        className={`block ${own(className, 'w', 'w-full')} ${own(className, 'h', 'h-9')} cursor-pointer rounded-lg border px-3 text-sm shadow-sm transition-colors border-slate-300 bg-white text-slate-900 hover:border-slate-400 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/15 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-slate-600 ${className}`}
       >
         {children}
       </select>
@@ -354,7 +359,7 @@ export const ChipInput: React.FC<ChipInputProps> = ({
         </label>
       )}
       <div
-        className="relative flex min-h-[40px] cursor-text flex-wrap items-center gap-1.5 rounded-lg border px-3 py-2 shadow-sm transition-colors border-slate-300 bg-white hover:border-slate-400 focus-within:border-brand-500 focus-within:ring-4 focus-within:ring-brand-500/15 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600"
+        className="relative flex min-h-9 cursor-text flex-wrap items-center gap-1.5 rounded-lg border px-3 py-1 shadow-sm transition-colors border-slate-300 bg-white hover:border-slate-400 focus-within:border-brand-500 focus-within:ring-4 focus-within:ring-brand-500/15 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600"
         onClick={() => inputRef.current?.focus()}
       >
         {value.map((chip) => (
@@ -505,7 +510,7 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
       <div
         ref={buttonRef}
         onClick={() => setOpen((o) => !o)}
-        className="flex min-h-[40px] w-full cursor-pointer flex-wrap items-center gap-1.5 rounded-lg border px-3 py-2 text-left text-sm shadow-sm transition-colors border-slate-300 bg-white text-slate-900 hover:border-slate-400 focus-within:border-brand-500 focus-within:ring-4 focus-within:ring-brand-500/15 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-slate-600"
+        className="flex min-h-9 w-full cursor-pointer flex-wrap items-center gap-1.5 rounded-lg border px-3 py-1 text-left text-sm shadow-sm transition-colors border-slate-300 bg-white text-slate-900 hover:border-slate-400 focus-within:border-brand-500 focus-within:ring-4 focus-within:ring-brand-500/15 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-slate-600"
       >
         {value.map((v) => (
           <span
@@ -735,7 +740,7 @@ export const Segmented: React.FC<{
   onChange,
   disabled,
 }) => (
-  <div role="group" aria-label={label} className="inline-flex self-start rounded-lg border border-slate-200 p-0.5 dark:border-slate-700">
+  <div role="group" aria-label={label} className="inline-flex h-9 self-start rounded-lg border border-slate-200 p-0.5 dark:border-slate-700">
     {options.map(([v, text]) => (
       <button
         key={v}
@@ -743,7 +748,7 @@ export const Segmented: React.FC<{
         aria-pressed={value === v}
         disabled={disabled}
         onClick={() => onChange(v)}
-        className={`cursor-pointer rounded-md px-3 py-1 disabled:cursor-not-allowed disabled:opacity-50 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 ${
+        className={`cursor-pointer rounded-md px-3 disabled:cursor-not-allowed disabled:opacity-50 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 ${
           value === v
             ? 'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-200'
             : 'text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800'

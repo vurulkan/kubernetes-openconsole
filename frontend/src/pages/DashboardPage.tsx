@@ -491,7 +491,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
                 placeholder={activeTab ? t('dashboard.search', { resource: activeTab }) : t('dashboard.searchGeneric')}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-9 w-64 pl-8"
+                className="w-64 pl-8"
                 data-shortcut="dashboard-search"
                 aria-label={activeTab ? t('dashboard.search', { resource: activeTab }) : t('dashboard.searchGeneric')}
                 title={t('dashboard.searchHint')}

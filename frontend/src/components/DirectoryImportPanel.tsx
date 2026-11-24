@@ -91,7 +91,7 @@ const DirectoryImportPanel: React.FC<Props> = ({ help, search, importKeys, group
         }}
       >
         <Input label={t('common.searchQuery')} value={query} onChange={(e) => setQuery(e.target.value)} className="w-60" autoFocus />
-        <Button type="submit" variant="outline" size="sm" disabled={busy !== ''}>
+        <Button type="submit" variant="outline" disabled={busy !== ''}>
           {busy === 'search' ? (
             <span className="flex items-center gap-2">
               <Spinner size="sm" />
