@@ -88,6 +88,8 @@ export type AzureADConfig = {
   passwordConfigured?: boolean;
   /** Refuse a sign-in whose token doesn't say MFA was done. */
   requireMfa?: boolean;
+  /** New user → Azure AD searches Entra ID through Microsoft Graph. */
+  graphSearch?: boolean;
 };
 
 export const hasToken = () => Boolean(getToken());
@@ -204,6 +206,9 @@ export const ERROR_CODES = [
   'two_factor_required',
   'two_factor_off',
   'azure_mfa_required',
+  'graph_forbidden',
+  'graph_invalid_client',
+  'graph_unreachable',
 ];
 /** A reason code (or "code: detail", as WebSocket frames still send) as a sentence; other text as is. */
 export const errorText = (reason: string, detail?: string) => {
@@ -748,6 +753,10 @@ export const discoverPrometheus = (id: number) =>
     `/api/admin/clusters/${id}/prometheus/discover`,
   );
 
+/** Every cluster id once, in the order they are listed everywhere. */
+export const setClusterOrder = (ids: number[]) =>
+  apiRequest<{ status: string }>('/api/admin/clusters/order', { method: 'PUT', body: JSON.stringify({ ids }) });
+
 export const deleteClusterRow = (id: number) =>
   apiRequest<{ status: string }>(`/api/admin/clusters/${id}`, { method: 'DELETE' });
 
@@ -897,11 +906,33 @@ export const searchLdapUsers = (query: string) =>
     body: JSON.stringify({ query })
   });
 
+/** One person of a directory import: created, skipped (reason exists) or failed (a reason code). */
+export type ImportResult = { id?: string; username: string; status: 'created' | 'skipped' | 'failed'; reason?: string };
+export type ImportAnswer = { created: number; createdUsers?: string[]; results?: ImportResult[] };
+
 export const importLdapUsers = (usernames: string[], groupIds: number[] = []) =>
-  apiRequest<{ created: number; createdUsers?: string[]; skippedExisting?: string[]; failed?: string[] }>('/api/admin/ldap/users/import', {
+  apiRequest<ImportAnswer>('/api/admin/ldap/users/import', {
     method: 'POST',
     body: JSON.stringify({ usernames, groupIds })
   });
+
+export type AzureDirectoryUser = {
+  id: string;
+  displayName: string;
+  mail: string;
+  userPrincipalName: string;
+  /** The account name: the UPN, a guest's e-mail. */
+  username: string;
+  exists?: boolean;
+};
+
+export const testAzureGraph = () => apiRequest<{ status: string }>('/api/admin/azure-ad/graph/test', { method: 'POST' });
+
+export const searchAzureUsers = (query: string) =>
+  apiRequest<{ items: AzureDirectoryUser[] }>('/api/admin/azure-ad/users/search', { method: 'POST', body: JSON.stringify({ query }) });
+
+export const importAzureUsers = (ids: string[], groupIds: number[] = []) =>
+  apiRequest<ImportAnswer>('/api/admin/azure-ad/users/import', { method: 'POST', body: JSON.stringify({ ids, groupIds }) });
 
 export const getSession = () => apiRequest<SessionSettings>('/api/admin/session');
 

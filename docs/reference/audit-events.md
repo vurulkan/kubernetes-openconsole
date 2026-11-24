@@ -57,7 +57,7 @@ The action is `<resource type>.<verb>`. Read from the handlers' code; an action 
 | `cluster.deactivate` | `success` |
 | `cluster.delete` | `success` |
 | `cluster.select` | `success`, `denied`, `failed` |
-| `cluster.update` | `success` |
+| `cluster.update` | `success`, `denied`, `failed` |
 | `cluster.use` | `denied` |
 | `cluster.view_overview` | `success`, `denied`, `failed` |
 | `configmap.get` | `success`, `denied` |
@@ -126,7 +126,7 @@ The action is `<resource type>.<verb>`. Read from the handlers' code; an action 
 | `user.delete` | `success`, `denied`, `failed` |
 | `user.export` | `success` |
 | `user.get` | `success`, `failed` |
-| `user.import` | `success` |
+| `user.import` | `success`, `denied`, `failed` |
 | `user.login` | `success`, `denied`, `failed`, `locked` |
 | `user.reset_password` | `success`, `denied`, `failed` |
 | `user.update` | `success`, `denied`, `failed` |
@@ -209,7 +209,7 @@ A fixed set of typed keys; each is its own field on the log line. They never hol
 | `is_active` | boolean | `openconsole.is_active` | `user.update`: active after the change |
 | `is_admin` | boolean | `openconsole.is_admin` | `user.*`: admin after the change |
 | `key` | keyword | `openconsole.key` | `secret.reveal`: the key name (never the value) |
-| `linked_by` | keyword | `openconsole.linked_by` | `user.login` with Azure AD: the claim a pre-created account was matched by (UPN or e-mail) |
+| `linked_by` | keyword | `openconsole.linked_by` | `user.login` with Azure AD: how the account was found when its name differs from the sign-in name: `oid` (the Entra object id, e.g. after a UPN change), or for a pre-created account `upn`, `email` or `username_case` |
 | `login_method` | keyword | `openconsole.login_method` | `user.login`: `local`, `ldap` or `azure` |
 | `max_sessions` | long | `openconsole.max_sessions` | `pod.exec` rate limited: the per-user limit |
 | `mode` | keyword | `openconsole.mode` | `pod.exec`: `command` for one command over the API |

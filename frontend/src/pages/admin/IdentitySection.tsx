@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Alert, Button, Checkbox, Input, MultiSelect, MultiSelectOption, TextArea } from '../../components/ui';
-import LdapImportPanel from '../../components/LdapImportPanel';
+import { LdapImport } from '../../components/DirectoryImportPanel';
 import {
   getAzureAD,
   getLDAP,
   testAzureAdConnection,
+  testAzureGraph,
   testLdapConnection,
   updateAzureAD,
   updateLDAP,
@@ -224,7 +225,7 @@ export const LdapSection: React.FC<{
       </SectionCard>
 
       <SectionCard title={tr('admin.cards.importLdapUsers')}>
-        <LdapImportPanel
+        <LdapImport
           groups={groups}
           onImported={(names) => {
             if (names.length > 0) onUsersAdded(names);
@@ -249,9 +250,11 @@ export const AzureAdSection: React.FC = () => {
     redirectUrl: '',
     passwordConfigured: false,
     requireMfa: false,
+    graphSearch: false,
   });
   const [updateSecret, setUpdateSecret] = useState(false);
   const [testStatus, setTestStatus] = useState<TestStatus>(null);
+  const [graphStatus, setGraphStatus] = useState<TestStatus>(null);
 
   const load = useCallback(async () => {
     try {
@@ -264,6 +267,7 @@ export const AzureAdSection: React.FC = () => {
         redirectUrl: c.redirectUrl ?? '',
         passwordConfigured: c.passwordConfigured ?? false,
         requireMfa: c.requireMfa ?? false,
+        graphSearch: c.graphSearch ?? false,
       });
       setUpdateSecret(false);
     } catch {
@@ -302,52 +306,94 @@ export const AzureAdSection: React.FC = () => {
 
   const secretKept = !updateSecret && (config.passwordConfigured ?? false);
 
+  // The switch saves at once, with the stored settings (not edits still open in the card above).
+  const setGraphSearch = async (on: boolean) => {
+    setGraphStatus(null);
+    try {
+      const saved = await getAzureAD();
+      await updateAzureAD({ ...saved, clientSecret: '', passwordConfigured: saved.passwordConfigured ?? false, graphSearch: on });
+      setConfig((c) => ({ ...c, graphSearch: on }));
+    } catch (err) {
+      setGraphStatus({ status: 'error', message: (err as Error).message });
+    }
+  };
+
+  const testGraph = async () => {
+    setGraphStatus(null);
+    try {
+      await testAzureGraph();
+      setGraphStatus({ status: 'success', message: tr('admin.azureGraph.testOk') });
+    } catch (err) {
+      setGraphStatus({ status: 'error', message: tr('admin.azureGraph.failed', { reason: (err as Error).message }) });
+    }
+  };
+
   return (
-    <SectionCard title={tr('admin.sections.azureAd')}>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Checkbox checked={config.enabled} onChange={(v) => setConfig({ ...config, enabled: v })} label={tr('admin.ldap.enabled')} />
-        <Input
-          label={tr('admin.azure.tenantId')}
-          value={config.tenantId}
-          onChange={(e) => setConfig({ ...config, tenantId: e.target.value })}
-        />
-        <Input
-          label={tr('admin.azure.clientId')}
-          value={config.clientId}
-          onChange={(e) => setConfig({ ...config, clientId: e.target.value })}
-        />
-        <Input
-          label={tr('admin.azure.redirectUrl')}
-          value={config.redirectUrl}
-          onChange={(e) => setConfig({ ...config, redirectUrl: e.target.value })}
-          placeholder={`${window.location.origin}/api/auth/azure/callback`}
-        />
-        <Checkbox checked={updateSecret} onChange={setUpdateSecret} label={tr('common.updateClientSecret')} />
-        <Input
-          label={tr('common.clientSecret')}
-          type="password"
-          disabled={secretKept}
-          value={secretKept ? tr('common.configured') : config.clientSecret}
-          onChange={(e) => setConfig({ ...config, clientSecret: e.target.value })}
-        />
-        <div className="sm:col-span-2">
-          <Checkbox checked={config.requireMfa} onChange={(v) => setConfig({ ...config, requireMfa: v })} label={tr('twoFactor.admin.azureMfa')} />
-          <p className="ml-6 mt-1 text-xs text-slate-500 dark:text-slate-400">{tr('twoFactor.admin.azureMfaHelp')}</p>
+    <div className="flex flex-col gap-5">
+      <SectionCard title={tr('admin.sections.azureAd')}>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Checkbox checked={config.enabled} onChange={(v) => setConfig({ ...config, enabled: v })} label={tr('admin.ldap.enabled')} />
+          <Input
+            label={tr('admin.azure.tenantId')}
+            value={config.tenantId}
+            onChange={(e) => setConfig({ ...config, tenantId: e.target.value })}
+          />
+          <Input
+            label={tr('admin.azure.clientId')}
+            value={config.clientId}
+            onChange={(e) => setConfig({ ...config, clientId: e.target.value })}
+          />
+          <Input
+            label={tr('admin.azure.redirectUrl')}
+            value={config.redirectUrl}
+            onChange={(e) => setConfig({ ...config, redirectUrl: e.target.value })}
+            placeholder={`${window.location.origin}/api/auth/azure/callback`}
+          />
+          <Checkbox checked={updateSecret} onChange={setUpdateSecret} label={tr('common.updateClientSecret')} />
+          <Input
+            label={tr('common.clientSecret')}
+            type="password"
+            disabled={secretKept}
+            value={secretKept ? tr('common.configured') : config.clientSecret}
+            onChange={(e) => setConfig({ ...config, clientSecret: e.target.value })}
+          />
+          <div className="sm:col-span-2">
+            <Checkbox checked={config.requireMfa} onChange={(v) => setConfig({ ...config, requireMfa: v })} label={tr('twoFactor.admin.azureMfa')} />
+            <p className="ml-6 mt-1 text-xs text-slate-500 dark:text-slate-400">{tr('twoFactor.admin.azureMfaHelp')}</p>
+          </div>
         </div>
-      </div>
-      <div className="mt-4 flex gap-2">
-        <Button variant="primary" size="sm" onClick={save}>
-          {tr('admin.azure.save')}
-        </Button>
-        <Button variant="outline" size="sm" onClick={test}>
-          {tr('admin.azure.test')}
-        </Button>
-      </div>
-      {testStatus && (
-        <Alert severity={testStatus.status} className="mt-3">
-          {testStatus.message}
-        </Alert>
-      )}
-    </SectionCard>
+        <div className="mt-4 flex gap-2">
+          <Button variant="primary" size="sm" onClick={save}>
+            {tr('admin.azure.save')}
+          </Button>
+          <Button variant="outline" size="sm" onClick={test}>
+            {tr('admin.azure.test')}
+          </Button>
+        </div>
+        {testStatus && (
+          <Alert severity={testStatus.status} className="mt-3">
+            {testStatus.message}
+          </Alert>
+        )}
+      </SectionCard>
+
+      <SectionCard title={tr('admin.azureGraph.title')}>
+        <Checkbox checked={config.graphSearch} onChange={(v) => void setGraphSearch(v)} label={tr('admin.azureGraph.enable')} />
+        <p className="ml-6 mt-1 text-xs text-slate-500 dark:text-slate-400">{tr('admin.azureGraph.help')}</p>
+        <p className="ml-6 mt-1 text-xs text-slate-500 dark:text-slate-400">
+          {tr('admin.azureGraph.permission')} <code className="font-mono text-slate-700 dark:text-slate-300">User.Read.All</code>
+        </p>
+        <div className="mt-4">
+          <Button variant="outline" size="sm" onClick={() => void testGraph()}>
+            {tr('admin.azureGraph.test')}
+          </Button>
+        </div>
+        {graphStatus && (
+          <Alert severity={graphStatus.status} className="mt-3">
+            {graphStatus.message}
+          </Alert>
+        )}
+      </SectionCard>
+    </div>
   );
 };

@@ -103,7 +103,7 @@ var DetailDocs = map[string]string{
 	"retention_days":      "`recording.purge`: the retention applied",
 	"login_method":        "`user.login`: `local`, `ldap` or `azure`",
 	"account_source":      "`user.*`: the target account's source",
-	"linked_by":           "`user.login` with Azure AD: the claim a pre-created account was matched by (UPN or e-mail)",
+	"linked_by":           "`user.login` with Azure AD: how the account was found when its name differs from the sign-in name: `oid` (the Entra object id, e.g. after a UPN change), or for a pre-created account `upn`, `email` or `username_case`",
 	"signed_in_as":        "`user.login` with Azure AD: the name the user signed in with",
 	"must_change":         "`user.reset_password`: the user must choose a new password",
 	"auto_provisioned":    "`user.create`: created on first LDAP sign-in",

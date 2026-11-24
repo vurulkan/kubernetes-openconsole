@@ -454,6 +454,10 @@ func migrateTx(ctx context.Context, conn *sql.Tx) error {
 		`ALTER TABLE users ADD COLUMN totp_last_step INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE session_settings ADD COLUMN two_factor_policy TEXT NOT NULL DEFAULT 'off'`,
 		`ALTER TABLE azure_ad_config ADD COLUMN require_mfa INTEGER NOT NULL DEFAULT 0`,
+		// 2.25.0 (M31): the admin's cluster order (numbered once in steps) and
+		// the Azure AD directory search through Microsoft Graph (off by default).
+		`ALTER TABLE clusters ADD COLUMN position INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE azure_ad_config ADD COLUMN graph_search INTEGER NOT NULL DEFAULT 0`,
 	}
 	for _, stmt := range alterStatements {
 		if _, err := conn.ExecContext(ctx, stmt); err != nil && !isDuplicateColumn(err) {
@@ -588,4 +592,22 @@ var steps = []func(context.Context, *sql.Tx) error{
 	// 2.24.0: nothing to change by hand (two-factor columns are added above), but a
 	// new user_version makes the upgrade copy the database first (backupBeforeUpgrade).
 	func(context.Context, *sql.Tx) error { return nil },
+	// 3 (2.25.0): clusters get the order they were shown in (default first,
+	// then by name), so an upgrade doesn't reorder the switcher; the longest
+	// API key lifetime is required now: 0 (no limit) becomes 365 days, more
+	// than 3650 becomes 3650. Existing keys keep their expiry.
+	func(ctx context.Context, tx *sql.Tx) error {
+		for _, stmt := range []string{
+			`UPDATE clusters SET position = (SELECT COUNT(*) FROM clusters c
+				WHERE c.is_active > clusters.is_active
+				OR (c.is_active = clusters.is_active AND (c.name < clusters.name OR (c.name = clusters.name AND c.id < clusters.id)))) + 1`,
+			`UPDATE session_settings SET api_key_max_days = 365 WHERE api_key_max_days <= 0`,
+			`UPDATE session_settings SET api_key_max_days = 3650 WHERE api_key_max_days > 3650`,
+		} {
+			if _, err := tx.ExecContext(ctx, stmt); err != nil {
+				return err
+			}
+		}
+		return nil
+	},
 }

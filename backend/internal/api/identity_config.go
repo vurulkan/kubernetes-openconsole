@@ -152,6 +152,7 @@ func (s *Server) handleImportLDAPUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var created, skipped, failed []string
+	results := []importResult{}
 	for _, username := range request.Usernames {
 		username = strings.TrimSpace(username)
 		if username == "" {
@@ -159,18 +160,21 @@ func (s *Server) handleImportLDAPUsers(w http.ResponseWriter, r *http.Request) {
 		}
 		if _, err := s.store.GetUserByUsername(r.Context(), username); err == nil {
 			skipped = append(skipped, username)
+			results = append(results, importResult{Username: username, Status: "skipped", Reason: "exists"})
 			continue
 		}
 		randomHash, err := auth.HashPassword(randomPassword())
 		if err == nil {
-			_, err = s.store.CreateDirectoryUser(r.Context(), username, randomHash, models.AuthSourceLDAP, request.GroupIDs)
+			_, err = s.store.CreateDirectoryUser(r.Context(), username, randomHash, models.AuthSourceLDAP, "", request.GroupIDs)
 		}
 		if err != nil {
 			slog.Warn("LDAP import failed", slog.String("user", username), slog.Any("error", err))
 			failed = append(failed, username)
+			results = append(results, importResult{Username: username, Status: "failed", Reason: problem.InternalError})
 			continue
 		}
 		created = append(created, username)
+		results = append(results, importResult{Username: username, Status: "created"})
 	}
 	summary := strings.Join(created, ", ")
 	if r := []rune(summary); len(r) > 500 {
@@ -183,6 +187,7 @@ func (s *Server) handleImportLDAPUsers(w http.ResponseWriter, r *http.Request) {
 		"createdUsers":    created,
 		"skippedExisting": skipped,
 		"failed":          failed,
+		"results":         results,
 	})
 }
 
@@ -230,8 +235,8 @@ func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "sessionMinutes must be a positive number")
 		return
 	}
-	if request.APIKeyMaxDays < 0 || request.APIKeyMaxDays > 3650 {
-		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "the longest API key lifetime is 0 (no limit) to 3650 days")
+	if request.APIKeyMaxDays < 1 || request.APIKeyMaxDays > 3650 {
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "the longest API key lifetime is 1 to 3650 days")
 		return
 	}
 	if !validTwoFactorPolicy(request.TwoFactorPolicy) {

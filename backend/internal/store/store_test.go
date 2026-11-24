@@ -508,7 +508,8 @@ func TestPurgeAPIKeyReads(t *testing.T) {
 }
 
 // M15: roles of an older release start at safe read-only, users follow their
-// roles, the expiry policy keeps today's behaviour; the policy columns round-trip.
+// roles, the expiry policy keeps "never expires" and gets the 365-day limit (2.25.0);
+// the policy columns round-trip.
 func TestAPIKeyPolicyUpgrade(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "app.db")
 	legacy, err := sql.Open("sqlite", path)
@@ -544,7 +545,7 @@ func TestAPIKeyPolicyUpgrade(t *testing.T) {
 		t.Fatalf("migrated user = %+v, %v", u, err)
 	}
 	ss, err := st.GetSessionSettings(ctx)
-	if err != nil || ss.SessionMinutes != 45 || ss.APIKeyMaxDays != 0 || !ss.APIKeyAllowNoExpiry {
+	if err != nil || ss.SessionMinutes != 45 || ss.APIKeyMaxDays != 365 || !ss.APIKeyAllowNoExpiry {
 		t.Fatalf("migrated session settings = %+v, %v", ss, err)
 	}
 	newRole, _ := st.CreateRole(ctx, "new", "")

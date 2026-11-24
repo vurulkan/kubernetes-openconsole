@@ -127,11 +127,11 @@ func (s *Store) CreateUser(ctx context.Context, username, passwordHash string) (
 // CreateDirectoryUser creates an account of a directory (LDAP) with a random
 // password hash and its groups in one transaction, so a failure leaves no
 // half-made account behind (one that is local and can't sign in).
-func (s *Store) CreateDirectoryUser(ctx context.Context, username, passwordHash, source string, groupIDs []int) (int, error) {
+func (s *Store) CreateDirectoryUser(ctx context.Context, username, passwordHash, source, azureOID string, groupIDs []int) (int, error) {
 	var id int64
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, `INSERT INTO users (username, password_hash, must_change_password, is_active, is_admin, created_at, auth_source)
-			VALUES (?, ?, 0, 1, 0, ?, ?)`, username, passwordHash, time.Now().UTC(), source)
+		res, err := tx.ExecContext(ctx, `INSERT INTO users (username, password_hash, must_change_password, is_active, is_admin, created_at, auth_source, azure_oid)
+			VALUES (?, ?, 0, 1, 0, ?, ?, ?)`, username, passwordHash, time.Now().UTC(), source, azureOID)
 		if err != nil {
 			return err
 		}
@@ -608,11 +608,11 @@ func (s *Store) UpdateLDAPConfig(ctx context.Context, cfg models.LDAPConfig) err
 }
 
 func (s *Store) GetAzureADConfig(ctx context.Context) (models.AzureADConfig, error) {
-	row := s.conn.QueryRowContext(ctx, `SELECT enabled, tenant_id, client_id, client_secret_enc, redirect_url, require_mfa FROM azure_ad_config WHERE id = 1`)
+	row := s.conn.QueryRowContext(ctx, `SELECT enabled, tenant_id, client_id, client_secret_enc, redirect_url, require_mfa, graph_search FROM azure_ad_config WHERE id = 1`)
 	var cfg models.AzureADConfig
 	var enabled int
 	var encSecret string
-	if err := row.Scan(&enabled, &cfg.TenantID, &cfg.ClientID, &encSecret, &cfg.RedirectURL, &cfg.RequireMFA); err != nil {
+	if err := row.Scan(&enabled, &cfg.TenantID, &cfg.ClientID, &encSecret, &cfg.RedirectURL, &cfg.RequireMFA, &cfg.GraphSearch); err != nil {
 		return cfg, err
 	}
 	cfg.Enabled = enabled == 1
@@ -645,13 +645,14 @@ func (s *Store) UpdateAzureADConfig(ctx context.Context, cfg models.AzureADConfi
 	}
 	_, err := s.conn.ExecContext(
 		ctx,
-		`UPDATE azure_ad_config SET enabled = ?, tenant_id = ?, client_id = ?, client_secret_enc = ?, redirect_url = ?, require_mfa = ? WHERE id = 1`,
+		`UPDATE azure_ad_config SET enabled = ?, tenant_id = ?, client_id = ?, client_secret_enc = ?, redirect_url = ?, require_mfa = ?, graph_search = ? WHERE id = 1`,
 		enabled,
 		cfg.TenantID,
 		cfg.ClientID,
 		encSecret,
 		cfg.RedirectURL,
 		boolToInt(cfg.RequireMFA),
+		boolToInt(cfg.GraphSearch),
 	)
 	return err
 }
@@ -1107,6 +1108,40 @@ func (s *Store) FindUnclaimedAzureAccount(ctx context.Context, name string) (*mo
 		return nil, err
 	}
 	return s.GetUserByID(ctx, id)
+}
+
+// AzureAccountByOID is the Azure AD account bound to the Entra object oid,
+// when exactly one is (an older release could bind a second account to the
+// same person after a UPN change: then the sign-in matches by name as before).
+func (s *Store) AzureAccountByOID(ctx context.Context, oid string) (*models.User, bool, error) {
+	rows, err := s.conn.QueryContext(ctx, `SELECT id FROM users WHERE auth_source = 'azure' AND azure_oid = ? AND azure_oid != '' LIMIT 2`, oid)
+	if err != nil {
+		return nil, false, err
+	}
+	var ids []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, false, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil || len(ids) != 1 {
+		return nil, false, err
+	}
+	u, err := s.GetUserByID(ctx, ids[0])
+	return u, err == nil, err
+}
+
+// DirectoryAccountExists: an account already has this name (any source,
+// any letter case) or is bound to this Entra object id.
+func (s *Store) DirectoryAccountExists(ctx context.Context, username, oid string) (bool, error) {
+	var n int
+	err := s.conn.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM users WHERE lower(username) = lower(?) OR (? != '' AND azure_oid = ?)`, username, oid, oid).Scan(&n)
+	return n > 0, err
 }
 
 // GetUserAzureOID is the Entra object id an Azure AD account is bound to ("" = none yet).
