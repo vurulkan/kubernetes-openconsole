@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { useTranslation } from 'react-i18next';
+import { Trans, useTranslation } from 'react-i18next';
 import { AlertTriangle, Check, Copy } from 'lucide-react';
-import { Alert, Badge, Button, Input } from '../../components/ui';
+import { Alert, Badge, Button } from '../../components/ui';
+import { DateField } from '../../components/DateField';
 import { RESOURCE_CATALOG } from '../../components/PermissionMatrix';
 import type { ApiKey, ApiKeyCeiling } from '../../services/api';
 import { formatDateTime } from '../../utils/format';
@@ -85,7 +86,7 @@ export const ExpiryBadge: React.FC<{ apiKey: ApiKey }> = ({ apiKey }) => {
 export type ExpiryChoice = '7' | '30' | '60' | '90' | 'custom' | 'never';
 const CHOICES: ExpiryChoice[] = ['7', '30', '60', '90', 'custom', 'never'];
 
-/** The admin's expiry policy for new and regenerated keys (maxDays 0 = no limit). */
+/** The admin's expiry policy for new and regenerated keys (maxDays 0 = no limit, before 2.25.0). */
 export type ExpiryPolicy = { maxDays: number; allowNoExpiry: boolean };
 
 /** The choices the policy allows: no preset beyond the limit, no "never" unless allowed. */
@@ -156,20 +157,25 @@ export const ExpiryPicker: React.FC<{
             {c === 'custom' ? t('apiKeys.expiryCustom') : c === 'never' ? t('apiKeys.noExpiry') : t('apiKeys.days', { count: Number(c) })}
           </button>
         ))}
-        {choice === 'custom' && (
-          <Input
-            type="date"
-            aria-label={t('apiKeys.expiryDate')}
-            value={date}
-            min={localDate(new Date(Date.now() + DAY_MS))}
-            max={max}
-            onChange={(e) => onChange('custom', e.target.value)}
-            className="h-8 w-44"
-          />
-        )}
       </div>
-      {policy.maxDays > 0 && (
-        <p className="text-xs text-slate-500 dark:text-slate-400">{t('apiKeys.expiryLimit', { count: policy.maxDays })}</p>
+      {choice === 'custom' && (
+        <DateField
+          aria-label={t('apiKeys.expiryDate')}
+          value={date}
+          min={localDate(new Date(Date.now() + DAY_MS))}
+          max={max}
+          onChange={(v) => onChange('custom', v)}
+          className="w-36"
+        />
+      )}
+      {max && (
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          <Trans
+            i18nKey="apiKeys.expiryLatest"
+            values={{ date: max, count: policy.maxDays }}
+            components={{ b: <strong className="font-semibold text-slate-700 dark:text-slate-200" /> }}
+          />
+        </p>
       )}
       {choice === 'never' && (
         <Alert severity="warning">

@@ -11,7 +11,8 @@ import { SectionCard } from './SectionCard';
 export const SessionSettingsSection: React.FC<{ apiKeysOn: boolean }> = ({ apiKeysOn }) => {
   const { t: tr } = useTranslation();
   const [sessionMinutes, setSessionMinutes] = useState(60);
-  const [apiKeyMaxDays, setApiKeyMaxDays] = useState(0);
+  // Text, so the field can be empty while typing; required, 1–3650 days.
+  const [apiKeyMaxDays, setApiKeyMaxDays] = useState('365');
   const [apiKeyAllowNoExpiry, setApiKeyAllowNoExpiry] = useState(true);
   // The outcome of a save shows in the card whose Save was pressed.
   const [result, setResult] = useState<{ card: Card; ok: boolean; message: string } | null>(null);
@@ -20,7 +21,7 @@ export const SessionSettingsSection: React.FC<{ apiKeysOn: boolean }> = ({ apiKe
     try {
       const s = await getSession();
       setSessionMinutes(s.sessionMinutes);
-      setApiKeyMaxDays(s.apiKeyMaxDays);
+      setApiKeyMaxDays(String(s.apiKeyMaxDays));
       setApiKeyAllowNoExpiry(s.apiKeyAllowNoExpiry);
     } catch {
       /* the form keeps what it shows */
@@ -34,8 +35,10 @@ export const SessionSettingsSection: React.FC<{ apiKeysOn: boolean }> = ({ apiKe
   const save = async (card: Card) => {
     setResult(null);
     try {
-      // The two-factor policy (its own tab) is left out, so it keeps its value.
-      await updateSession({ sessionMinutes, apiKeyMaxDays, apiKeyAllowNoExpiry });
+      // Each card sends its own fields; the rest (and the two-factor policy, its own tab) keep their value.
+      await updateSession(
+        card === 'session' ? { sessionMinutes } : { apiKeyMaxDays: Number(apiKeyMaxDays), apiKeyAllowNoExpiry },
+      );
     } catch (err) {
       setResult({ card, ok: false, message: (err as Error).message });
       return;
@@ -43,6 +46,8 @@ export const SessionSettingsSection: React.FC<{ apiKeysOn: boolean }> = ({ apiKe
     await load();
     setResult({ card, ok: true, message: tr('admin.session.saved') });
   };
+
+  const maxDaysOk = /^\d+$/.test(apiKeyMaxDays) && Number(apiKeyMaxDays) >= 1 && Number(apiKeyMaxDays) <= 3650;
 
   const outcome = (card: Card) =>
     result?.card === card && (
@@ -72,17 +77,18 @@ export const SessionSettingsSection: React.FC<{ apiKeysOn: boolean }> = ({ apiKe
             <Input
               label={tr('admin.apiKeyMaxDays')}
               type="number"
-              min={0}
+              required
+              min={1}
               max={3650}
-              value={apiKeyMaxDays || ''}
-              placeholder={tr('admin.apiKeyNoLimit')}
-              onChange={(e) => setApiKeyMaxDays(Math.max(0, Number(e.target.value) || 0))}
+              value={apiKeyMaxDays}
+              error={maxDaysOk ? undefined : tr('admin.apiKeyMaxDaysRange')}
+              onChange={(e) => setApiKeyMaxDays(e.target.value)}
               className="w-60"
             />
             <Checkbox checked={apiKeyAllowNoExpiry} onChange={setApiKeyAllowNoExpiry} label={tr('admin.apiKeyAllowNoExpiry')} />
             <p className="text-xs text-slate-500 dark:text-slate-400">{tr('admin.apiKeyExpiryExisting')}</p>
           </div>
-          <Button variant="primary" size="sm" className="mt-4" onClick={() => void save('expiry')}>
+          <Button variant="primary" size="sm" className="mt-4" disabled={!maxDaysOk} onClick={() => void save('expiry')}>
             {tr('actions.save')}
           </Button>
           {outcome('expiry')}

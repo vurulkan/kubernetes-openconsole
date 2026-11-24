@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Alert, Button, Input, NativeSelect } from '../../components/ui';
 import Combobox from '../../components/Combobox';
+import { DateField } from '../../components/DateField';
 import { AuditEntryRow } from '../../components/AuditEntryRow';
 import {
   exportAuditLogs,
@@ -193,17 +194,19 @@ export const AuditSection: React.FC<{
           onChange={(v) => set({ namespace: v })}
           className="w-44"
         />
-        <Input
+        <DateField
           label={tr('admin.audit.filterStart')}
-          type="date"
           value={filters.start ?? ''}
-          onChange={(e) => set({ start: e.target.value })}
+          max={filters.end || undefined}
+          onChange={(v) => set({ start: v })}
+          className="w-32"
         />
-        <Input
+        <DateField
           label={tr('admin.audit.filterEnd')}
-          type="date"
           value={filters.end ?? ''}
-          onChange={(e) => set({ end: e.target.value })}
+          min={filters.start || undefined}
+          onChange={(v) => set({ end: v })}
+          className="w-32"
         />
         <div className="flex items-end gap-3">
           <span className="text-xs text-slate-500 dark:text-slate-400">

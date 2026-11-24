@@ -67,6 +67,10 @@ const (
 	TwoFactorRequired           = "two_factor_required"
 	TwoFactorOff                = "two_factor_off"
 	AzureMFARequired            = "azure_mfa_required"
+
+	GraphForbidden     = "graph_forbidden"
+	GraphInvalidClient = "graph_invalid_client"
+	GraphUnreachable   = "graph_unreachable"
 )
 
 // Code is one reason code with what it means, for the API description.
@@ -125,6 +129,9 @@ var Codes = []Code{
 	{TwoFactorRequired, "The two-factor policy requires two-factor sign-in for this account, so it can't be turned off."},
 	{TwoFactorOff, "Two-factor sign-in is switched off on this server (Admin → Session), or not set up for this account."},
 	{AzureMFARequired, "The Microsoft sign-in didn't include multi-factor authentication (no `mfa` in the token's `amr` claim), and the administrator requires it."},
+	{GraphForbidden, "Microsoft Graph refused the directory search: the app registration lacks the Application permission `User.Read.All` or its admin consent."},
+	{GraphInvalidClient, "Microsoft Entra ID refused the app registration's credentials for Microsoft Graph (client secret wrong or expired, unknown client or tenant)."},
+	{GraphUnreachable, "Microsoft Graph could not be reached or answered with an error (network, timeout); detail has the cause."},
 }
 
 // Known reports whether code is in Codes.

@@ -198,7 +198,7 @@ describe('AdminPage users', () => {
       ['GET /api/admin/azure-ad', () => ({ enabled: true })],
     ]);
     renderAdmin('users');
-    fireEvent.click(await screen.findByRole('button', { name: 'More ways to add a user' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'New user' }));
     const menu = screen.getByRole('menu');
     expect(within(menu).getByRole('menuitem', { name: /Import from LDAP/ })).toBeInTheDocument();
     expect(within(menu).getByRole('menuitem', { name: /Azure AD user/ })).toBeInTheDocument();
@@ -357,6 +357,7 @@ describe('AdminPage Azure AD', () => {
       redirectUrl: 'https://oc/cb',
       passwordConfigured: true,
       requireMfa: false,
+      graphSearch: false,
     });
 
     await waitFor(() => expect(sent(calls, 'GET', '/api/admin/azure-ad').length).toBeGreaterThan(1));
@@ -366,10 +367,26 @@ describe('AdminPage Azure AD', () => {
     await waitFor(() => expect(sent(calls, 'PUT', '/api/admin/azure-ad')).toHaveLength(2));
     expect(sent(calls, 'PUT', '/api/admin/azure-ad')[1].body).toMatchObject({ clientSecret: 'shh' });
   });
+
+  it('switches the directory search on from its own card, keeping the stored secret, and tests it', async () => {
+    const calls = mockFetch([
+      ['PUT /api/admin/azure-ad', () => ({ status: 'ok' })],
+      ['POST /api/admin/azure-ad/graph/test', () => new Response(JSON.stringify({ error: 'graph_invalid_client', detail: 'AADSTS7000222' }), { status: 502 })],
+      ['GET /api/admin/azure-ad', () => ({ enabled: true, tenantId: 't-1', clientId: 'c-1', redirectUrl: 'https://oc/cb', passwordConfigured: true })],
+    ]);
+    renderAdmin('azure-ad');
+    expect(await screen.findByRole('heading', { name: 'Directory search (Microsoft Graph)' })).toBeInTheDocument();
+    await expectNoA11yViolations(document.body);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Search Microsoft Entra ID when adding Azure AD users' }));
+    await waitFor(() => expect(sent(calls, 'PUT', '/api/admin/azure-ad')).toHaveLength(1));
+    expect(sent(calls, 'PUT', '/api/admin/azure-ad')[0].body).toMatchObject({ clientSecret: '', passwordConfigured: true, graphSearch: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Test directory search' }));
+    expect(await screen.findByText(/Microsoft Graph could not be used: Microsoft refused the app registration's client secret/)).toBeInTheDocument();
+  });
 });
 
 describe('AdminPage session settings', () => {
-  it('saves the session timeout with the API key expiry policy', async () => {
+  it('saves the session timeout and, in its own card, the required API key lifetime (1–3650)', async () => {
     const calls = mockFetch([
       ['PUT /api/admin/session', () => ({ status: 'ok' })],
       ['GET /api/admin/session', () => ({ sessionMinutes: 60, apiKeyMaxDays: 90, apiKeyAllowNoExpiry: false })],
@@ -381,10 +398,23 @@ describe('AdminPage session settings', () => {
     fireEvent.change(minutes, { target: { value: '30' } });
     fireEvent.click(screen.getAllByRole('button', { name: 'Save' })[0]);
     await waitFor(() => expect(sent(calls, 'PUT', '/api/admin/session')).toHaveLength(1));
-    expect(sent(calls, 'PUT', '/api/admin/session')[0].body).toEqual({ sessionMinutes: 30, apiKeyMaxDays: 90, apiKeyAllowNoExpiry: false });
+    expect(sent(calls, 'PUT', '/api/admin/session')[0].body).toEqual({ sessionMinutes: 30 });
     // A save that worked says so, once, in the card that was saved (2.23.1; before, nothing).
     expect(await screen.findByRole('status')).toHaveTextContent('Saved.');
     expect(screen.getAllByRole('status')).toHaveLength(1);
+
+    // 2.25.0: the longest lifetime is required, 1–3650 days ("no limit" is gone).
+    const maxDays = screen.getByLabelText('Longest lifetime (days)');
+    const saveExpiry = screen.getAllByRole('button', { name: 'Save' })[1];
+    for (const bad of ['', '0', '3651']) {
+      fireEvent.change(maxDays, { target: { value: bad } });
+      expect(screen.getByText('Enter 1 to 3650 days.')).toBeInTheDocument();
+      expect(saveExpiry).toBeDisabled();
+    }
+    fireEvent.change(maxDays, { target: { value: '120' } });
+    fireEvent.click(saveExpiry);
+    await waitFor(() => expect(sent(calls, 'PUT', '/api/admin/session')).toHaveLength(2));
+    expect(sent(calls, 'PUT', '/api/admin/session')[1].body).toEqual({ apiKeyMaxDays: 120, apiKeyAllowNoExpiry: false });
   });
 
   it('asks before requiring two-factor authentication, saying how many must set it up', async () => {

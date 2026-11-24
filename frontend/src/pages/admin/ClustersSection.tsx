@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Activity, Boxes, Pencil, Power, PowerOff, Trash2 } from 'lucide-react';
+import { Activity, Boxes, GripVertical, Pencil, Power, PowerOff, Trash2 } from 'lucide-react';
 import { Alert, Badge, Button, Checkbox, Input, Modal, NativeSelect } from '../../components/ui';
 import { confirm } from '../../components/ConfirmDialog';
 import {
@@ -9,6 +9,7 @@ import {
   deactivateCluster,
   deleteClusterRow,
   listClustersAdmin,
+  setClusterOrder,
   updateClusterRow,
   type ClusterListItem,
 } from '../../services/api';
@@ -68,6 +69,35 @@ export const ClustersSection: React.FC = () => {
   const reload = async () => {
     const refreshed = await listClustersAdmin();
     setClusters(refreshed.items ?? []);
+  };
+
+  // Order: dragged by the ≡ handle (HTML5 drag and drop) or moved with ↑ / ↓ on it; saved at once.
+  const [dragId, setDragId] = useState<number | null>(null);
+  const [dropAt, setDropAt] = useState<number | null>(null); // insert before this index (length = at the end)
+  const [announce, setAnnounce] = useState('');
+  const saving = useRef<Promise<unknown>>(Promise.resolve());
+  const move = (from: number, to: number) => {
+    if (from === to || to < 0 || to >= clusters.length) return;
+    const next = [...clusters];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    setClusters(next);
+    setAnnounce(tr('admin.clusters.position', { name: moved.name, position: to + 1, total: next.length }));
+    // One save at a time, in order: a quick ↑ ↑ ↑ ends in the last order.
+    saving.current = saving.current.then(async () => {
+      try {
+        await setClusterOrder(next.map((c) => c.id));
+      } catch (err) {
+        setStatus({ status: 'error', message: (err as Error).message || tr('admin.clusters.orderFailed') });
+        await reload().catch(() => {});
+      }
+    });
+  };
+  const drop = () => {
+    const from = clusters.findIndex((c) => c.id === dragId);
+    if (from >= 0 && dropAt !== null) move(from, dropAt > from ? dropAt - 1 : dropAt);
+    setDragId(null);
+    setDropAt(null);
   };
 
   useEffect(() => {
@@ -183,16 +213,60 @@ export const ClustersSection: React.FC = () => {
           <p className="text-sm text-slate-500 dark:text-slate-400">{tr('admin.clusters.noneSaved')}</p>
         ) : (
           <div className="flex flex-col gap-2">
-            {clusters.map((c) => (
+            <p className="sr-only" aria-live="polite">
+              {announce}
+            </p>
+            {clusters.map((c, i) => (
               <div
                 key={c.id}
-                className={`flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3 ${
+                onDragOver={(e) => {
+                  if (dragId === null) return;
+                  e.preventDefault();
+                  const r = e.currentTarget.getBoundingClientRect();
+                  setDropAt(e.clientY < r.top + r.height / 2 ? i : i + 1);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  drop();
+                }}
+                className={`relative flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3 ${
                   c.isActive
                     ? 'border-brand-200 bg-brand-50/40 dark:border-brand-500/30 dark:bg-brand-500/10'
                     : 'border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/40'
+                } ${dragId === c.id ? 'opacity-50' : ''} ${
+                  dropAt === i ? 'before:absolute before:inset-x-0 before:-top-[5px] before:h-0.5 before:rounded before:bg-brand-500' : ''
+                } ${
+                  dropAt === clusters.length && i === clusters.length - 1
+                    ? 'after:absolute after:inset-x-0 after:-bottom-[5px] after:h-0.5 after:rounded after:bg-brand-500'
+                    : ''
                 }`}
               >
                 <div className="flex min-w-0 items-center gap-3">
+                  <button
+                    type="button"
+                    draggable={clusters.length > 1}
+                    aria-label={tr('admin.clusters.reorder', { name: c.name, position: i + 1, total: clusters.length })}
+                    title={tr('admin.clusters.reorderHint')}
+                    onDragStart={(e) => {
+                      e.dataTransfer.effectAllowed = 'move';
+                      e.dataTransfer.setData('text/plain', c.name);
+                      const row = e.currentTarget.closest('div.relative');
+                      if (row) e.dataTransfer.setDragImage(row, 16, 16);
+                      setDragId(c.id);
+                    }}
+                    onDragEnd={() => {
+                      setDragId(null);
+                      setDropAt(null);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+                      e.preventDefault();
+                      move(i, e.key === 'ArrowUp' ? i - 1 : i + 1);
+                    }}
+                    className="-ml-1 cursor-grab rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 active:cursor-grabbing dark:text-slate-500 dark:hover:bg-slate-800 dark:hover:text-slate-300"
+                  >
+                    <GripVertical size={16} aria-hidden="true" />
+                  </button>
                   <div
                     className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md ${
                       c.isActive ? 'bg-brand-500 text-white' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'

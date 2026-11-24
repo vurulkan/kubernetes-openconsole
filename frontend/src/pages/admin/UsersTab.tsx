@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Alert, Button, Checkbox, Input, Modal, MultiSelect, MultiSelectOption } from '../../components/ui';
-import LdapImportPanel from '../../components/LdapImportPanel';
+import { AzureImport, LdapImport } from '../../components/DirectoryImportPanel';
 import { confirm } from '../../components/ConfirmDialog';
 import {
   createUser,
@@ -39,6 +39,8 @@ export const UsersTab: React.FC<{
   const { users, groups, userGroups, refresh, loaded } = useDirectory(KINDS, onError);
   const [ldapEnabled, setLdapEnabled] = useState(false);
   const [azureEnabled, setAzureEnabled] = useState(false);
+  const [azureSearch, setAzureSearch] = useState(false);
+  const [showAzureImport, setShowAzureImport] = useState(false);
   const [newUser, setNewUser] = useState<NewUser>(emptyUser());
   const [showCreateUser, setShowCreateUser] = useState(false);
   const [createUserError, setCreateUserError] = useState<string | null>(null);
@@ -58,7 +60,10 @@ export const UsersTab: React.FC<{
       .then((c) => setLdapEnabled(c.enabled ?? false))
       .catch(() => {});
     getAzureAD()
-      .then((c) => setAzureEnabled(c.enabled ?? false))
+      .then((c) => {
+        setAzureEnabled(c.enabled ?? false);
+        setAzureSearch((c.enabled ?? false) && (c.graphSearch ?? false));
+      })
       .catch(() => {});
   }, []);
 
@@ -77,6 +82,10 @@ export const UsersTab: React.FC<{
         filter={filter}
         onFilter={onFilter}
         onNew={(source) => {
+          if (source === 'azure' && azureSearch) {
+            setShowAzureImport(true);
+            return;
+          }
           setNewUser(emptyUser(source));
           setCreateUserError(null);
           setShowCreateUser(true);
@@ -84,6 +93,7 @@ export const UsersTab: React.FC<{
         onImportLdap={ldapEnabled ? () => setShowLdapImport(true) : undefined}
         newUsernames={newUsernames}
         azureEnabled={azureEnabled}
+        azureSearch={azureSearch}
         onReload={() => void refresh()}
         onEdit={(u) =>
           setEditingUser({
@@ -206,7 +216,33 @@ export const UsersTab: React.FC<{
           </Button>
         }
       >
-        {showLdapImport && <LdapImportPanel groups={groups} onImported={afterUsersAdded} />}
+        {showLdapImport && <LdapImport groups={groups} onImported={afterUsersAdded} />}
+      </Modal>
+
+      {/* ── Azure AD: search Entra ID (directory search on) ───────────── */}
+      <Modal
+        open={showAzureImport}
+        onClose={() => setShowAzureImport(false)}
+        title={tr('admin.newUserMenu.azureTitle')}
+        size="md"
+        footer={
+          <Button variant="outline" size="sm" onClick={() => setShowAzureImport(false)}>
+            {tr('actions.close')}
+          </Button>
+        }
+      >
+        {showAzureImport && (
+          <AzureImport
+            groups={groups}
+            onImported={afterUsersAdded}
+            onManual={() => {
+              setShowAzureImport(false);
+              setNewUser(emptyUser('azure'));
+              setCreateUserError(null);
+              setShowCreateUser(true);
+            }}
+          />
+        )}
       </Modal>
 
       {/* ── Edit User modal ───────────────────────────────────────── */}

@@ -71,23 +71,20 @@ describe('UsersSection', () => {
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
   });
 
-  it('New user opens a menu with LDAP import and Azure AD when enabled', async () => {
+  it('New user opens the list of sources when a directory is on, never a local form directly', async () => {
     const onNew = vi.fn();
     const onImportLdap = vi.fn();
     renderSection({ onNew, onImportLdap, azureEnabled: true });
-    // Main part of the split button: straight to a local user.
-    fireEvent.click(screen.getByRole('button', { name: 'New user' }));
-    expect(onNew).toHaveBeenLastCalledWith('local');
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
-
-    const more = screen.getByRole('button', { name: 'More ways to add a user' });
-    fireEvent.click(more);
+    const button = screen.getByRole('button', { name: 'New user' });
+    expect(button).toHaveAttribute('aria-haspopup', 'menu');
+    fireEvent.click(button);
+    expect(onNew).not.toHaveBeenCalled();
     const menu = screen.getByRole('menu');
     const items = within(menu).getAllByRole('menuitem');
     expect(items.map((i) => i.textContent)).toEqual([
       expect.stringContaining('Local user'),
       expect.stringContaining('Import from LDAP'),
-      expect.stringContaining('Azure AD user'),
+      expect.stringContaining('Pre-create a Microsoft account'),
     ]);
     expect(document.activeElement).toBe(items[0]);
     await expectNoA11yViolations(document.body);
@@ -96,13 +93,20 @@ describe('UsersSection', () => {
     expect(onImportLdap).toHaveBeenCalled();
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
 
-    fireEvent.click(more);
+    // Keyboard: ↓ opens it too, Esc closes it and focus goes back to the button.
+    fireEvent.keyDown(button, { key: 'ArrowDown' });
     fireEvent.click(within(screen.getByRole('menu')).getByText('Azure AD user'));
     expect(onNew).toHaveBeenCalledWith('azure');
-
-    fireEvent.click(more);
+    fireEvent.keyDown(button, { key: 'ArrowDown' });
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(button);
+  });
+
+  it('The Azure AD item says it searches when the directory search is on', () => {
+    renderSection({ azureEnabled: true, azureSearch: true });
+    fireEvent.click(screen.getByRole('button', { name: 'New user' }));
+    expect(within(screen.getByRole('menu')).getByText(/Search Microsoft Entra ID/)).toBeInTheDocument();
   });
 
   it('lists and highlights users that were just added', () => {

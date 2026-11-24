@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"k8s-dashboard/backend/internal/models"
@@ -29,7 +30,7 @@ type Cluster struct {
 func (s *Store) ListClusters(ctx context.Context) ([]Cluster, error) {
 	rows, err := s.conn.QueryContext(ctx,
 		`SELECT id, name, description, method, server, is_active, created_at
-		 FROM clusters ORDER BY is_active DESC, name ASC`,
+		 FROM clusters ORDER BY position = 0, position, id`, // 0 = added by an older release after a rollback: last
 	)
 	if err != nil {
 		return nil, err
@@ -46,6 +47,33 @@ func (s *Store) ListClusters(ctx context.Context) ([]Cluster, error) {
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// ErrClusterOrderStale: the order names other clusters than the ones saved
+// (one was added or deleted meanwhile).
+var ErrClusterOrderStale = errors.New("the cluster list changed")
+
+// SetClusterOrder saves the admin's order; ids must be every cluster, once.
+func (s *Store) SetClusterOrder(ctx context.Context, ids []int) error {
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		var n int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM clusters`).Scan(&n); err != nil {
+			return err
+		}
+		if n != len(ids) {
+			return ErrClusterOrderStale
+		}
+		for i, id := range ids {
+			res, err := tx.ExecContext(ctx, `UPDATE clusters SET position = ? WHERE id = ?`, i+1, id)
+			if err != nil {
+				return err
+			}
+			if k, _ := res.RowsAffected(); k != 1 {
+				return ErrClusterOrderStale
+			}
+		}
+		return nil
+	})
 }
 
 func (s *Store) GetCluster(ctx context.Context, id int) (*Cluster, error) {
@@ -110,8 +138,8 @@ func (s *Store) CreateCluster(ctx context.Context, name, description string, cre
 		return 0, err
 	}
 	res, err := s.conn.ExecContext(ctx,
-		`INSERT INTO clusters (name, description, method, kubeconfig_enc, token_enc, server, ca_cert_enc, is_active)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
+		`INSERT INTO clusters (name, description, method, kubeconfig_enc, token_enc, server, ca_cert_enc, is_active, position)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, 0, (SELECT COALESCE(MAX(position), 0) + 1 FROM clusters))`,
 		name, description, creds.Method, encKube, encToken, creds.Server, encCA,
 	)
 	if err != nil {

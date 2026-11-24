@@ -138,7 +138,10 @@ components:
             - `two_factor_required`: The two-factor policy requires two-factor sign-in for this account, so it can't be turned off.
             - `two_factor_off`: Two-factor sign-in is switched off on this server (Admin → Session), or not set up for this account.
             - `azure_mfa_required`: The Microsoft sign-in didn't include multi-factor authentication (no `mfa` in the token's `amr` claim), and the administrator requires it.
-          enum: [unauthorized, api_key_expired, api_key_revoked, password_change_required, forbidden, admin_only, feature_disabled, api_key_not_allowed, api_access_policy, api_access_off, backup_download_disabled, rate_limited, too_many_sessions, not_found, method_not_allowed, invalid_id, invalid_body, invalid_input, body_too_large, conflict, wrong_password, weak_password, password_unchanged, cannot_delete_self, kubeconfig_unsupported, cluster_invalid, cluster_forbidden, cluster_timeout, cluster_unreachable, cluster_error, not_connected, pod_not_found, container_not_found, not_ready, previous_unavailable, unavailable, exec_failed, connection_failed, not_configured, sign_in_failed, recording_unavailable, internal_error, two_factor_invalid, two_factor_challenge_expired, two_factor_enrollment_required, two_factor_required, two_factor_off, azure_mfa_required]
+            - `graph_forbidden`: Microsoft Graph refused the directory search: the app registration lacks the Application permission `User.Read.All` or its admin consent.
+            - `graph_invalid_client`: Microsoft Entra ID refused the app registration's credentials for Microsoft Graph (client secret wrong or expired, unknown client or tenant).
+            - `graph_unreachable`: Microsoft Graph could not be reached or answered with an error (network, timeout); detail has the cause.
+          enum: [unauthorized, api_key_expired, api_key_revoked, password_change_required, forbidden, admin_only, feature_disabled, api_key_not_allowed, api_access_policy, api_access_off, backup_download_disabled, rate_limited, too_many_sessions, not_found, method_not_allowed, invalid_id, invalid_body, invalid_input, body_too_large, conflict, wrong_password, weak_password, password_unchanged, cannot_delete_self, kubeconfig_unsupported, cluster_invalid, cluster_forbidden, cluster_timeout, cluster_unreachable, cluster_error, not_connected, pod_not_found, container_not_found, not_ready, previous_unavailable, unavailable, exec_failed, connection_failed, not_configured, sign_in_failed, recording_unavailable, internal_error, two_factor_invalid, two_factor_challenge_expired, two_factor_enrollment_required, two_factor_required, two_factor_off, azure_mfa_required, graph_forbidden, graph_invalid_client, graph_unreachable]
   responses:
     list:
       description: A Kubernetes list.
@@ -1020,15 +1023,79 @@ paths:
   /api/admin/ldap/users/search:
     post: {tags: [Admin], x-openconsole-admin: true, summary: Search the directory, responses: {"200": {$ref: '#/components/responses/ok'}}}
   /api/admin/ldap/users/import:
-    post: {tags: [Admin], x-openconsole-admin: true, summary: Import directory users, responses: {"200": {$ref: '#/components/responses/ok'}}}
+    post: {tags: [Admin], x-openconsole-admin: true, summary: Import directory users, description: "`results` says per person `created`, `skipped` (`exists`) or `failed` (a reason code).", responses: {"200": {$ref: '#/components/responses/ok'}}}
   /api/admin/azure-ad:
     get: {tags: [Admin], x-openconsole-admin: true, summary: Azure AD settings (no secret), responses: {"200": {$ref: '#/components/responses/ok'}}}
     put: {tags: [Admin], x-openconsole-admin: true, summary: Save Azure AD settings, responses: {"200": {$ref: '#/components/responses/ok'}}}
   /api/admin/azure-ad/test:
     post: {tags: [Admin], x-openconsole-admin: true, summary: Test the Azure AD settings, responses: {"200": {$ref: '#/components/responses/ok'}}}
+  /api/admin/azure-ad/graph/test:
+    post:
+      tags: [Admin]
+      x-openconsole-admin: true
+      summary: Test the Microsoft Graph directory search
+      description: >-
+        Reads one user through Microsoft Graph with the saved app registration (Application permission
+        `User.Read.All` with admin consent). Errors: 502 `graph_forbidden`, `graph_invalid_client`, `graph_unreachable`.
+      responses:
+        "200": {$ref: '#/components/responses/ok'}
+        "400": {$ref: '#/components/responses/error'}
+        "502": {$ref: '#/components/responses/error'}
+  /api/admin/azure-ad/users/search:
+    post:
+      tags: [Admin]
+      x-openconsole-admin: true
+      summary: Search Microsoft Entra ID (directory search on)
+      description: >-
+        Up to 25 people whose name, e-mail or UPN matches `query`; `username` is the UPN (a guest's e-mail),
+        `exists` = an account has that name or is bound to that person. 400 `not_configured` while the directory search
+        is off; Graph errors as in the test.
+      requestBody:
+        content: {application/json: {example: {query: ahmet}}}
+      responses:
+        "200":
+          description: Matches.
+          content: {application/json: {example: {items: [{id: 3f2a…, displayName: Ahmet Yılmaz, mail: ahmet@example.com, userPrincipalName: ahmet@example.com, username: ahmet@example.com, exists: false}]}}}
+        "400": {$ref: '#/components/responses/error'}
+        "502": {$ref: '#/components/responses/error'}
+  /api/admin/azure-ad/users/import:
+    post:
+      tags: [Admin]
+      x-openconsole-admin: true
+      summary: Create Azure AD accounts for people found in Entra ID
+      description: >-
+        `ids` are Entra object ids; each person is read from Graph again and created as an Azure AD account bound to
+        that id, in `groupIds`. `results` says per person `created`, `skipped` (`exists`) or `failed` (a reason code).
+      requestBody:
+        content: {application/json: {example: {ids: [3f2a…], groupIds: [2]}}}
+      responses:
+        "200":
+          description: Per-person results.
+          content: {application/json: {example: {created: 1, createdUsers: [ahmet@example.com], results: [{id: 3f2a…, username: ahmet@example.com, status: created}]}}}
+        "400": {$ref: '#/components/responses/error'}
   /api/admin/session:
     get: {tags: [Admin], x-openconsole-admin: true, summary: 'Session, API key expiry and two-factor settings', description: "`twoFactorPolicy`: off, optional, admins or all; `twoFactorUnenrolled`: per required policy, how many accounts would have to set it up.", responses: {"200": {$ref: '#/components/responses/ok'}}}
-    put: {tags: [Admin], x-openconsole-admin: true, summary: 'Save session, API key expiry and two-factor settings', responses: {"200": {$ref: '#/components/responses/ok'}}}
+    put:
+      tags: [Admin]
+      x-openconsole-admin: true
+      summary: 'Save session, API key expiry and two-factor settings'
+      description: >-
+        Fields left out keep their value. `apiKeyMaxDays` (the longest lifetime of a new or regenerated key) is
+        required to be 1–3650 since 2.25.0 (0 used to mean no limit); outside that range is 400 `invalid_input`.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sessionMinutes: {type: integer, minimum: 1}
+                apiKeyMaxDays: {type: integer, minimum: 1, maximum: 3650}
+                apiKeyAllowNoExpiry: {type: boolean}
+                twoFactorPolicy: {type: string, enum: ['off', optional, admins, all]}
+            example: {sessionMinutes: 60, apiKeyMaxDays: 365, apiKeyAllowNoExpiry: false, twoFactorPolicy: 'off'}
+      responses:
+        "200": {$ref: '#/components/responses/ok'}
+        "400": {$ref: '#/components/responses/error'}
   /api/admin/sessions:
     get: {tags: [Admin], x-openconsole-admin: true, summary: Web sessions, responses: {"200": {$ref: '#/components/responses/list'}}}
   /api/admin/sessions/{id}:
@@ -1047,6 +1114,22 @@ paths:
       responses:
         "200": {$ref: '#/components/responses/ok'}
         "400": {$ref: '#/components/responses/error'}
+  /api/admin/clusters/order:
+    put:
+      tags: [Admin]
+      x-openconsole-admin: true
+      summary: Set the order clusters are listed in
+      description: >-
+        `ids` names every cluster once, in the new order; the switcher, the command palette, the API key form and
+        Admin → Clusters list them this way (the default cluster is not moved to the top). A repeated or invalid id
+        is 400 `invalid_input`; a list that no longer matches the saved clusters (one was added or deleted
+        meanwhile) is 409 `conflict`.
+      requestBody:
+        content: {application/json: {example: {ids: [3, 1, 2]}}}
+      responses:
+        "200": {$ref: '#/components/responses/ok'}
+        "400": {$ref: '#/components/responses/error'}
+        "409": {$ref: '#/components/responses/error'}
   /api/admin/clusters/{id}:
     parameters: [{$ref: '#/components/parameters/id'}]
     put: {tags: [Admin], x-openconsole-admin: true, summary: Update a cluster, responses: {"200": {$ref: '#/components/responses/ok'}}}
