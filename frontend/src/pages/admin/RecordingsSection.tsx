@@ -362,10 +362,10 @@ export const RecordingsSection: React.FC = () => {
         <DateField aria-label={t('recordings.from')} value={draft.from ?? ''} max={draft.to || undefined} onChange={(v) => setDraft((d) => ({ ...d, from: v }))} />
         <DateField aria-label={t('recordings.to')} value={draft.to ?? ''} min={draft.from || undefined} onChange={(v) => setDraft((d) => ({ ...d, to: v }))} />
         <div className="flex gap-2">
-          <Button type="submit" variant="primary" size="sm" className="flex-1">
+          <Button type="submit" variant="primary" className="flex-1">
             {t('recordings.applyFilter')}
           </Button>
-          <Button type="button" variant="outline" size="sm" onClick={clearFilter}>
+          <Button type="button" variant="outline" onClick={clearFilter}>
             {t('recordings.clearFilter')}
           </Button>
         </div>

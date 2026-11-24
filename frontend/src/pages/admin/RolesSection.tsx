@@ -108,10 +108,10 @@ export const RolesSection: React.FC<Props> = ({
             placeholder={t('admin.roles.search')}
             value={filter}
             onChange={(e) => onFilter(e.target.value)}
-            className="h-9 pl-8"
+            className="pl-8"
           />
         </div>
-        <Button variant="primary" size="sm" onClick={onNew}>
+        <Button variant="primary" onClick={onNew}>
           <Plus size={14} />
           {t('admin.roles.new')}
         </Button>

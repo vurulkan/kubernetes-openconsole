@@ -114,7 +114,8 @@ Screenshots: Playwright's `chromium.launch` dies on this Mac; start Chrome yours
   `steps` for a one-time change such as a table rebuild; never edit a shipped step; store tests upgrade an old schema).
   A new encrypted column → `store.encryptedColumns`.
 - **any UI** → light + dark theme, TR + EN, keyboard reachable, axe clean (frontend tests run axe); a dialog uses `Modal` / `Drawer` or
-  `useDialogFocus`; a screen is lazy-loaded in `App.tsx`; hooks pass `npm run lint` (`eslint.config.js`: rules-of-hooks + exhaustive-deps;
+  `useDialogFocus`; fields (`Input`, `NativeSelect`, `Combobox`, `DateField`) are `h-9` like `Button` md, so a bordered button in a row of
+  fields is md, and a filter bar is an equal-column grid (Admin → Audit); a `w-*` / `h-*` className replaces the field's default; a screen is lazy-loaded in `App.tsx`; hooks pass `npm run lint` (`eslint.config.js`: rules-of-hooks + exhaustive-deps;
   react-hooks 7's React Compiler rules stay off: the app doesn't use the compiler and their fixes change behaviour).
 - **anything a user or operator notices** → the docs site (below); the README only if a highlight or the quick start
   changes.

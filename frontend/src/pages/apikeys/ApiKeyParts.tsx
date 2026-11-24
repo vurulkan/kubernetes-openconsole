@@ -141,14 +141,15 @@ export const ExpiryPicker: React.FC<{
       <legend className={hideLegend ? 'sr-only' : 'mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400'}>
         {t('apiKeys.expiry')}
       </legend>
-      <div className="flex flex-wrap items-center gap-1.5">
+      {/* items-start: a typed day's error under the date box doesn't move the chips */}
+      <div className="flex flex-wrap items-start gap-1.5">
         {allowedChoices(policy).map((c) => (
           <button
             key={c}
             type="button"
             aria-pressed={choice === c}
             onClick={() => onChange(c, date)}
-            className={`cursor-pointer rounded-md border px-2.5 py-1 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 ${
+            className={`inline-flex h-8 cursor-pointer items-center rounded-md border px-2.5 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 ${
               choice === c
                 ? 'border-brand-400 bg-brand-50 text-brand-700 dark:border-brand-500/50 dark:bg-brand-500/15 dark:text-brand-200'
                 : 'border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800'
@@ -157,17 +158,18 @@ export const ExpiryPicker: React.FC<{
             {c === 'custom' ? t('apiKeys.expiryCustom') : c === 'never' ? t('apiKeys.noExpiry') : t('apiKeys.days', { count: Number(c) })}
           </button>
         ))}
+        {choice === 'custom' && (
+          <DateField
+            aria-label={t('apiKeys.expiryDate')}
+            value={date}
+            min={localDate(new Date(Date.now() + DAY_MS))}
+            max={max}
+            onChange={(v) => onChange('custom', v)}
+            size="sm"
+            className="w-40"
+          />
+        )}
       </div>
-      {choice === 'custom' && (
-        <DateField
-          aria-label={t('apiKeys.expiryDate')}
-          value={date}
-          min={localDate(new Date(Date.now() + DAY_MS))}
-          max={max}
-          onChange={(v) => onChange('custom', v)}
-          className="w-36"
-        />
-      )}
       {max && (
         <p className="text-xs text-slate-500 dark:text-slate-400">
           <Trans

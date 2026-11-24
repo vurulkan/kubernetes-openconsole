@@ -289,7 +289,7 @@ const LogViewerBody: React.FC<Props> = ({ namespace, target, pod, onClose }) => 
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-900">
           {!multi && containers.length > 1 && (
             <div className="w-48">
-              <NativeSelect aria-label={t('logs.container')} value={container} onChange={(e) => setContainer(e.target.value)} className="!py-1.5 text-xs">
+              <NativeSelect aria-label={t('logs.container')} value={container} onChange={(e) => setContainer(e.target.value)} className="h-[30px] text-xs">
                 {containers.map((c) => (
                   <option key={c.name} value={c.name}>
                     {c.init ? `${c.name} (init)` : c.name}
