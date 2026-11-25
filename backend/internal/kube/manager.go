@@ -44,6 +44,15 @@ func NewManagerWithClient(client kubernetes.Interface) *Manager {
 	return &Manager{bus: NewEventBus(), client: client, stream: client, ready: true}
 }
 
+// NewManagerWithCache is NewManagerWithClient with a running informer cache
+// (tests of reads that come from the cache only, such as search).
+func NewManagerWithCache(client kubernetes.Interface) *Manager {
+	m := NewManagerWithClient(client)
+	m.informers = newInformerCache(client, m.bus, nil)
+	go m.informers.start(context.Background())
+	return m
+}
+
 // EventBus exposes the shared bus so API handlers can subscribe clients to
 // informer-driven events without reaching into informer internals.
 func (m *Manager) EventBus() *EventBus {

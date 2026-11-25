@@ -44,6 +44,7 @@ export type PodObject = {
     phase?: string;
     reason?: string;
     podIP?: string;
+    podIPs?: { ip?: string }[];
     qosClass?: string;
     conditions?: Condition[];
     initContainerStatuses?: ContainerStatus[];

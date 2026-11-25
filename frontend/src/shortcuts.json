@@ -59,7 +59,9 @@
   ]},
   {"id": "palette", "title": {"en": "Command palette", "tr": "Komut paleti"}, "rows": [
     {"keys": ["↑", "↓"], "text": {"en": "Move selection", "tr": "Seçimi oynat"}},
-    {"keys": ["↵"], "text": {"en": "Run selected command", "tr": "Seçili komutu çalıştır"}},
+    {"keys": ["↵"], "text": {"en": "Run selected command, or open the selected resource", "tr": "Seçili komutu çalıştır ya da seçili kaynağı aç"}},
+    {"keys": ["svc", "ns:"], "join": "or", "text": {"en": "Narrow the resource search: a kind first (kubectl short name: po, deploy, sts, ds, svc, cm, ing, job, cj, hpa, ns, no), ns:<namespace>, then a space; an IP (10.42.0.7, 10.42.) finds pods, Services and nodes", "tr": "Kaynak aramasını daraltın: önce bir tür (kubectl kısa adı: po, deploy, sts, ds, svc, cm, ing, job, cj, hpa, ns, no), ns:<namespace>, ardından boşluk; bir IP (10.42.0.7, 10.42.) pod, Service ve node'ları bulur"}},
+    {"keys": ["⌫"], "text": {"en": "Empty search box: remove the last filter", "tr": "Arama kutusu boşken: son filtreyi kaldır"}},
     {"keys": ["Esc"], "text": {"en": "Close the active modal / palette", "tr": "Aktif modal / paleti kapat"}}
   ]}
 ]

@@ -117,7 +117,7 @@ describe('NodesPage', () => {
 
     // A pod opens on the Dashboard.
     fireEvent.click(within(podsSection).getByText('api-1'));
-    expect(localStorage.getItem('dashboardPendingPod')).toBe('api-1');
+    expect(localStorage.getItem('dashboardPendingDetail')).toBe('api-1');
     expect(await screen.findByText('dashboard')).toBeInTheDocument();
   });
 });

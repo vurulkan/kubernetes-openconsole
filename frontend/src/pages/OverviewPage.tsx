@@ -359,7 +359,7 @@ const OverviewPage: React.FC<{ user: User }> = ({ user }) => {
                           type="button"
                           onClick={() =>
                             openDashboard(navigate, kind === 'Pod'
-                              ? { dashboardNamespace: r.namespace, dashboardResourceTab: 'pods', dashboardPendingSearch: name, dashboardPendingPod: name }
+                              ? { dashboardNamespace: r.namespace, dashboardResourceTab: 'pods', dashboardPendingSearch: name, dashboardPendingDetail: name }
                               : { dashboardNamespace: r.namespace, dashboardResourceTab: ownerTab[kind] ?? 'pods', dashboardPendingSearch: name })
                           }
                           className="flex w-full cursor-pointer flex-col gap-1 rounded-lg px-2 py-1.5 text-left hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/60 dark:hover:bg-slate-800/60"

@@ -1,5 +1,6 @@
 import i18n from '../i18n';
 import { noteActivity } from '../utils/session';
+import type { PodLike } from '../utils/podStatus';
 
 export type User = {
   id: number;
@@ -363,6 +364,29 @@ export const wsUrl = async (path: string, params?: URLSearchParams, auto?: boole
 const autoRefresh = (auto?: boolean): RequestInit => (auto ? { headers: { 'X-OpenConsole-Refresh': 'auto' } } : {});
 
 export const listNamespaces = (auto?: boolean) => apiRequest<{ namespaces: string[] }>('/api/namespaces', autoRefresh(auto));
+
+/** A kind the ⌘K search finds (the permission resource name; nodes for admins). */
+export type SearchKind =
+  | 'pods' | 'deployments' | 'statefulsets' | 'daemonsets' | 'services' | 'ingresses'
+  | 'configmaps' | 'jobs' | 'cronjobs' | 'hpas' | 'nodes';
+export type SearchHit = {
+  kind: SearchKind;
+  namespace?: string;
+  name: string;
+  /** The matching IP of an IP search. */
+  ip?: string;
+  /** Replicas ready / desired, Service type, CronJob schedule, node Ready. */
+  status?: string;
+  /** A pod's status, for podStatus(). */
+  pod?: PodLike;
+};
+/** ⌘K resource search on the tab's cluster. Not activity, not audited. */
+export const searchResources = (q: { q: string; kind?: SearchKind; ns?: string }) => {
+  const p = new URLSearchParams({ q: q.q });
+  if (q.kind) p.set('kind', q.kind);
+  if (q.ns) p.set('ns', q.ns);
+  return apiRequest<{ items: SearchHit[] }>(`/api/search?${p}`, autoRefresh(true));
+};
 
 export const getNamespacePermissions = (namespace: string) =>
   apiRequest<{ resources: Record<string, string[]> }>(`/api/namespaces/${namespace}/permissions`);

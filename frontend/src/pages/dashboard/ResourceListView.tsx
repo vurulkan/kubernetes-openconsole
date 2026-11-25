@@ -14,7 +14,7 @@ import { Badge } from '../../components/ui';
 import { ContainerSquares, PodRestarts, PodStatusBadge } from '../../components/PodStatusBadge';
 import { Column, DataTable, IconButton } from '../../components/DataTable';
 import { ageShort } from '../../utils/age';
-import { containerStates, podController, podStatus, type ContainerInfo, type PodStatus } from '../../utils/podStatus';
+import { containerStates, podController, podIPs, podStatus, type ContainerInfo, type PodStatus } from '../../utils/podStatus';
 import { UsageBar } from '../../components/Usage';
 import type { MetricsSnapshot } from '../../services/api';
 import { ownerUsage, podResources, scaleResources } from '../../utils/resources';
@@ -75,6 +75,8 @@ export type ResourceViewProps = {
   onRestart: (name: string) => void;
   onScale: (name: string, current: number) => void;
   onScaleStatefulSet: (name: string, current: number) => void;
+  /** The list's column picker changed (the Dashboard searches the pod IP only while its column shows). */
+  onColumnsChange?: () => void;
 };
 
 // Typed views of a row: the API's plain JSON is assignable to each (every field is optional).
@@ -264,6 +266,15 @@ export const ResourceListView: React.FC<ResourceViewProps> = (props) => {
               </span>
             );
           },
+        },
+        {
+          // Off by default; while it shows, the search matches it too (utils/searchText.ts).
+          key: 'ip',
+          header: t('dashboard.detail.podIP'),
+          defaultHidden: true,
+          // IPv4 in numeric order (10.0.0.9 before 10.0.0.10)
+          sortValue: (it) => podIPs(it)[0]?.replace(/\d+/g, (n) => n.padStart(3, '0')) ?? null,
+          cell: (it) => <span className="font-mono text-xs text-slate-600 dark:text-slate-300">{podIPs(it).join(', ') || '—'}</span>,
         },
         ...podUsageCols,
         ageCol,
@@ -933,6 +944,7 @@ export const ResourceListView: React.FC<ResourceViewProps> = (props) => {
         onRowClick={opensDrawer ? onOpen : undefined}
         sortStorageKey={`dashboard:${activeTab}`}
         columnsStorageKey={`dashboard:${activeTab}`}
+        onColumnsChange={props.onColumnsChange}
         emptyMessage={
           loading
             ? t('common.loading')

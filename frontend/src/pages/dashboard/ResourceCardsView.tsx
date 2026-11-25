@@ -6,6 +6,7 @@ import {
   FileText,
   KeyRound,
   Link2,
+  Network,
   RefreshCw,
   RotateCcw,
   Scaling,
@@ -17,7 +18,7 @@ import { useTranslation } from 'react-i18next';
 import { Badge, Button } from '../../components/ui';
 import { ContainerSquares, PodRestarts, PodStatusBadge, STATUS_DOT } from '../../components/PodStatusBadge';
 import { UsageBar } from '../../components/Usage';
-import { containerStates, podController, podStatus } from '../../utils/podStatus';
+import { containerStates, podController, podIPs, podStatus } from '../../utils/podStatus';
 import { formatAge } from '../../utils/age';
 import { ownerUsage, podResources, scaleResources } from '../../utils/resources';
 import { KIND } from './WorkloadDrawer';
@@ -284,6 +285,13 @@ export const ResourceCardsView: React.FC<ResourceViewProps & { actionBusy: strin
                   </div>
                 );
               })()}
+              {pod && (
+                <div className="flex items-center gap-1.5">
+                  <Network size={11} className="text-slate-500 dark:text-slate-400" />
+                  <span>{t('dashboard.detail.podIP')}:</span>
+                  <span className="font-mono text-slate-700 dark:text-slate-200">{podIPs(item).join(', ') || '—'}</span>
+                </div>
+              )}
               {metrics?.available && (activeTab === 'pods' || isWorkloadTab) && (() => {
                 const owner = isWorkloadTab ? `${KIND[activeTab as WorkloadKind]}/${name}` : '';
                 const used = activeTab === 'pods' ? usageOf(name) : ownerUsage(metrics.items, owner);

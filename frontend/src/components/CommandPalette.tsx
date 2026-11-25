@@ -1,22 +1,50 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Boxes, Gauge, Home, KeyRound, Search, Server, Settings, ShieldCheck } from 'lucide-react';
+import { Boxes, Box, Gauge, History, Home, KeyRound, Search, Server, Settings, ShieldCheck, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { getFeatures, User } from '../services/api';
+import { getFeatures, searchResources, tabClusterId, type SearchHit, type SearchKind, User } from '../services/api';
 import { useTheme } from './ThemeProvider';
 import { PALETTE_EVENT_NAME } from '../hooks/useGlobalShortcuts';
 import { useDialogFocus } from '../hooks/useDialogFocus';
+import { KIND_NAME, takeFilters, typingNamespace, type PaletteKind } from '../utils/paletteQuery';
+import { podStatus } from '../utils/podStatus';
+import { openDashboard } from '../utils/openDashboard';
 
-type CommandKind = 'nav' | 'namespace' | 'theme';
+type CommandKind = 'nav' | 'namespace' | 'theme' | 'resource' | 'recent';
 
 type Command = {
   id: string;
   label: string;
   hint?: string;
+  /** Resource rows: the kind, shown before the name. */
+  badge?: string;
   kind: CommandKind;
   onRun: () => void;
   icon?: React.ComponentType<{ size?: number | string; className?: string }>;
 };
+
+type Recent = { kind: SearchKind; namespace?: string; name: string };
+const RECENT_MAX = 5;
+// Per user and cluster, in this browser only (never sent to the server).
+const recentKey = (userId: number) => `palette:recent:${userId}:${tabClusterId() ?? 0}`;
+function readRecent(userId: number): Recent[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(recentKey(userId)) ?? '[]');
+    return Array.isArray(v) ? v.filter((r) => r && typeof r.name === 'string' && typeof r.kind === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+function writeRecent(userId: number, list: Recent[]) {
+  try {
+    localStorage.setItem(recentKey(userId), JSON.stringify(list.slice(0, RECENT_MAX)));
+  } catch {
+    /* ignore */
+  }
+}
+const sameResource = (a: Recent, b: Recent) => a.kind === b.kind && a.name === b.name && (a.namespace ?? '') === (b.namespace ?? '');
+
+const DRAWER_KINDS: SearchKind[] = ['pods', 'deployments', 'statefulsets', 'daemonsets'];
 
 type Props = {
   user: User;
@@ -30,10 +58,16 @@ type Props = {
  *  - pick a namespace (fires onPickNamespace or writes an URL hash the
  *    Dashboard listens to)
  *  - switch theme (light/dark/system)
+ *  - find a resource on the tab's cluster by name or IP (/api/search) and open it; a kind word or
+ *    ns:<name> first narrows it (utils/paletteQuery.ts) and becomes a chip; the last few opened
+ *    resources show while the box is empty
  */
 export const CommandPalette: React.FC<Props> = ({ user, namespaces, onPickNamespace }) => {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [chips, setChips] = useState<{ kind?: PaletteKind; ns?: string }>({});
+  const [hits, setHits] = useState<SearchHit[]>([]);
+  const [recent, setRecent] = useState<Recent[]>([]);
   const [cursor, setCursor] = useState(0);
   const navigate = useNavigate();
   const { t } = useTranslation();
@@ -51,6 +85,7 @@ export const CommandPalette: React.FC<Props> = ({ user, namespaces, onPickNamesp
         e.preventDefault();
         setOpen((prev) => !prev);
         setQuery('');
+        setChips({});
         setCursor(0);
       } else if (open && e.key === 'Escape') {
         e.preventDefault();
@@ -68,6 +103,7 @@ export const CommandPalette: React.FC<Props> = ({ user, namespaces, onPickNamesp
     const open = () => {
       setOpen(true);
       setQuery('');
+      setChips({});
       setCursor(0);
     };
     window.addEventListener(PALETTE_EVENT_NAME, open as EventListener);
@@ -81,7 +117,60 @@ export const CommandPalette: React.FC<Props> = ({ user, namespaces, onPickNamesp
   const close = () => {
     setOpen(false);
     setQuery('');
+    setChips({});
     setCursor(0);
+  };
+
+  useEffect(() => {
+    if (open) setRecent(readRecent(user.id));
+  }, [open, user.id]);
+
+  // What goes to the server: the chips, plus an `ns:pro` still being typed.
+  const typed = typingNamespace(query);
+  const searchNs = chips.ns ?? typed.ns;
+  const searchText = typed.text;
+  const searchKind = chips.kind === 'namespaces' ? undefined : chips.kind;
+  const wantsSearch = open && chips.kind !== 'namespaces' && (searchText.length >= 2 || !!searchNs);
+  useEffect(() => {
+    if (!wantsSearch) {
+      setHits([]);
+      return;
+    }
+    let stale = false;
+    const timer = window.setTimeout(() => {
+      searchResources({ q: searchText, kind: searchKind, ns: searchNs })
+        .then((r) => !stale && setHits(r.items ?? []))
+        .catch(() => !stale && setHits([]));
+    }, 200);
+    return () => {
+      stale = true;
+      window.clearTimeout(timer);
+    };
+  }, [wantsSearch, searchText, searchKind, searchNs]);
+
+  const openResource = ({ kind, namespace, name }: Recent) => {
+    const r = { kind, namespace, name };
+    writeRecent(user.id, [r, ...readRecent(user.id).filter((x) => !sameResource(x, r))]);
+    if (r.kind === 'nodes') {
+      navigate(`/nodes?node=${encodeURIComponent(r.name)}`);
+      return;
+    }
+    openDashboard(navigate, {
+      dashboardNamespace: r.namespace ?? '',
+      dashboardResourceTab: r.kind,
+      dashboardPendingSearch: r.name,
+      ...(DRAWER_KINDS.includes(r.kind) ? { dashboardPendingDetail: r.name } : {}),
+    });
+  };
+  // A recent one that is gone (or no longer yours to list) leaves the list; it still opens, so a
+  // missing permission shows the Dashboard's usual error.
+  const openRecent = (r: Recent) => {
+    void searchResources({ q: r.name, kind: r.kind, ns: r.namespace })
+      .then((res) => {
+        if (!res.items.some((h) => sameResource(h, r))) writeRecent(user.id, readRecent(user.id).filter((x) => !sameResource(x, r)));
+      })
+      .catch(() => {});
+    openResource(r);
   };
 
   const commands = useMemo<Command[]>(() => {
@@ -165,26 +254,42 @@ export const CommandPalette: React.FC<Props> = ({ user, namespaces, onPickNamesp
     return [...navs, ...themes, ...nss];
   }, [user, namespaces, navigate, location.pathname, onPickNamespace, setMode, t, apiKeysOn]);
 
-  const q = query.trim().toLowerCase();
+  const resourceRow = (r: Recent, kind: 'resource' | 'recent', detail?: string): Command => ({
+    id: `${kind}:${r.kind}:${r.namespace ?? ''}/${r.name}`,
+    label: r.name,
+    badge: KIND_NAME[r.kind],
+    hint: [r.namespace, detail].filter(Boolean).join(' · '),
+    kind,
+    icon: kind === 'recent' ? History : r.kind === 'nodes' ? Server : Box,
+    onRun: () => (kind === 'recent' ? openRecent(r) : openResource(r)),
+  });
+
+  const q = searchText.toLowerCase();
   const filtered = useMemo(() => {
-    if (!q) return commands;
-    return commands.filter(
+    // A kind or namespace filter narrows the palette to resources (or, for `ns`, to namespaces).
+    const narrowed = chips.kind || searchNs ? commands.filter((c) => c.kind === 'namespace' && chips.kind === 'namespaces') : commands;
+    if (!q) return narrowed;
+    return narrowed.filter(
       (c) =>
         c.label.toLowerCase().includes(q) ||
         c.id.toLowerCase().includes(q) ||
         (c.hint ?? '').toLowerCase().includes(q)
     );
-  }, [commands, q]);
+  }, [commands, q, chips.kind, searchNs]);
 
   const grouped = useMemo(() => {
-    const byKind: Record<CommandKind, Command[]> = { nav: [], namespace: [], theme: [] };
+    const byKind: Record<CommandKind, Command[]> = { nav: [], namespace: [], theme: [], resource: [], recent: [] };
     filtered.forEach((c) => byKind[c.kind].push(c));
     return byKind;
   }, [filtered]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- resourceRow / openResource only read the latest navigate + user
+  const resourceRows = useMemo(() => hits.map((h) => resourceRow(h, 'resource', h.ip || (h.pod ? podStatus(h.pod).label : h.status))), [hits]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const recentRows = useMemo(() => (!query.trim() && !chips.kind && !chips.ns ? recent.map((r) => resourceRow(r, 'recent')) : []), [recent, query, chips]);
 
   const flat = useMemo(
-    () => [...grouped.nav, ...grouped.theme, ...grouped.namespace],
-    [grouped]
+    () => [...recentRows, ...grouped.nav, ...grouped.theme, ...grouped.namespace, ...resourceRows],
+    [grouped, recentRows, resourceRows]
   );
 
   useEffect(() => {
@@ -197,7 +302,11 @@ export const CommandPalette: React.FC<Props> = ({ user, namespaces, onPickNamesp
   };
 
   const handleKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'ArrowDown') {
+    if (e.key === 'Backspace' && query === '' && (chips.kind || chips.ns)) {
+      e.preventDefault();
+      setChips((c) => (c.ns ? { kind: c.kind } : {}));
+      setCursor(0);
+    } else if (e.key === 'ArrowDown') {
       e.preventDefault();
       setCursor((v) => Math.min(flat.length - 1, v + 1));
     } else if (e.key === 'ArrowUp') {
@@ -210,6 +319,11 @@ export const CommandPalette: React.FC<Props> = ({ user, namespaces, onPickNamesp
   };
 
   if (!open) return null;
+
+  const chipList = [
+    ...(chips.kind ? [{ id: 'kind', label: KIND_NAME[chips.kind], remove: () => setChips((c) => ({ ns: c.ns })) }] : []),
+    ...(chips.ns ? [{ id: 'ns', label: `ns: ${chips.ns}`, remove: () => setChips((c) => ({ kind: c.kind })) }] : []),
+  ];
 
   const section = (title: string, items: Command[]) => {
     if (items.length === 0) return null;
@@ -236,6 +350,11 @@ export const CommandPalette: React.FC<Props> = ({ user, namespaces, onPickNamesp
                   }`}
                 >
                   <Icon size={14} className="shrink-0 text-slate-500 dark:text-slate-400" />
+                  {c.badge && (
+                    <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                      {c.badge}
+                    </span>
+                  )}
                   <span className="flex-1 truncate">{c.label}</span>
                   {c.hint && (
                     <span className="text-[11px] text-slate-500 dark:text-slate-400">{c.hint}</span>
@@ -261,11 +380,34 @@ export const CommandPalette: React.FC<Props> = ({ user, namespaces, onPickNamesp
         aria-label={t('palette.title')}
       >
         <div className="flex items-center gap-2 border-b border-slate-200 px-3 py-2 dark:border-slate-800">
-          <Search size={16} className="text-slate-400" />
+          <Search size={16} className="shrink-0 text-slate-400" />
+          {chipList.map((chip) => (
+            <span
+              key={chip.id}
+              className="inline-flex shrink-0 items-center gap-1 rounded-md bg-brand-50 py-0.5 pl-1.5 pr-0.5 text-xs font-medium text-brand-700 dark:bg-brand-500/15 dark:text-brand-200"
+            >
+              {chip.label}
+              <button
+                type="button"
+                aria-label={t('palette.removeFilter', { name: chip.label })}
+                onClick={chip.remove}
+                className="rounded p-0.5 hover:bg-brand-100 dark:hover:bg-brand-500/25"
+              >
+                <X size={11} />
+              </button>
+            </span>
+          ))}
           <input
             value={query}
+            aria-label={t('palette.title')}
             onChange={(e) => {
-              setQuery(e.target.value);
+              const f = takeFilters(e.target.value, user.isAdmin);
+              if (f.kind || f.ns) {
+                setChips((c) => ({ kind: f.kind ?? c.kind, ns: f.ns ?? c.ns }));
+                setQuery(f.rest);
+              } else {
+                setQuery(e.target.value);
+              }
               setCursor(0);
             }}
             onKeyDown={handleKey}
@@ -276,13 +418,20 @@ export const CommandPalette: React.FC<Props> = ({ user, namespaces, onPickNamesp
             ESC
           </kbd>
         </div>
+        {!query && !chips.kind && !chips.ns && (
+          <p className="border-b border-slate-200 px-3 py-1.5 font-mono text-[11px] text-slate-500 dark:border-slate-800 dark:text-slate-400">
+            {t('palette.filterHint')}
+          </p>
+        )}
         <div className="max-h-[50vh] overflow-auto py-1">
           {flat.length === 0 && (
             <p className="px-3 py-6 text-center text-sm text-slate-500 dark:text-slate-400">{t('palette.noResults')}</p>
           )}
+          {section(t('palette.sectionRecent'), recentRows)}
           {section(t('palette.sectionNavigate'), grouped.nav)}
           {section(t('palette.sectionTheme'), grouped.theme)}
           {section(t('palette.sectionNamespaces'), grouped.namespace)}
+          {section(t('palette.sectionResources'), resourceRows)}
         </div>
         <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50/60 px-3 py-1.5 text-[10px] text-slate-500 dark:text-slate-400 dark:border-slate-800 dark:bg-slate-900/60">
           <span>{t('palette.footerKeys')}</span>
