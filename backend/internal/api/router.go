@@ -257,6 +257,7 @@ func (s *Server) routes() *chi.Mux {
 		r.Put("/api/views/{id}", s.handleShareView)
 		r.Delete("/api/views/{id}", s.handleDeleteView)
 		r.Get("/api/clusters/public", s.handleListClustersPublic)
+		r.Get("/api/search", s.handleSearch)
 		r.Get("/api/namespaces", s.handleNamespaces)
 		r.Get("/api/namespaces/{namespace}/permissions", s.handleNamespacePermissions)
 		r.Get("/api/namespaces/{namespace}/pods", s.handlePods)

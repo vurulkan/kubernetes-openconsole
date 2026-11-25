@@ -523,17 +523,50 @@ func (c *ResourceClient) ScaleDeployment(ctx context.Context, namespace, name st
 // secret value in the cluster resident in memory and need list/watch on
 // secrets cluster-wide. Reads go straight to the API server instead.
 
+// HelmRelease is the type of the Secrets Helm keeps one per release revision: each holds the
+// whole rendered chart, so in a busy namespace they are megabytes the list only counts.
+const HelmRelease corev1.SecretType = "helm.sh/release.v1"
+
+// ListSecrets: every Secret in full except Helm releases, which come as metadata only (no Data;
+// a single read still has it). The type filter runs here too: a fake clientset ignores field selectors.
 func (c *ResourceClient) ListSecrets(ctx context.Context, namespace string) ([]corev1.Secret, error) {
-	client, ok := c.mgr(ctx).Client()
-	if !ok || !c.mgr(ctx).Ready() {
+	m := c.mgr(ctx)
+	client, ok := m.Client()
+	if !ok || !m.Ready() {
 		return nil, ErrNotReady
 	}
-	result, err := client.CoreV1().Secrets(namespace).List(ctx, metav1.ListOptions{})
+	result, err := client.CoreV1().Secrets(namespace).List(ctx, metav1.ListOptions{FieldSelector: "type!=" + string(HelmRelease)})
 	if err != nil {
 		return nil, err
 	}
-	sort.Slice(result.Items, func(i, j int) bool { return result.Items[i].Name < result.Items[j].Name })
-	return result.Items, nil
+	items := make([]corev1.Secret, 0, len(result.Items))
+	for _, s := range result.Items {
+		if s.Type != HelmRelease {
+			items = append(items, s)
+		}
+	}
+	helm := metav1.ListOptions{FieldSelector: "type=" + string(HelmRelease)}
+	if meta := m.metadataClient(); meta != nil {
+		list, err := meta.Resource(corev1.SchemeGroupVersion.WithResource("secrets")).Namespace(namespace).List(ctx, helm)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range list.Items {
+			items = append(items, corev1.Secret{ObjectMeta: p.ObjectMeta, Type: HelmRelease})
+		}
+	} else {
+		full, err := client.CoreV1().Secrets(namespace).List(ctx, helm)
+		if err != nil {
+			return nil, err
+		}
+		for _, s := range full.Items {
+			if s.Type == HelmRelease {
+				items = append(items, corev1.Secret{ObjectMeta: s.ObjectMeta, Type: HelmRelease})
+			}
+		}
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
+	return items, nil
 }
 
 func (c *ResourceClient) GetSecret(ctx context.Context, namespace, name string) (*corev1.Secret, error) {

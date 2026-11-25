@@ -15,6 +15,8 @@ import { Alert, Badge, Button, Input } from '../components/ui';
 import { useScopedShortcuts } from '../hooks/useScopedShortcuts';
 import { EVENTS_PANEL_EVENT_NAME } from '../hooks/useGlobalShortcuts';
 import { searchText } from '../utils/searchText';
+import { DASHBOARD_STAGE_EVENT } from '../utils/openDashboard';
+import { columnShown } from '../components/DataTable';
 import type { ObjectMeta } from '../utils/kubeTypes';
 import { ResourceListView, type ResourceViewProps } from './dashboard/ResourceListView';
 import { ResourceCardsView } from './dashboard/ResourceCardsView';
@@ -77,6 +79,18 @@ function matchesSearch(tokens: string[], text: string, item: Record<string, unkn
   return true;
 }
 
+/** The drawer openDashboard staged (`dashboardPendingDetail`) for a pod or workload tab; taken once. */
+function stagedDetail(tab: string): { kind: 'pods' | WorkloadKind; name: string } | null {
+  try {
+    const name = localStorage.getItem('dashboardPendingDetail');
+    localStorage.removeItem('dashboardPendingDetail');
+    const drawer = tab === 'pods' || tab === 'deployments' || tab === 'statefulsets' || tab === 'daemonsets';
+    return name && drawer ? { kind: tab, name } : null;
+  } catch {
+    return null;
+  }
+}
+
 const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   const navigate = useNavigate();
   const [namespaces, setNamespaces] = useState<string[]>([]);
@@ -133,14 +147,40 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   const shell = useShell();
   // Detail drawer. obj is a snapshot for objects not in the current tab (a pod opened from its deployment).
   const [detail, setDetail] = useState<{ kind: 'pods' | WorkloadKind; name: string; obj?: Record<string, unknown> } | null>(null);
-  useEffect(() => setDetail(null), [selectedNamespace]);
-  // Admin → Overview opens a pod's drawer here; it stages the pod like a saved view stages its search.
-  const pendingPod = useRef(localStorage.getItem('dashboardPendingPod'));
+  // A drawer staged by openDashboard (⌘K, Overview, Nodes), opened once its namespace is selected; a
+  // namespace switch closes the drawer otherwise.
+  const [stagedOnMount] = useState(() => stagedDetail(activeTab));
+  const pendingDetail = useRef<typeof detail>(stagedOnMount);
   useEffect(() => {
-    if (!pendingPod.current) return;
-    setDetail({ kind: 'pods', name: pendingPod.current });
-    localStorage.removeItem('dashboardPendingPod');
-  }, []);
+    setDetail(pendingDetail.current);
+    pendingDetail.current = null;
+  }, [selectedNamespace]);
+  // ⌘K while the Dashboard is open: apply what openDashboard staged.
+  useEffect(() => {
+    const apply = () => {
+      let ns: string | null = null;
+      let tab = '';
+      let search = '';
+      try {
+        ns = localStorage.getItem('dashboardNamespace');
+        tab = localStorage.getItem('dashboardResourceTab') ?? '';
+        search = localStorage.getItem('dashboardPendingSearch') ?? '';
+        localStorage.removeItem('dashboardPendingSearch');
+      } catch {
+        return;
+      }
+      const d = stagedDetail(tab);
+      const nsChanges = !!ns && ns !== selectedNamespace;
+      if (nsChanges || (tab && tab !== activeTab)) pendingSearch.current = search;
+      else setSearchQuery(search);
+      if (nsChanges) pendingDetail.current = d;
+      else setDetail(d);
+      if (ns) setSelectedNamespace(ns);
+      if (tab) setActiveTab(tab);
+    };
+    window.addEventListener(DASHBOARD_STAGE_EVENT, apply);
+    return () => window.removeEventListener(DASHBOARD_STAGE_EVENT, apply);
+  }, [selectedNamespace, activeTab]);
   const detailObj = detail
     ? (activeTab === detail.kind ? items.find((it) => nameOf(it) === detail.name) : undefined) ?? detail.obj ?? null
     : null;
@@ -208,12 +248,15 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
   // keeps rows that contain "foo" AND have tier=front AND have an
   // "app" label.
   // Built once per refresh, so a keystroke only runs substring checks.
+  // The pod IP is searched while it shows: always on cards, in the list while its column is on.
+  const [ipColumn, setIpColumn] = useState(() => columnShown('dashboard:pods', { key: 'ip', defaultHidden: true }));
+  const podIP = viewMode === 'card' || ipColumn;
   const haystacks = useMemo(
-    () => new Map(items.map((it) => [it, searchText(activeTab, it)])),
+    () => new Map(items.map((it) => [it, searchText(activeTab, it, podIP)])),
     // i18n.language: translated status texts are part of the haystack; searchText reads them
     // through the global i18n, so the hook can't see this dependency.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [items, activeTab, i18n.language],
+    [items, activeTab, podIP, i18n.language],
   );
   const filteredItems = useMemo(() => {
     const q = searchQuery.trim();
@@ -412,6 +455,7 @@ const DashboardPage: React.FC<{ user: User }> = ({ user }) => {
     onRestart: actions.openRestart,
     onScale: (name, current) => actions.openScale(name, current),
     onScaleStatefulSet: (name, current) => actions.openScale(name, current, 'statefulsets'),
+    onColumnsChange: () => setIpColumn(columnShown('dashboard:pods', { key: 'ip', defaultHidden: true })),
   };
 
   const namespacePanel = (

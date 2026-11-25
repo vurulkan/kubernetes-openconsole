@@ -313,6 +313,37 @@ paths:
         "200":
           description: Namespace names.
           content: {application/json: {example: {namespaces: [ci-dev, ci-test]}}}
+  /api/search:
+    get:
+      tags: [Account]
+      summary: Find resources by name or IP on this cluster
+      description: >-
+        The ⌘K search. Names match by prefix first, then anywhere in the name; a query of digits and dots with
+        at least one dot (`10.42.`, `10.42.0.7`) matches pod, Service and (admins) node IPs instead, exact match
+        first, then Services, nodes and pods. Only namespace × kind pairs you may `list` (an API key: its scope as well), never Secrets; nodes
+        for admins only. Read from the server's cache: a kind still loading is left out. At most 30 results; a
+        query shorter than 2 characters returns none unless `ns` is set. Not audited.
+      parameters:
+        - {$ref: '#/components/parameters/cluster'}
+        - {name: q, in: query, schema: {type: string}, description: Name or IP (prefix).}
+        - name: kind
+          in: query
+          schema: {type: string, enum: [pods, deployments, statefulsets, daemonsets, services, ingresses, configmaps, jobs, cronjobs, hpas, nodes]}
+          description: Only this kind.
+        - {name: ns, in: query, schema: {type: string}, description: Only namespaces whose name starts with this.}
+      responses:
+        "200":
+          description: >-
+            Results, best first. `status`: ready / desired replicas, the Service type, the CronJob schedule or the
+            node's Ready condition; a pod carries `pod` (its status) instead. `ip`: the matching IP of an IP search.
+          content:
+            application/json:
+              example:
+                items:
+                  - {kind: pods, namespace: ci-dev, name: web-7c9f, ip: 10.42.0.7, pod: {metadata: {}, spec: {}, status: {phase: Running}}}
+                  - {kind: deployments, namespace: ci-dev, name: web, status: 2/2}
+        "400": {$ref: '#/components/responses/error'}
+        "403": {$ref: '#/components/responses/error'}
   /api/namespaces/{namespace}/permissions:
     parameters: [{$ref: '#/components/parameters/namespace'}]
     get:
@@ -911,6 +942,9 @@ paths:
     get:
       tags: [Config]
       summary: List Secrets (key names and sizes, never values)
+      description: >-
+        A Helm release (`type: helm.sh/release.v1`) is read as metadata only: its one key `release` comes
+        without `size` (one Secret's read has it).
       x-openconsole-permission: ["secrets:list"]
       responses: {"200": {$ref: '#/components/responses/list'}}
   /api/namespaces/{namespace}/secrets/{name}:

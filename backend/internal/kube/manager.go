@@ -15,6 +15,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -23,6 +24,7 @@ type Manager struct {
 	mu         sync.RWMutex
 	client     kubernetes.Interface
 	stream     kubernetes.Interface // followed logs: no overall request timeout
+	meta       metadata.Interface   // metadata-only lists (Helm release Secrets); nil in tests
 	restConfig *rest.Config
 	ready      bool
 	lastError  string
@@ -42,6 +44,15 @@ func NewManager() *Manager {
 // with client-go's fake clientset.
 func NewManagerWithClient(client kubernetes.Interface) *Manager {
 	return &Manager{bus: NewEventBus(), client: client, stream: client, ready: true}
+}
+
+// NewManagerWithCache is NewManagerWithClient with a running informer cache
+// (tests of reads that come from the cache only, such as search).
+func NewManagerWithCache(client kubernetes.Interface) *Manager {
+	m := NewManagerWithClient(client)
+	m.informers = newInformerCache(client, m.bus, nil)
+	go m.informers.start(context.Background())
+	return m
 }
 
 // EventBus exposes the shared bus so API handlers can subscribe clients to
@@ -84,6 +95,7 @@ func (m *Manager) ApplyCredentials(creds models.KubeCredentials) error {
 
 	m.client = client
 	m.stream = stream
+	m.meta, _ = metadata.NewForConfig(config) // nil on error: ListSecrets reads in full
 	m.restConfig = config
 	m.ready = true
 	m.lastError = ""
@@ -186,6 +198,12 @@ func newClients(config *rest.Config) (client, stream kubernetes.Interface, err e
 	return client, stream, nil
 }
 
+func (m *Manager) metadataClient() metadata.Interface {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.meta
+}
+
 func (m *Manager) Ready() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -258,6 +276,7 @@ func (m *Manager) Stop() {
 	m.stopMetrics()
 	m.client = nil
 	m.stream = nil
+	m.meta = nil
 	m.restConfig = nil
 	m.ready = false
 	// Live Events sockets on this cluster end, so the panels reconnect to the

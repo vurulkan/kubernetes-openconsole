@@ -10,6 +10,7 @@ vi.mock('../components/PodExecModal', () => ({
   default: ({ pod, container }: { pod: string; container?: string }) => <div role="dialog" aria-label={`shell ${pod}/${container}`} />,
 }));
 import DashboardPage from './DashboardPage';
+import { openPod } from '../utils/openDashboard';
 import { mockFetch } from '../test/fetchMock';
 import { expectNoA11yViolations } from '../test/a11y';
 import type { User } from '../services/api';
@@ -87,6 +88,28 @@ describe('DashboardPage keyboard', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'YAML' }));
     expect(await screen.findByRole('dialog', { name: /Pod/ })).toBeInTheDocument();
     await vi.waitFor(() => expect(calls.some((c) => c.url === '/api/namespaces/shop/pods/web-1/yaml')).toBe(true));
+  });
+});
+
+describe('DashboardPage staged by the palette', () => {
+  // ⌘K on an open Dashboard: another namespace's pod opens with its drawer and the search set
+  // (the namespace switch, which closes drawers, must not close this one).
+  it('opens a pod of another namespace with its drawer', async () => {
+    mockFetch([
+      ['GET /api/namespaces/blog/pods/api-1/', () => ({ items: [], points: [] })],
+      ['/metrics/', () => ({ source: 'memory', points: [], available: false, items: [] })],
+      ['GET /api/namespaces/shop/pods', () => ({ items: [pod('web-1')] })],
+      ['GET /api/namespaces/blog/pods', () => ({ items: [pod('api-1'), pod('api-2')] })],
+      ...base,
+    ]);
+    renderPage();
+    await screen.findByRole('button', { name: 'web-1' });
+    await act(async () => {
+      openPod(() => {}, 'blog', 'api-1');
+    });
+    expect(await screen.findByRole('dialog', { name: /api-1/ })).toBeInTheDocument();
+    expect(screen.getByDisplayValue('api-1')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'api-2' })).toBeNull();
   });
 });
 

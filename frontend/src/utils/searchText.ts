@@ -1,8 +1,10 @@
 // What a plain search term is matched against on each Dashboard tab: the name plus the text the
 // tab's columns show, hidden columns included, so list and card view find the same rows. Ages,
 // restarts and CPU / memory are left out (numbers that change), and so is anything that isn't a column.
+// One exception: the pod IP only when it shows (`podIP`: the card view, or the list's IP column turned
+// on), so "10" doesn't match every pod; list and card view may then find different rows.
 import i18n from '../i18n';
-import { containerStates, podController, podStatus } from './podStatus';
+import { containerStates, podController, podIPs, podStatus } from './podStatus';
 
 type Item = Record<string, any>;
 
@@ -15,7 +17,7 @@ function workloadStatus(desired: number, ready: number, kind: 'deployments' | 's
   return t(ready >= desired ? 'dashboard.status.available' : 'dashboard.status.progressing');
 }
 
-function columnTexts(tab: string, it: Item): unknown[] {
+function columnTexts(tab: string, it: Item, podIP: boolean): unknown[] {
   const t = i18n.t.bind(i18n);
   const spec = it.spec ?? {};
   const st = it.status ?? {};
@@ -29,6 +31,7 @@ function columnTexts(tab: string, it: Item): unknown[] {
         ...containerStates(it).map((c) => c.name),
         owner?.kind,
         owner?.name,
+        ...(podIP ? podIPs(it) : []),
       ];
     }
     case 'deployments':
@@ -76,8 +79,8 @@ function columnTexts(tab: string, it: Item): unknown[] {
 }
 
 /** Lower-cased, one value per line so a term can't match across two values. */
-export function searchText(tab: string, it: Item): string {
-  return [it.metadata?.name, ...columnTexts(tab, it)]
+export function searchText(tab: string, it: Item, podIP = false): string {
+  return [it.metadata?.name, ...columnTexts(tab, it, podIP)]
     .filter((v) => v !== undefined && v !== null && v !== false && v !== '')
     .join('\n')
     .toLowerCase();

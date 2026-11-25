@@ -295,3 +295,9 @@ export function exitCodeHint(t: Pick<Termination, 'exitCode' | 'reason' | 'signa
   if (sig) return { key: 'dashboard.exitCode.signal', signal: SIGNALS[sig] ?? String(sig) };
   return { key: 'dashboard.exitCode.other' };
 }
+
+/** A pod's IPs, both of a dual-stack pod; empty while it has none (Pending). */
+export const podIPs = (pod: { status?: { podIP?: string; podIPs?: { ip?: string }[] } }): string[] => {
+  const ips = (pod.status?.podIPs ?? []).map((p) => p.ip).filter((ip): ip is string => !!ip);
+  return ips.length ? ips : pod.status?.podIP ? [pod.status.podIP] : [];
+};

@@ -6,6 +6,7 @@ import {
   FileText,
   KeyRound,
   Link2,
+  Network,
   RefreshCw,
   RotateCcw,
   Scaling,
@@ -17,13 +18,13 @@ import { useTranslation } from 'react-i18next';
 import { Badge, Button } from '../../components/ui';
 import { ContainerSquares, PodRestarts, PodStatusBadge, STATUS_DOT } from '../../components/PodStatusBadge';
 import { UsageBar } from '../../components/Usage';
-import { containerStates, podController, podStatus } from '../../utils/podStatus';
+import { containerStates, podController, podIPs, podStatus } from '../../utils/podStatus';
 import { formatAge } from '../../utils/age';
 import { ownerUsage, podResources, scaleResources } from '../../utils/resources';
 import { KIND } from './WorkloadDrawer';
 import type { ResourceViewProps } from './ResourceListView';
 import type { WorkloadKind } from '../../services/api';
-import type { PodObject, WorkloadObject } from '../../utils/kubeTypes';
+import { lbAddresses, type PodObject, type ServiceObject, type WorkloadObject } from '../../utils/kubeTypes';
 
 /**
  * The Dashboard's card view. Rendered only in card mode; the browser skips
@@ -284,6 +285,13 @@ export const ResourceCardsView: React.FC<ResourceViewProps & { actionBusy: strin
                   </div>
                 );
               })()}
+              {pod && (
+                <div className="flex items-center gap-1.5">
+                  <Network size={11} className="text-slate-500 dark:text-slate-400" />
+                  <span>{t('dashboard.detail.podIP')}:</span>
+                  <span className="font-mono text-slate-700 dark:text-slate-200">{podIPs(item).join(', ') || '—'}</span>
+                </div>
+              )}
               {metrics?.available && (activeTab === 'pods' || isWorkloadTab) && (() => {
                 const owner = isWorkloadTab ? `${KIND[activeTab as WorkloadKind]}/${name}` : '';
                 const used = activeTab === 'pods' ? usageOf(name) : ownerUsage(metrics.items, owner);
@@ -299,6 +307,17 @@ export const ResourceCardsView: React.FC<ResourceViewProps & { actionBusy: strin
                   <div className="grid grid-cols-2 gap-3 pt-0.5">
                     <UsageBar kind="cpu" used={used.cpu} limit={budget.cpu.limit} request={budget.cpu.request} />
                     <UsageBar kind="mem" used={used.memory} limit={budget.mem.limit} request={budget.mem.request} />
+                  </div>
+                );
+              })()}
+              {activeTab === 'services' && (() => {
+                const lb = lbAddresses(item as ServiceObject);
+                if (!lb) return null;
+                return (
+                  <div className="flex items-center gap-1.5">
+                    <Network size={11} className="text-slate-500 dark:text-slate-400" />
+                    <span>{t('dashboard.columns.loadBalancerIP')}:</span>
+                    <span className="font-mono text-slate-700 dark:text-slate-200">{lb.length ? lb.join(', ') : t('dashboard.status.pending')}</span>
                   </div>
                 );
               })()}

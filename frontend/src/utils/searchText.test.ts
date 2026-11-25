@@ -18,6 +18,14 @@ describe('searchText', () => {
     for (const term of ['node-a', '10.42', 'nginx']) expect(finds('pods', pod, term)).toBe(false);
   });
 
+  it('pods: the IP only when it shows (card view, or the IP column on); both of a dual-stack pod', () => {
+    const pod = { metadata: { name: 'web-1' }, status: { podIP: '10.42.0.7', podIPs: [{ ip: '10.42.0.7' }, { ip: 'fd00::7' }] } };
+    expect(searchText('pods', pod, true)).toContain('10.42.0.7');
+    expect(searchText('pods', pod, true)).toContain('fd00::7');
+    expect(searchText('pods', pod, false)).not.toContain('10.42');
+    expect(searchText('pods', { metadata: { name: 'p' }, status: { podIP: '10.1.1.1' } }, true)).toContain('10.1.1.1');
+  });
+
   it('pods: a running pod that is not ready matches the text the badge shows', () => {
     const pod = {
       metadata: { name: 'p' },

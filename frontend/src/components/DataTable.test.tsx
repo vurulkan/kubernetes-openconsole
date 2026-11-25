@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
-import { Column, DataTable, IconButton } from './DataTable';
+import { Column, DataTable, IconButton, columnShown } from './DataTable';
 import { expectNoA11yViolations } from '../test/a11y';
 
 type Row = { id: number; name: string };
@@ -158,6 +158,31 @@ describe('DataTable column picker', () => {
     expect(reset).toHaveFocus();
     fireEvent.keyDown(reset, { key: 'ArrowDown' });
     expect(ns).toHaveFocus(); // Name is disabled, so the wrap skips it
+  });
+
+  it('a defaultHidden column starts off, its "on" is kept, and reset turns it off again', () => {
+    localStorage.clear();
+    const hiddenIp = cols.map((c) => (c.key === 'ip' ? { ...c, defaultHidden: true } : c));
+    const onChange = vi.fn();
+    const mountIp = () =>
+      render(<DataTable rows={data} columns={hiddenIp} rowKey={(r) => r.id} columnsStorageKey="t:pods" onColumnsChange={onChange} />);
+    const { unmount } = mountIp();
+    expect(headers()).toEqual(['Name', 'Namespace', 'Actions']);
+    expect(columnShown('t:pods', hiddenIp[2])).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Columns' }));
+    const ip = screen.getAllByRole('menuitemcheckbox')[2];
+    expect(ip).toHaveAttribute('aria-checked', 'false');
+    fireEvent.click(ip);
+    expect(headers()).toEqual(['Name', 'Namespace', 'IP', 'Actions']);
+    expect(localStorage.getItem('dt:cols:t:pods')).toBe('["+ip"]');
+    expect(onChange).toHaveBeenCalled();
+    expect(columnShown('t:pods', hiddenIp[2])).toBe(true);
+    unmount();
+    mountIp();
+    expect(headers()).toEqual(['Name', 'Namespace', 'IP', 'Actions']);
+    fireEvent.click(screen.getByRole('button', { name: 'Columns' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Reset to default' }));
+    expect(headers()).toEqual(['Name', 'Namespace', 'Actions']);
   });
 
   it('is off without columnsStorageKey', () => {
