@@ -35,6 +35,8 @@ func TestSearch(t *testing.T) {
 		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "prod"}, Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP, ClusterIP: "10.43.0.10"}},
 		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}, Status: corev1.NodeStatus{
 			Addresses: []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "10.42.0.7"}}}},
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "lb", Namespace: "prod"}, Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeLoadBalancer, ClusterIP: "10.43.0.11"},
+			Status: corev1.ServiceStatus{LoadBalancer: corev1.LoadBalancerStatus{Ingress: []corev1.LoadBalancerIngress{{IP: "10.42.0.200"}}}}},
 	)
 	allowNodes(client)
 	m, _ := startCache(t, client)
@@ -64,7 +66,9 @@ func TestSearch(t *testing.T) {
 		// IP: exact first, the node (admin) before its pods; no IP from a namespace without access
 		{SearchQuery{Text: "10.42.0.7", Nodes: true}, "[nodes/node-a@10.42.0.7 pods/web-1@10.42.0.7 pods/api-web@10.42.0.70]"},
 		{SearchQuery{Text: "10.42.0.8"}, "[]"},
-		{SearchQuery{Text: "10.43."}, "[services/web@10.43.0.10]"},
+		{SearchQuery{Text: "10.43."}, "[services/lb@10.43.0.11 services/web@10.43.0.10]"},
+		// a prefix: the LoadBalancer Service before the node and the pods in the same range
+		{SearchQuery{Text: "10.42.0.", Nodes: true, Limit: 2}, "[services/lb@10.42.0.200 nodes/node-a@10.42.0.7]"},
 		// nodes only for admins; a bare number is a name search
 		{SearchQuery{Text: "node"}, "[]"},
 		{SearchQuery{Text: "10"}, "[]"},

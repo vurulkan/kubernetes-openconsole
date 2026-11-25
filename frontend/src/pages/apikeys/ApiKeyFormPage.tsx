@@ -273,7 +273,7 @@ const ApiKeyFormPage: React.FC<{ user: User }> = ({ user }) => {
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
                   <span className={labelClass}>{t('apiKeys.cluster')}</span>
-                  <div className="flex flex-wrap items-end gap-2">
+                  <div className="flex flex-col gap-2">
                     <Segmented
                       label={t('apiKeys.cluster')}
                       value={allClusters ? 'all' : 'some'}
@@ -289,7 +289,6 @@ const ApiKeyFormPage: React.FC<{ user: User }> = ({ user }) => {
                         value={clusterName}
                         options={ceiling.clusters.map((c) => c.name)}
                         onChange={(v) => setClusterName(v)}
-                        className="w-56"
                       />
                     )}
                   </div>

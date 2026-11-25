@@ -121,8 +121,14 @@ func (c *InformerCache) Search(q SearchQuery, allow func(namespace, resource str
 			(ipMode && kind != "pods" && kind != "services" && kind != "nodes") || !c.Usable(informerKind[kind]) {
 			continue
 		}
+		// IP search: Services first (few, and a LoadBalancer IP sits in the node range), then nodes
+		// (a hostNetwork pod shares its node's IP); a /24 of nodes and their hostNetwork pods would
+		// otherwise fill the 30 results before any Service.
+		if ipMode && kind == "services" {
+			order = -2
+		}
 		if ipMode && kind == "nodes" {
-			order = -1 // a hostNetwork pod shares its node's IP: the node first
+			order = -1
 		}
 		c.searchKind(kind, order, ipMode, add)
 	}

@@ -18,15 +18,16 @@ import { containerStates, podController, podIPs, podStatus, type ContainerInfo, 
 import { UsageBar } from '../../components/Usage';
 import type { MetricsSnapshot } from '../../services/api';
 import { ownerUsage, podResources, scaleResources } from '../../utils/resources';
-import type {
-  CronJobObject,
-  HPAObject,
-  IngressObject,
-  JobObject,
-  ObjectMeta,
-  PodObject,
-  ServiceObject,
-  WorkloadObject,
+import {
+  lbAddresses,
+  type CronJobObject,
+  type HPAObject,
+  type IngressObject,
+  type JobObject,
+  type ObjectMeta,
+  type PodObject,
+  type ServiceObject,
+  type WorkloadObject,
 } from '../../utils/kubeTypes';
 
 type Item = Record<string, unknown>;
@@ -415,6 +416,19 @@ export const ResourceListView: React.FC<ResourceViewProps> = (props) => {
               {asService(it).spec?.clusterIP ?? '—'}
             </span>
           ),
+        },
+        {
+          key: 'lb-ip',
+          header: t('dashboard.columns.loadBalancerIP'),
+          sortValue: (it) => lbAddresses(asService(it))?.[0] ?? null,
+          cell: (it) => {
+            const lb = lbAddresses(asService(it));
+            return (
+              <span className="whitespace-nowrap font-mono text-xs text-slate-500 dark:text-slate-400">
+                {!lb ? '—' : lb.length ? lb.join(', ') : t('dashboard.status.pending')}
+              </span>
+            );
+          },
         },
         {
           key: 'ports',

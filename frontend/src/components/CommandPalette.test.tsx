@@ -83,6 +83,9 @@ describe('CommandPalette', () => {
     });
     expect(screen.getByText('Recently opened')).toBeInTheDocument();
     expect(screen.getByText('web-7f9c')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    expect(screen.queryByText('Recently opened')).toBeNull();
+    expect(JSON.parse(localStorage.getItem('palette:recent:7:0')!)).toEqual([]);
   });
 
   it('a recent resource that is gone leaves the list', async () => {

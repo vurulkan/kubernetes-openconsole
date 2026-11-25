@@ -320,7 +320,7 @@ paths:
       description: >-
         The ⌘K search. Names match by prefix first, then anywhere in the name; a query of digits and dots with
         at least one dot (`10.42.`, `10.42.0.7`) matches pod, Service and (admins) node IPs instead, exact match
-        first. Only namespace × kind pairs you may `list` (an API key: its scope as well), never Secrets; nodes
+        first, then Services, nodes and pods. Only namespace × kind pairs you may `list` (an API key: its scope as well), never Secrets; nodes
         for admins only. Read from the server's cache: a kind still loading is left out. At most 30 results; a
         query shorter than 2 characters returns none unless `ns` is set. Not audited.
       parameters:
@@ -942,6 +942,9 @@ paths:
     get:
       tags: [Config]
       summary: List Secrets (key names and sizes, never values)
+      description: >-
+        A Helm release (`type: helm.sh/release.v1`) is read as metadata only: its one key `release` comes
+        without `size` (one Secret's read has it).
       x-openconsole-permission: ["secrets:list"]
       responses: {"200": {$ref: '#/components/responses/list'}}
   /api/namespaces/{namespace}/secrets/{name}:

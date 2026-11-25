@@ -575,6 +575,20 @@ func TestSecretMetadataNeverLeaksValues(t *testing.T) {
 		}
 	}
 	e.expect("GET", "/api/namespaces/team-a/secrets/missing", bob, nil, http.StatusNotFound)
+
+	// A Helm release is listed as metadata only (its one key, no size); a single read has the size.
+	_, _ = e.client.CoreV1().Secrets("team-a").Create(context.Background(), &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "sh.helm.release.v1.web.v1", Namespace: "team-a"},
+		Type:       kube.HelmRelease, Data: map[string][]byte{"release": []byte(secretValue)},
+	}, metav1.CreateOptions{})
+	out := e.expect("GET", "/api/namespaces/team-a/secrets", bob, nil, http.StatusOK)
+	if !strings.Contains(out, `"type":"helm.sh/release.v1","immutable":false,"keys":[{"name":"release"}]`) || strings.Contains(out, encoded) ||
+		!strings.Contains(out, `"name":"password","size":18`) {
+		t.Fatalf("list with a Helm release = %s", out)
+	}
+	if out := e.expect("GET", "/api/namespaces/team-a/secrets/sh.helm.release.v1.web.v1", bob, nil, http.StatusOK); !strings.Contains(out, `"name":"release","size":18`) {
+		t.Fatalf("single Helm release = %s", out)
+	}
 }
 
 func TestSecretRevealRequiresRevealAction(t *testing.T) {

@@ -1,8 +1,8 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Alert, Button, Input, Modal, NativeSelect } from '../../components/ui';
 import { PermissionMatrix, RESOURCE_CATALOG } from '../../components/PermissionMatrix';
-import type { ClusterListItem, NamespacePermission } from '../../services/api';
+import { clusterNamespaces, type ClusterListItem, type NamespacePermission } from '../../services/api';
 
 /**
  * What the modal starts from and hands back: "add" creates the picked grants
@@ -115,10 +115,28 @@ export const AddPermissionsModal: React.FC<{
     return { mode: 'add' as const, total, skipped };
   }, [clusterId, selectedNs, matrix, existing, isEdit, seed.editingGroup]);
 
+  // The picked cluster's namespaces (every cluster's for "All clusters"); `namespaces` (the tab's
+  // cluster) until they arrive. A picked one stays listed even if the cluster doesn't have it.
+  const [clusterNs, setClusterNs] = useState<string[] | null>(null);
+  useEffect(() => {
+    let stale = false;
+    const ids = clusterId ? [clusterId] : clusters.map((c) => c.id);
+    void Promise.all(ids.map((id) => clusterNamespaces(id).then((r) => r.namespaces ?? [], () => [] as string[]))).then(
+      (lists) => !stale && setClusterNs(lists.flat()),
+    );
+    return () => {
+      stale = true;
+    };
+  }, [clusterId, clusters]);
+  const available = useMemo(
+    () => [...new Set([...(clusterNs ?? namespaces), ...selectedNs])].sort(),
+    [clusterNs, namespaces, selectedNs],
+  );
+
   const filteredNamespaces = useMemo(() => {
     const q = nsFilter.trim().toLowerCase();
-    return q ? namespaces.filter((n) => n.toLowerCase().includes(q)) : namespaces;
-  }, [namespaces, nsFilter]);
+    return q ? available.filter((n) => n.toLowerCase().includes(q)) : available;
+  }, [available, nsFilter]);
 
   return (
     <Modal

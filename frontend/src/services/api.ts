@@ -143,9 +143,9 @@ const authHeaders = (): Record<string, string> => ({
 
 // What every response tells the tab: a 401 ends the session; the first one
 // names the tab's cluster; a request the user caused (not a poll) is activity.
-const seeResponse = (response: Response, auto = false) => {
+const seeResponse = (response: Response, auto = false, namedCluster = false) => {
   checkSession(response.status);
-  if (tabCluster === null) {
+  if (tabCluster === null && !namedCluster) {
     const id = Number(response.headers.get(CLUSTER_HEADER));
     if (id > 0) tabCluster = id;
   }
@@ -241,15 +241,17 @@ const apiRequest = async <T>(path: string, options: RequestInit = {}): Promise<T
       cache: 'no-store',
       headers: {
         'Content-Type': 'application/json',
+        ...authHeaders(),
+        // A request may name another cluster than the tab's (clusterNamespaces).
         ...(options.headers || {}),
-        ...authHeaders()
       }
     });
   } catch {
     throw networkError();
   }
 
-  seeResponse(response, new Headers(options.headers).get('X-OpenConsole-Refresh') === 'auto');
+  const sent = new Headers(options.headers);
+  seeResponse(response, sent.get('X-OpenConsole-Refresh') === 'auto', sent.has(CLUSTER_HEADER));
   if (!response.ok) throw await responseError(response);
 
   if (response.status === 204) {
@@ -364,6 +366,11 @@ export const wsUrl = async (path: string, params?: URLSearchParams, auto?: boole
 const autoRefresh = (auto?: boolean): RequestInit => (auto ? { headers: { 'X-OpenConsole-Refresh': 'auto' } } : {});
 
 export const listNamespaces = (auto?: boolean) => apiRequest<{ namespaces: string[] }>('/api/namespaces', autoRefresh(auto));
+/** The namespaces of another cluster than the tab's (admin forms that pick a cluster). */
+export const clusterNamespaces = (clusterId: number) =>
+  apiRequest<{ namespaces: string[] }>('/api/namespaces', {
+    headers: { 'X-OpenConsole-Refresh': 'auto', [CLUSTER_HEADER]: String(clusterId) },
+  });
 
 /** A kind the ⌘K search finds (the permission resource name; nodes for admins). */
 export type SearchKind =
@@ -450,7 +457,8 @@ export type SecretSummary = {
   };
   type: string;
   immutable: boolean;
-  keys: Array<{ name: string; size: number }>;
+  /** size: none for a Helm release in the list (read as metadata only). */
+  keys: Array<{ name: string; size?: number }>;
 };
 
 export const listSecrets = (namespace: string) =>

@@ -325,13 +325,22 @@ export const CommandPalette: React.FC<Props> = ({ user, namespaces, onPickNamesp
     ...(chips.ns ? [{ id: 'ns', label: `ns: ${chips.ns}`, remove: () => setChips((c) => ({ kind: c.kind })) }] : []),
   ];
 
-  const section = (title: string, items: Command[]) => {
+  const section = (title: string, items: Command[], action?: { label: string; run: () => void }) => {
     if (items.length === 0) return null;
     return (
       <div>
-        <p className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
-          {title}
-        </p>
+        <div className="flex items-center justify-between px-3 pb-1 pt-2">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">{title}</p>
+          {action && (
+            <button
+              type="button"
+              onClick={action.run}
+              className="rounded px-1 text-[11px] text-slate-500 hover:text-slate-800 hover:underline dark:text-slate-400 dark:hover:text-slate-100"
+            >
+              {action.label}
+            </button>
+          )}
+        </div>
         <ul>
           {items.map((c) => {
             const Icon = c.icon ?? Search;
@@ -427,7 +436,14 @@ export const CommandPalette: React.FC<Props> = ({ user, namespaces, onPickNamesp
           {flat.length === 0 && (
             <p className="px-3 py-6 text-center text-sm text-slate-500 dark:text-slate-400">{t('palette.noResults')}</p>
           )}
-          {section(t('palette.sectionRecent'), recentRows)}
+          {section(t('palette.sectionRecent'), recentRows, {
+            label: t('palette.clearRecent'),
+            run: () => {
+              writeRecent(user.id, []);
+              setRecent([]);
+              setCursor(0);
+            },
+          })}
           {section(t('palette.sectionNavigate'), grouped.nav)}
           {section(t('palette.sectionTheme'), grouped.theme)}
           {section(t('palette.sectionNamespaces'), grouped.namespace)}

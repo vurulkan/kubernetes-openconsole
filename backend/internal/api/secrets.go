@@ -29,7 +29,7 @@ import (
 
 type secretKey struct {
 	Name string `json:"name"`
-	Size int    `json:"size"` // decoded bytes
+	Size *int   `json:"size,omitempty"` // decoded bytes; none for a Helm release in the list (metadata only)
 }
 
 type secretSummary struct {
@@ -59,7 +59,11 @@ var secretAnnotationDenylist = map[string]bool{
 func summarizeSecret(sec *corev1.Secret) secretSummary {
 	keys := make([]secretKey, 0, len(sec.Data)+len(sec.StringData))
 	for k, v := range sec.Data {
-		keys = append(keys, secretKey{Name: k, Size: len(v)})
+		n := len(v)
+		keys = append(keys, secretKey{Name: k, Size: &n})
+	}
+	if sec.Type == kube.HelmRelease && sec.Data == nil {
+		keys = append(keys, secretKey{Name: "release"}) // listed as metadata only: Helm's one key, size unread
 	}
 	sort.Slice(keys, func(i, j int) bool { return keys[i].Name < keys[j].Name })
 	var annotations map[string]string

@@ -24,7 +24,7 @@ import { ownerUsage, podResources, scaleResources } from '../../utils/resources'
 import { KIND } from './WorkloadDrawer';
 import type { ResourceViewProps } from './ResourceListView';
 import type { WorkloadKind } from '../../services/api';
-import type { PodObject, WorkloadObject } from '../../utils/kubeTypes';
+import { lbAddresses, type PodObject, type ServiceObject, type WorkloadObject } from '../../utils/kubeTypes';
 
 /**
  * The Dashboard's card view. Rendered only in card mode; the browser skips
@@ -307,6 +307,17 @@ export const ResourceCardsView: React.FC<ResourceViewProps & { actionBusy: strin
                   <div className="grid grid-cols-2 gap-3 pt-0.5">
                     <UsageBar kind="cpu" used={used.cpu} limit={budget.cpu.limit} request={budget.cpu.request} />
                     <UsageBar kind="mem" used={used.memory} limit={budget.mem.limit} request={budget.mem.request} />
+                  </div>
+                );
+              })()}
+              {activeTab === 'services' && (() => {
+                const lb = lbAddresses(item as ServiceObject);
+                if (!lb) return null;
+                return (
+                  <div className="flex items-center gap-1.5">
+                    <Network size={11} className="text-slate-500 dark:text-slate-400" />
+                    <span>{t('dashboard.columns.loadBalancerIP')}:</span>
+                    <span className="font-mono text-slate-700 dark:text-slate-200">{lb.length ? lb.join(', ') : t('dashboard.status.pending')}</span>
                   </div>
                 );
               })()}
