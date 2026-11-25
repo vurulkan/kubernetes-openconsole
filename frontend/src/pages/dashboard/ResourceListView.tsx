@@ -274,7 +274,7 @@ export const ResourceListView: React.FC<ResourceViewProps> = (props) => {
           defaultHidden: true,
           // IPv4 in numeric order (10.0.0.9 before 10.0.0.10)
           sortValue: (it) => podIPs(it)[0]?.replace(/\d+/g, (n) => n.padStart(3, '0')) ?? null,
-          cell: (it) => <span className="font-mono text-xs text-slate-600 dark:text-slate-300">{podIPs(it).join(', ') || '—'}</span>,
+          cell: (it) => <span className="whitespace-nowrap font-mono text-xs text-slate-600 dark:text-slate-300">{podIPs(it).join(', ') || '—'}</span>,
         },
         ...podUsageCols,
         ageCol,
