@@ -56,8 +56,9 @@ func LooksLikeIP(q string) bool {
 	return strings.Contains(q, ".") && strings.Trim(q, "0123456789.") == ""
 }
 
-// searchKinds in result order; IP searches only reach pods, services and nodes.
-var searchKinds = []string{"pods", "deployments", "statefulsets", "daemonsets", "services", "ingresses",
+// SearchKinds in result order (the `kind` values of GET /api/search); IP searches only reach
+// pods, services and nodes.
+var SearchKinds = []string{"pods", "deployments", "statefulsets", "daemonsets", "services", "ingresses",
 	"configmaps", "jobs", "cronjobs", "hpas", "nodes"}
 
 var informerKind = map[string]string{"pods": "Pod", "deployments": "Deployment", "statefulsets": "StatefulSet",
@@ -115,7 +116,7 @@ func (c *InformerCache) Search(q SearchQuery, allow func(namespace, resource str
 		h.rank, h.order = rank, order
 		hits = append(hits, h)
 	}
-	for order, kind := range searchKinds {
+	for order, kind := range SearchKinds {
 		if (q.Kind != "" && q.Kind != kind) || (kind == "nodes" && !q.Nodes) ||
 			(ipMode && kind != "pods" && kind != "services" && kind != "nodes") || !c.Usable(informerKind[kind]) {
 			continue

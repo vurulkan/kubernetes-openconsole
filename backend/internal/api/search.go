@@ -12,9 +12,6 @@ import (
 // searchLimit caps the ⌘K results; the palette shows them all.
 const searchLimit = 30
 
-var searchKindNames = []string{"pods", "deployments", "statefulsets", "daemonsets", "services", "ingresses",
-	"configmaps", "jobs", "cronjobs", "hpas", "nodes"}
-
 // handleSearch: ⌘K resource search on the request's cluster, from the informer
 // cache only. Only namespace × resource pairs the caller may list (API key scope
 // included), never Secrets, nodes only for admins. Not audited: every keystroke
@@ -22,8 +19,8 @@ var searchKindNames = []string{"pods", "deployments", "statefulsets", "daemonset
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	kind := q.Get("kind")
-	if kind != "" && !slices.Contains(searchKindNames, kind) {
-		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "kind: one of "+strings.Join(searchKindNames, ", "))
+	if kind != "" && !slices.Contains(kube.SearchKinds, kind) {
+		writeErrorDetail(w, http.StatusBadRequest, problem.InvalidInput, "kind: one of "+strings.Join(kube.SearchKinds, ", "))
 		return
 	}
 	engine, ok := s.engineForRequest(r)
