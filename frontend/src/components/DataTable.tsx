@@ -15,7 +15,27 @@ export type Column<T> = {
   sortValue?: (row: T) => string | number | undefined | null;
   /** First click sorts highest first (usage, restarts: the interesting rows are the big ones). */
   descFirst?: boolean;
+  /** Off until the user turns it on in the column picker (columnsStorageKey). */
+  defaultHidden?: boolean;
 };
+
+/** The column picker's stored choices: `key` = a column turned off, `+key` = a defaultHidden one turned on. */
+const isHidden = (stored: string[], c: { key: string; defaultHidden?: boolean }) =>
+  c.defaultHidden ? !stored.includes('+' + c.key) : stored.includes(c.key);
+const toggled = (stored: string[], c: { key: string; defaultHidden?: boolean }) => {
+  const k = c.defaultHidden ? '+' + c.key : c.key;
+  return stored.includes(k) ? stored.filter((x) => x !== k) : [...stored, k];
+};
+
+/** Whether a column shows under columnsStorageKey `storageKey` (for a page that acts on what the table shows). */
+export function columnShown(storageKey: string, c: { key: string; defaultHidden?: boolean }): boolean {
+  try {
+    const parsed = JSON.parse(localStorage.getItem('dt:cols:' + storageKey) ?? '[]');
+    return !isHidden(Array.isArray(parsed) ? parsed : [], c);
+  } catch {
+    return !c.defaultHidden;
+  }
+}
 
 type Props<T> = {
   rows: T[];
@@ -41,10 +61,13 @@ type Props<T> = {
   sortStorageKey?: string;
   /**
    * Turns on the column picker (a ⋮ menu in the unlabelled actions column's header) and keeps
-   * the hidden column keys in localStorage under `dt:cols:<key>`. Only hidden keys are stored,
-   * so a column added later shows by default. The `name` column and the actions column can't be hidden.
+   * the user's choices in localStorage under `dt:cols:<key>`: hidden keys, and `+key` for a defaultHidden
+   * column turned on, so a column added later shows (or stays off) by default. The `name` column and the
+   * actions column can't be hidden.
    */
   columnsStorageKey?: string;
+  /** Called after the user changes the columns (columnShown reads the new state). */
+  onColumnsChange?: () => void;
 };
 
 type SortState = { key: string; dir: 'asc' | 'desc' } | null;
@@ -70,6 +93,7 @@ export function DataTable<T>({
   emptyMessage,
   sortStorageKey,
   columnsStorageKey,
+  onColumnsChange,
   keyboardNav = false,
   rowClassName,
 }: Props<T>) {
@@ -125,9 +149,10 @@ export function DataTable<T>({
     } catch (err) {
       /* ignore */
     }
+    onColumnsChange?.();
   };
   const [menuAnchor, setMenuAnchor] = useState<HTMLButtonElement | null>(null);
-  const shown = useMemo(() => columns.filter((c) => c.key === 'name' || c.header === '' || !hidden.includes(c.key)), [columns, hidden]);
+  const shown = useMemo(() => columns.filter((c) => c.key === 'name' || c.header === '' || !isHidden(hidden, c)), [columns, hidden]);
 
   const sortedRows = useMemo(() => {
     if (!sort) return rows;
@@ -450,7 +475,7 @@ function ColumnMenu<T>({
   return (
     <MenuPopover anchor={anchor} label={t('common.columns')} onClose={onClose}>
       {columns.map((c) => {
-        const on = !hidden.includes(c.key);
+        const on = !isHidden(hidden, c);
         return (
           <button
             key={c.key}
@@ -458,7 +483,7 @@ function ColumnMenu<T>({
             role="menuitemcheckbox"
             aria-checked={on}
             disabled={c.key === 'name'}
-            onClick={() => onChange(on ? [...hidden, c.key] : hidden.filter((k) => k !== c.key))}
+            onClick={() => onChange(toggled(hidden, c))}
             className={menuItemClass}
           >
             <span

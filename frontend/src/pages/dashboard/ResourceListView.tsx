@@ -14,19 +14,20 @@ import { Badge } from '../../components/ui';
 import { ContainerSquares, PodRestarts, PodStatusBadge } from '../../components/PodStatusBadge';
 import { Column, DataTable, IconButton } from '../../components/DataTable';
 import { ageShort } from '../../utils/age';
-import { containerStates, podController, podStatus, type ContainerInfo, type PodStatus } from '../../utils/podStatus';
+import { containerStates, podController, podIPs, podStatus, type ContainerInfo, type PodStatus } from '../../utils/podStatus';
 import { UsageBar } from '../../components/Usage';
 import type { MetricsSnapshot } from '../../services/api';
 import { ownerUsage, podResources, scaleResources } from '../../utils/resources';
-import type {
-  CronJobObject,
-  HPAObject,
-  IngressObject,
-  JobObject,
-  ObjectMeta,
-  PodObject,
-  ServiceObject,
-  WorkloadObject,
+import {
+  lbAddresses,
+  type CronJobObject,
+  type HPAObject,
+  type IngressObject,
+  type JobObject,
+  type ObjectMeta,
+  type PodObject,
+  type ServiceObject,
+  type WorkloadObject,
 } from '../../utils/kubeTypes';
 
 type Item = Record<string, unknown>;
@@ -75,6 +76,8 @@ export type ResourceViewProps = {
   onRestart: (name: string) => void;
   onScale: (name: string, current: number) => void;
   onScaleStatefulSet: (name: string, current: number) => void;
+  /** The list's column picker changed (the Dashboard searches the pod IP only while its column shows). */
+  onColumnsChange?: () => void;
 };
 
 // Typed views of a row: the API's plain JSON is assignable to each (every field is optional).
@@ -265,6 +268,15 @@ export const ResourceListView: React.FC<ResourceViewProps> = (props) => {
             );
           },
         },
+        {
+          // Off by default; while it shows, the search matches it too (utils/searchText.ts).
+          key: 'ip',
+          header: t('dashboard.detail.podIP'),
+          defaultHidden: true,
+          // IPv4 in numeric order (10.0.0.9 before 10.0.0.10)
+          sortValue: (it) => podIPs(it)[0]?.replace(/\d+/g, (n) => n.padStart(3, '0')) ?? null,
+          cell: (it) => <span className="whitespace-nowrap font-mono text-xs text-slate-600 dark:text-slate-300">{podIPs(it).join(', ') || '—'}</span>,
+        },
         ...podUsageCols,
         ageCol,
         {
@@ -404,6 +416,19 @@ export const ResourceListView: React.FC<ResourceViewProps> = (props) => {
               {asService(it).spec?.clusterIP ?? '—'}
             </span>
           ),
+        },
+        {
+          key: 'lb-ip',
+          header: t('dashboard.columns.loadBalancerIP'),
+          sortValue: (it) => lbAddresses(asService(it))?.[0] ?? null,
+          cell: (it) => {
+            const lb = lbAddresses(asService(it));
+            return (
+              <span className="whitespace-nowrap font-mono text-xs text-slate-500 dark:text-slate-400">
+                {!lb ? '—' : lb.length ? lb.join(', ') : t('dashboard.status.pending')}
+              </span>
+            );
+          },
         },
         {
           key: 'ports',
@@ -933,6 +958,7 @@ export const ResourceListView: React.FC<ResourceViewProps> = (props) => {
         onRowClick={opensDrawer ? onOpen : undefined}
         sortStorageKey={`dashboard:${activeTab}`}
         columnsStorageKey={`dashboard:${activeTab}`}
+        onColumnsChange={props.onColumnsChange}
         emptyMessage={
           loading
             ? t('common.loading')

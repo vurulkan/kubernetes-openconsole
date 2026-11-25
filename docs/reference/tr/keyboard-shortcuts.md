@@ -99,5 +99,7 @@ Uygulamadaki **?** listesinin aynısı. "`g` sonra `o`": `g`'ye, bir saniye içi
 | Tuşlar | Ne yapar |
 |---|---|
 | <kbd>↑</kbd> sonra <kbd>↓</kbd> | Seçimi oynat |
-| <kbd>↵</kbd> | Seçili komutu çalıştır |
+| <kbd>↵</kbd> | Seçili komutu çalıştır ya da seçili kaynağı aç |
+| <kbd>svc</kbd> ya da <kbd>ns:</kbd> | Kaynak aramasını daraltın: önce bir tür (kubectl kısa adı: po, deploy, sts, ds, svc, cm, ing, job, cj, hpa, ns, no), ns:<namespace>, ardından boşluk; bir IP (10.42.0.7, 10.42.) pod, Service ve node'ları bulur |
+| <kbd>⌫</kbd> | Arama kutusu boşken: son filtreyi kaldır |
 | <kbd>Esc</kbd> | Aktif modal / paleti kapat |

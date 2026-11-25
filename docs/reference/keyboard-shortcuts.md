@@ -99,5 +99,7 @@ The same list as **?** in the app. "`g` then `o`" means: press `g`, then `o` wit
 | Keys | Does |
 |---|---|
 | <kbd>↑</kbd> then <kbd>↓</kbd> | Move selection |
-| <kbd>↵</kbd> | Run selected command |
+| <kbd>↵</kbd> | Run selected command, or open the selected resource |
+| <kbd>svc</kbd> or <kbd>ns:</kbd> | Narrow the resource search: a kind first (kubectl short name: po, deploy, sts, ds, svc, cm, ing, job, cj, hpa, ns, no), ns:<namespace>, then a space; an IP (10.42.0.7, 10.42.) finds pods, Services and nodes |
+| <kbd>⌫</kbd> | Empty search box: remove the last filter |
 | <kbd>Esc</kbd> | Close the active modal / palette |

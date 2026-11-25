@@ -44,6 +44,7 @@ export type PodObject = {
     phase?: string;
     reason?: string;
     podIP?: string;
+    podIPs?: { ip?: string }[];
     qosClass?: string;
     conditions?: Condition[];
     initContainerStatuses?: ContainerStatus[];
@@ -79,7 +80,14 @@ export type WorkloadObject = {
 
 export type ServiceObject = {
   spec?: { type?: string; clusterIP?: string; ports?: Array<{ port?: number; protocol?: string }> };
+  status?: { loadBalancer?: { ingress?: Array<{ ip?: string; hostname?: string }> } };
 };
+
+/** A LoadBalancer Service's addresses (IP, or hostname where the cloud gives one); null for other types. */
+export const lbAddresses = (svc: ServiceObject): string[] | null =>
+  svc.spec?.type === 'LoadBalancer'
+    ? (svc.status?.loadBalancer?.ingress ?? []).map((i) => i.ip || i.hostname || '').filter(Boolean)
+    : null;
 
 export type IngressObject = {
   spec?: { rules?: Array<{ host?: string; http?: { paths?: Array<{ path?: string }> } }> };

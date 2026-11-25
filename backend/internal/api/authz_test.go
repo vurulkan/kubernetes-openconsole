@@ -17,6 +17,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	appsv1 "k8s.io/api/apps/v1"
+	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -574,6 +575,20 @@ func TestSecretMetadataNeverLeaksValues(t *testing.T) {
 		}
 	}
 	e.expect("GET", "/api/namespaces/team-a/secrets/missing", bob, nil, http.StatusNotFound)
+
+	// A Helm release is listed as metadata only (its one key, no size); a single read has the size.
+	_, _ = e.client.CoreV1().Secrets("team-a").Create(context.Background(), &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "sh.helm.release.v1.web.v1", Namespace: "team-a"},
+		Type:       kube.HelmRelease, Data: map[string][]byte{"release": []byte(secretValue)},
+	}, metav1.CreateOptions{})
+	out := e.expect("GET", "/api/namespaces/team-a/secrets", bob, nil, http.StatusOK)
+	if !strings.Contains(out, `"type":"helm.sh/release.v1","immutable":false,"keys":[{"name":"release"}]`) || strings.Contains(out, encoded) ||
+		!strings.Contains(out, `"name":"password","size":18`) {
+		t.Fatalf("list with a Helm release = %s", out)
+	}
+	if out := e.expect("GET", "/api/namespaces/team-a/secrets/sh.helm.release.v1.web.v1", bob, nil, http.StatusOK); !strings.Contains(out, `"name":"release","size":18`) {
+		t.Fatalf("single Helm release = %s", out)
+	}
 }
 
 func TestSecretRevealRequiresRevealAction(t *testing.T) {
@@ -700,4 +715,64 @@ func TestTwoFactorEndpointsAuth(t *testing.T) {
 	}
 	_, tok := e.user("ann", false)
 	e.expect("POST", "/api/auth/2fa/verify", tok, map[string]string{"challenge": tok, "code": "123456"}, http.StatusUnauthorized)
+}
+
+// ─── ⌘K search ──────────────────────────────────────────────────────────────
+
+// searchEnv starts an informer cache on alpha (search reads the cache only) with a
+// pod IP in each team and a node, and waits until the admin finds them.
+func searchEnv(t *testing.T) (*testEnv, string) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	for ns, ip := range map[string]string{"team-a": "10.42.0.5", "team-b": "10.42.1.5"} {
+		p, _ := e.client.CoreV1().Pods(ns).Get(ctx, "api-1", metav1.GetOptions{})
+		p.Status.PodIP, p.Status.PodIPs = ip, []corev1.PodIP{{IP: ip}}
+		_, _ = e.client.CoreV1().Pods(ns).UpdateStatus(ctx, p, metav1.UpdateOptions{})
+	}
+	_, _ = e.client.CoreV1().Nodes().Create(ctx, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "api-node"}}, metav1.CreateOptions{})
+	e.client.PrependReactor("create", "selfsubjectaccessreviews", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, &authorizationv1.SelfSubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: true}}, nil
+	})
+	m := kube.NewManagerWithCache(e.client)
+	e.server.clusters.Put(e.alphaID, m)
+	t.Cleanup(m.Stop)
+	_, admin := e.user("root", true)
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(e.expect("GET", "/api/search?q=api", admin, nil, http.StatusOK), `"kind":"nodes"`) {
+		if time.Now().After(deadline) {
+			t.Fatal("cache never synced")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return e, admin
+}
+
+// Search finds only what the caller may list: another namespace, its IPs, a kind
+// without list, nodes (non-admin) and Secrets stay out. It is not audited.
+func TestSearchFollowsGrants(t *testing.T) {
+	e, admin := searchEnv(t)
+	bobID, bob := e.user("bob", false)
+	e.grant(bobID, [4]any{0, "team-a", "pods", "list"}, [4]any{0, "team-a", "deployments", "get"},
+		[4]any{0, "team-a", "secrets", "list"})
+
+	out := e.expect("GET", "/api/search?q=api", bob, nil, http.StatusOK)
+	if !strings.Contains(out, `"kind":"pods","namespace":"team-a","name":"api-1"`) ||
+		strings.Contains(out, "team-b") || strings.Contains(out, "deployments") || strings.Contains(out, "nodes") {
+		t.Fatalf("bob's search = %s", out)
+	}
+	if out := e.expect("GET", "/api/search?q=10.42.1.5", bob, nil, http.StatusOK); out != `{"items":[]}`+"\n" {
+		t.Fatalf("an IP in a namespace without access must not show: %s", out)
+	}
+	if out := e.expect("GET", "/api/search?q=10.42.0.", bob, nil, http.StatusOK); !strings.Contains(out, `"ip":"10.42.0.5"`) {
+		t.Fatalf("IP prefix = %s", out)
+	}
+	if out := e.expect("GET", "/api/search?q=db", admin, nil, http.StatusOK); strings.Contains(out, "secret") || strings.Contains(out, `"db"`) {
+		t.Fatalf("Secrets must never be searched: %s", out)
+	}
+	if out := e.expect("GET", "/api/search?q=api&kind=deployments&ns=team-a", admin, nil, http.StatusOK); !strings.Contains(out, `"kind":"deployments","namespace":"team-a","name":"api"`) || strings.Contains(out, "pods") {
+		t.Fatalf("admin kind + ns = %s", out)
+	}
+	e.expect("GET", "/api/search?q=db&kind=secrets", admin, nil, http.StatusBadRequest)
+	e.expect("GET", "/api/search?q=api", "", nil, http.StatusUnauthorized)
+	e.noAudit("pod.list.success")
 }

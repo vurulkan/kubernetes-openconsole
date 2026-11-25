@@ -536,3 +536,21 @@ func TestAPIKeyInRequestLog(t *testing.T) {
 		t.Errorf("web session request line = %v", l)
 	}
 }
+
+// Search with a key reaches only the key's scope ∩ the owner's grants; an admin's
+// key without the admin scope finds no nodes.
+func TestAPIKeySearch(t *testing.T) {
+	e, admin := searchEnv(t)
+	bobID, bob := e.user("bob", false)
+	e.grant(bobID, [4]any{0, "team-a", "pods", "list"}, [4]any{0, "team-b", "pods", "list"}, [4]any{0, "team-a", "deployments", "list"})
+
+	key, _ := e.createKey(bob, keyBody("k", []string{"team-a"}, "pods:list"))
+	out := e.expect("GET", "/api/search?q=api", key, nil, http.StatusOK)
+	if !strings.Contains(out, `"namespace":"team-a","name":"api-1"`) || strings.Contains(out, "team-b") || strings.Contains(out, "deployments") {
+		t.Fatalf("key search = %s", out)
+	}
+	adminKey, _ := e.createKey(admin, map[string]any{"name": "a", "clusters": []int{0}, "allNamespaces": true, "grants": []string{"pods:list"}})
+	if out := e.expect("GET", "/api/search?q=api", adminKey, nil, http.StatusOK); strings.Contains(out, "nodes") || !strings.Contains(out, "team-b") {
+		t.Fatalf("admin key without admin scope = %s", out)
+	}
+}

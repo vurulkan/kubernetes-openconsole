@@ -152,7 +152,7 @@ export const SecretModal: React.FC<Props> = ({ open, namespace, name, canReveal,
                         {key}
                       </span>
                       <span className="text-right font-mono text-[11px] text-slate-500 dark:text-slate-400">
-                        {formatBytes(size)}
+                        {size === undefined ? '—' : formatBytes(size)}
                       </span>
                       <div className="flex justify-end gap-1.5">
                         {canReveal && !shown && (
