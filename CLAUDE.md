@@ -158,6 +158,12 @@ the code stay English.
 
 ## Release
 
+**Which number** (semver, `GOVERNANCE.md`), decided when the branch is opened and written in the milestone:
+- **minor** (`2.27.0`): the release brings anything new: a screen or behaviour users notice, an endpoint, env var,
+  permission, audit action, metric or DB migration step. Fixes that ship with it ride along. Docs: `docs:freeze`.
+- **patch** (`2.26.1`, branch `2.26.1-name`): only fixes of what already exists, none of the above. Docs: the frozen `X.Y` pages.
+- **major**: an API break; avoid it (the API is never broken, see "When you add …").
+
 Feature branch `X.Y.Z-name` **from `dev`**: every push publishes `:dev-<run>` + `:dev-latest` → squash merge
 into `dev` → the user tests `dev`'s pinned `:dev-<run>` on a real cluster → when the release's milestones are all
 in `dev`, squash merge `dev` to `main` → `git tag -a vX.Y.Z`, push the commit and the tag together (`--atomic`) → CI builds once
